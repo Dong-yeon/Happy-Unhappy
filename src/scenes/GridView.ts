@@ -30,6 +30,8 @@ export interface GridViewHooks {
   onHover(hover: DragHover): void;
   /** 소환 성공: 드롭 지점에서 연출 시작 (core는 이미 유닛 생성) */
   onSummon(unit: Unit, fromX: number, fromY: number): void;
+  /** 지금 그리드를 만질 수 있는지 (하루 단계가 waves이고 모달이 없을 때) */
+  canInteract(): boolean;
 }
 
 const SUMMON_BLOCKED_LABEL = '보낼 수 없음';
@@ -110,6 +112,7 @@ export class GridView {
 
   private onDown(p: Phaser.Input.Pointer): void {
     if (this.press) return; // 동시에 한 조각만 (두 번째 포인터 무시)
+    if (!this.hooks.canInteract()) return;
     const w = this.world(p);
     const { cols, rows } = this.state.grid;
     const from = cellAt(cols, rows, w.x, w.y);

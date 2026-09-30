@@ -16,7 +16,11 @@ const BLANKET = 'comfort_object';
 const CAP = data.balance.lane.laneCap;
 
 function game(seed = 1, cols = 4, rows = 4): GameState {
-  return new GameState(data, { cols, rows }, mulberry32(seed), GEOS);
+  const g = new GameState(data, { cols, rows }, mulberry32(seed), GEOS);
+  // 1일차를 평범한 하루로 시작 (이벤트 효과가 수치를 흔들지 않게) → waves 단계
+  g.debugForceEvent('plain');
+  g.confirmDay();
+  return g;
 }
 
 describe('소환 (☀ 창문)', () => {
@@ -127,6 +131,7 @@ describe('소환 (☀ 창문)', () => {
   it('summon 이벤트는 다음 tick()의 반환값에 들어간다', () => {
     const g = game();
     g.wave.paused = true;
+    g.tick(0); // 하루 시작 이벤트 비우기
     const r = g.summon(g.debugGrant(DOG, 1)!, 'happy');
     expect(g.tick(0)).toEqual([expect.objectContaining({ type: 'summon', unitId: r.ok ? r.unit.id : -1, side: 'happy' })]);
     expect(g.tick(0)).toEqual([]);
@@ -164,7 +169,7 @@ function snapshot(g: GameState) {
     tick: g.tickCount,
     joy: g.joy,
     grid: g.grid.cells.map((c) => (c ? `${c.id}:${c.chain}:${c.tier}` : null)),
-    wave: { n: g.wave.n, phase: g.wave.phase, spawned: g.wave.spawned },
+    wave: { day: g.day, slot: g.wave.slot, phase: g.wave.phase, spawned: g.wave.spawned },
     worries: g.defense.worries.map((w) => ({ id: w.id, x: w.x, y: w.y, hp: w.hp, state: w.state })),
     units: g.defense.units.map((u) => ({ id: u.id, hp: u.hp, cd: u.cd, slot: u.slot })),
     stats: { ...g.stats },
@@ -232,7 +237,7 @@ describe('결정성', () => {
   it('시드가 다르면 걱정 등장 x가 다르다', () => {
     const xs = (seed: number) => {
       const g = game(seed);
-      g.tick(2.1);
+      g.tick(3.1); // 첫 웨이브 = dayStartDelay(3초) 뒤
       return g.defense.worries.map((w) => w.x);
     };
     expect(xs(1)).not.toEqual(xs(2));

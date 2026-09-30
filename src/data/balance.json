@@ -22,6 +22,8 @@
     "countStep": 1,
     "spawnInterval": 1.5,
     "waveGap": 3,
+    "dayStartDelay": 3,
+    "bossPrepSeconds": 10,
     "hpGrowthPerDay": 1.08
   },
   "abyss": {

@@ -3,9 +3,11 @@ import type { GameData } from '../data/types';
 import { GameState } from '../core/game';
 import type { GridSize } from '../core/grid';
 import { mulberry32, parseSeed } from '../core/rng';
+import type { SlotId } from '../core/wave';
 import { createDebugPanel } from '../debug/DebugPanel';
 import { isDebug } from '../debug/gridPreset';
 import { AbyssLaneView } from './AbyssLaneView';
+import { DayUi } from './DayUi';
 import { DefenseLaneView } from './DefenseLaneView';
 import { GridView, type DragHover } from './GridView';
 import { PortalView } from './PortalView';
@@ -25,11 +27,14 @@ import {
 } from './layout';
 import { Button, COLOR, setupCamera, text } from './ui';
 
+/** HUD 시간대 이름 (표시 텍스트) */
+const SLOT_NAMES: Record<SlotId, string> = { morning: '아침', noon: '낮', evening: '저녁' };
+
 /** 한 프레임에 넘기는 시간 상한 (백그라운드 복귀 직후 몰아서 처리하지 않도록) */
 const MAX_FRAME_MS = 100;
 
 /**
- * M4: 그리드 + 방어 레인(☀ 창문) + 심연 레인(◐ 손거울, 그림자 벽, 층 돌파 귀환) + 그림자·역류·마음 날씨.
+ * M5: 하루 = 한 판 (이벤트 카드·3웨이브·그림일기, 14일 일생) + 그리드 + 방어 레인(☀ 창문) + 심연 레인(◐ 손거울) + 그림자·역류.
  * 게임 규칙은 core(GameState)에서, 이 씬은 표시·입력만.
  */
 export class GameScene extends Phaser.Scene {
@@ -40,10 +45,12 @@ export class GameScene extends Phaser.Scene {
   private releaseZone!: ReleaseZoneView;
   private laneView!: DefenseLaneView;
   private abyssView!: AbyssLaneView;
+  private dayUi!: DayUi;
   private weatherText!: Phaser.GameObjects.Text;
   private shadowFill!: Phaser.GameObjects.Rectangle;
   private shadowFrame!: Phaser.GameObjects.Rectangle;
   private shadowBarW = 0;
+  private age = 0;
   private shadowMax = 1;
   private portals!: Record<'happy' | 'unhappy', PortalView>;
   private phaseText!: Phaser.GameObjects.Text;
@@ -86,11 +93,19 @@ export class GameScene extends Phaser.Scene {
       onChange: () => this.syncUi(),
       onHover: (hover) => this.onDragHover(hover),
       onSummon: (unit, x, y) => (unit.side === 'happy' ? this.laneView : this.abyssView).onSummon(unit, x, y),
+      canInteract: () => this.state.phase === 'waves' && !this.dayUi.blocking,
+    });
+    this.dayUi = new DayUi(this, this.state, {
+      onChange: () => this.onDebugChange(),
+      onRestart: () => this.scene.start('Boot'),
     });
     if (isDebug()) {
+      // 디버그 전용: 브라우저 콘솔에서 core 상태를 들여다보기 (?debug=1일 때만)
+      (window as unknown as { __hauState?: GameState }).__hauState = this.state;
       createDebugPanel(this, data, this.state, size, seed, {
         setSpeed: (s) => (this.speed = s),
         onChange: () => this.onDebugChange(),
+        openDiary: () => this.dayUi.showDiaryList(),
       });
     }
     this.syncUi();
@@ -101,9 +116,11 @@ export class GameScene extends Phaser.Scene {
     this.laneView.handle(events);
     this.abyssView.handle(events);
     // 층 돌파 귀환 조각은 core에서 이미 그리드에 들어가 있다
-    if (events.some((e) => e.type === 'layerClear')) this.gridView.refresh();
+    // 층 돌파·하루 끝 귀환·선물 조각은 core에서 이미 그리드에 들어가 있다
+    if (events.some((e) => e.type === 'layerClear' || e.type === 'dayReturn' || e.type === 'freePiece')) this.gridView.refresh();
     this.laneView.sync();
     this.abyssView.sync();
+    this.dayUi.sync();
     this.syncUi();
   }
 
@@ -125,9 +142,10 @@ export class GameScene extends Phaser.Scene {
     const joy = `기쁨 ${s.joy}`;
     if (this.joyText.text !== joy) this.joyText.setText(joy);
     const w = s.wave;
-    const base = w.n === 0 ? '웨이브 준비' : `웨이브 ${w.n}`;
-    // HUD 칸이 좁아 역류 상태일 때는 웨이브 번호 대신 표시
-    const phase = s.bossActive ? '역류!' : s.pendingBackflow ? '역류 예약' : `${base}${w.paused ? ' (정지)' : ''}`;
+    // HUD: "8살 · n일째 · 아침/낮/저녁" (보스 웨이브면 시간대 옆에 "역류")
+    const slot = SLOT_NAMES[w.slotId];
+    const tag = s.bossActive ? ' 역류' : w.inBossPrep ? ' 역류 준비' : s.pendingBackflow ? ' · 역류 예약' : w.paused ? ' (정지)' : '';
+    const phase = `${this.age}살 · ${s.day}일째 · ${slot}${tag}`;
     if (this.phaseText.text !== phase) this.phaseText.setText(phase).setColor(s.shadowLocked ? '#ff9e9e' : '#e8e8e8');
     const weather = `마음 날씨 ${s.weather}`;
     if (this.weatherText.text !== weather) this.weatherText.setText(weather);
@@ -137,12 +155,14 @@ export class GameScene extends Phaser.Scene {
     this.portals.happy.setClosed(s.defense.isFull);
     this.portals.unhappy.setClosed(s.abyss.isFull);
     const block = s.spawnBlock;
+    const canAct = s.phase === 'waves' && !this.dayUi.blocking;
     this.spawnBtn
       .setLabel(block === 'full' ? '칸 가득' : block === 'noJoy' ? `기쁨 부족 (${s.spawnCost})` : `조각 생성 (${s.spawnCost})`)
-      .setEnabled(block === null);
+      .setEnabled(block === null && canAct);
   }
 
   private onSpawn(): void {
+    if (this.state.phase !== 'waves' || this.dayUi.blocking) return;
     if (this.state.spawn()) this.gridView.refresh();
     this.syncUi();
   }
@@ -156,8 +176,8 @@ export class GameScene extends Phaser.Scene {
     this.fill(r, COLOR.hud);
     const midY = r.y + r.h / 2;
     // 일차·날씨는 M5/M4에서 core 상태로 연결. 시간대 칸은 M3 임시로 "웨이브 n"
-    text(this, 8, midY, `${data.days.age}살 · 1일째 ·`, { fontSize: '12px' }).setOrigin(0, 0.5);
-    this.phaseText = text(this, 86, midY, '', { fontSize: '12px' }).setOrigin(0, 0.5);
+    this.age = data.days.age;
+    this.phaseText = text(this, 8, midY, '', { fontSize: '11px' }).setOrigin(0, 0.5);
     this.joyText = text(this, VIEW_W / 2 + 30, midY, `기쁨 ${data.balance.start.joy}`, { fontSize: '12px', color: '#f2c94c' }).setOrigin(0.5);
     this.weatherText = text(this, VIEW_W - 8, midY, '', { fontSize: '12px', color: '#9fb4e0' }).setOrigin(1, 0.5);
   }

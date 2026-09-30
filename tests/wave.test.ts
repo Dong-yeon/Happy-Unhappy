@@ -1,11 +1,21 @@
 import { describe, expect, it } from 'vitest';
 import { FIXED_DT } from '../src/core/lane';
-import { M3_FIRST_WAVE_DELAY, WaveRunner, waveCount, waveHp, type WaveConfig } from '../src/core/wave';
+import { DayWaves, waveCount, waveHp, type WaveConfig } from '../src/core/wave';
 
-const CFG: WaveConfig = { countBase: 6, countStep: 1, spawnInterval: 1.5, waveGap: 3, hpBase: 18, hpGrowthPerDay: 1.08 };
+const CFG: WaveConfig = {
+  wavesPerDay: 3,
+  countBase: 6,
+  countStep: 1,
+  spawnInterval: 1.5,
+  waveGap: 3,
+  dayStartDelay: 3,
+  bossPrepSeconds: 10,
+  hpBase: 18,
+  hpGrowthPerDay: 1.08,
+};
 
-/** 틱을 돌리며 틱 번호별 등장 수를 모은다. fieldEmpty는 콜백으로 */
-function simulate(w: WaveRunner, seconds: number, fieldEmpty: (tick: number) => boolean = () => true) {
+/** 틱을 돌리며 등장 틱 번호를 모은다. fieldEmpty는 콜백으로 */
+function simulate(w: DayWaves, seconds: number, fieldEmpty: (tick: number) => boolean = () => true) {
   const spawnsAt: number[] = [];
   const n = Math.round(seconds / FIXED_DT);
   for (let t = 1; t <= n; t++) {
@@ -15,78 +25,85 @@ function simulate(w: WaveRunner, seconds: number, fieldEmpty: (tick: number) => 
   return spawnsAt;
 }
 
-describe('웨이브 공식', () => {
-  it('마리 수 = countBase + countStep × (n-1)', () => {
+describe('일차 기준 공식 (§5.7)', () => {
+  it('걱정 수 = round((countBase + countStep × (d-1)) × worryMultiplier), 최소 1', () => {
     expect(waveCount(CFG, 1)).toBe(6);
     expect(waveCount(CFG, 4)).toBe(9);
+    expect(waveCount(CFG, 1, 1.4)).toBe(Math.round(6 * 1.4)); // 8
+    expect(waveCount(CFG, 1, 0.8)).toBe(Math.round(6 * 0.8)); // 5
+    expect(waveCount({ ...CFG, countBase: 0, countStep: 0 }, 1)).toBe(1);
   });
 
-  it('HP = hpBase × hpGrowthPerDay^(n-1)', () => {
+  it('HP = hpBase × hpGrowthPerDay^(d-1) × worryMultiplier', () => {
     expect(waveHp(CFG, 1)).toBe(18);
-    expect(waveHp(CFG, 3)).toBeCloseTo(18 * 1.08 * 1.08, 10);
+    expect(waveHp(CFG, 3, 1.4)).toBeCloseTo(18 * 1.08 * 1.08 * 1.4, 10);
+  });
+
+  it('DayWaves.count·hp는 그날 일차·배율 기준 (웨이브 칸과 무관)', () => {
+    const w = new DayWaves(CFG);
+    w.startDay(5, 1.4, false);
+    expect(w.count).toBe(waveCount(CFG, 5, 1.4));
+    expect(w.hp).toBeCloseTo(waveHp(CFG, 5, 1.4), 10);
   });
 });
 
-describe('WaveRunner', () => {
-  it(`게임 시작 ${M3_FIRST_WAVE_DELAY}초 후 첫 웨이브, spawnInterval 간격으로 countBase마리`, () => {
-    const w = new WaveRunner(CFG);
-    const spawnsAt = simulate(w, 2 + 1.5 * 5 + 0.1, () => false);
-    expect(spawnsAt).toHaveLength(6);
-    expect(spawnsAt[0]).toBe(120); // 2초 = 120틱
-    const gaps = spawnsAt.slice(1).map((t, i) => t - spawnsAt[i]);
-    expect(gaps.every((g) => g === 90)).toBe(true); // 1.5초 = 90틱
-    expect(w.n).toBe(1);
-    expect(w.phase).toBe('clearing');
+describe('하루 3웨이브 흐름', () => {
+  it('dayStartDelay 뒤 아침 → waveGap → 낮 → waveGap → 저녁 → done (항상 wavesPerDay웨이브)', () => {
+    const w = new DayWaves(CFG);
+    expect(w.phase).toBe('idle');
+    expect(simulate(w, 5)).toEqual([]); // 하루 시작 전에는 아무것도 안 나옴
+    w.startDay(1, 1, false);
+    const spawnsAt = simulate(w, 120);
+    expect(spawnsAt).toHaveLength(18); // 6 × 3
+    expect(spawnsAt[0]).toBe(180); // 3초
+    expect(w.phase).toBe('done');
+    expect(w.slot).toBe(2);
   });
 
   it('남은 걱정이 있으면 다음 웨이브로 넘어가지 않는다', () => {
-    const w = new WaveRunner(CFG);
-    simulate(w, 30, () => false);
-    expect(w.n).toBe(1);
+    const w = new DayWaves(CFG);
+    w.startDay(1, 1, false);
+    simulate(w, 60, () => false);
+    expect(w.slot).toBe(0);
     expect(w.phase).toBe('clearing');
   });
 
-  it('웨이브 종료(필드 비움) → waveGap 후 다음 웨이브 (마리 수 +countStep)', () => {
-    const w = new WaveRunner(CFG);
-    // 첫 웨이브 마지막 등장: 120 + 90×5 = 570틱. 600틱에 필드가 비었다고 치자
-    const spawnsAt = simulate(w, 20, (t) => t >= 600);
-    const wave2 = spawnsAt.slice(6);
-    expect(w.n).toBe(2);
-    // 600틱에 gap 시작 → waveGap 3초(180틱) 뒤 780틱에 첫 등장
-    expect(wave2[0]).toBe(600 + 180);
-    expect(waveCount(CFG, 2)).toBe(7);
+  it('nextSlot: 대기·간격이면 지금 칸, 진행 중이면 다음 칸, 저녁 진행 중이면 null', () => {
+    const w = new DayWaves(CFG);
+    w.startDay(1, 1, false);
+    expect(w.nextSlot()).toBe(0); // delay
+    simulate(w, 3.01, () => false); // 아침 시작
+    expect(w.nextSlot()).toBe(1);
+    w.slot = 2;
+    expect(w.nextSlot()).toBeNull();
   });
 
-  it('일시정지 중에는 등장·간격이 멈춘다', () => {
-    const w = new WaveRunner(CFG);
+  it('보스로 교체된 칸은 1마리', () => {
+    const w = new DayWaves(CFG);
+    w.startDay(1, 1, false);
+    w.markBoss(1);
+    const spawnsAt = simulate(w, 120);
+    expect(spawnsAt).toHaveLength(6 + 1 + 6);
+  });
+
+  it('전날 넘어온 역류: 아침이 보스, 대기 = bossPrepSeconds (inBossPrep)', () => {
+    const w = new DayWaves(CFG);
+    w.startDay(2, 1, true);
+    expect(w.inBossPrep).toBe(true);
+    expect(w.bossSlots.has(0)).toBe(true);
+    const spawnsAt = simulate(w, 11, () => false); // 보스가 아직 필드에 있음
+    expect(spawnsAt).toEqual([600]); // 10초에 1마리
+    expect(w.isBoss).toBe(true);
+    expect(w.inBossPrep).toBe(false);
+  });
+
+  it('일시정지 중에는 등장·간격이 멈춘다, startNext는 대기를 건너뛴다', () => {
+    const w = new DayWaves(CFG);
+    w.startDay(1, 1, false);
     w.paused = true;
     expect(simulate(w, 10)).toEqual([]);
-    expect(w.n).toBe(0);
     w.paused = false;
-    expect(simulate(w, 2.01)[0]).toBe(120);
-  });
-
-  it('다음 웨이브 즉시 시작: 번호 +1, 첫 걱정은 다음 틱에', () => {
-    const w = new WaveRunner(CFG);
     w.startNext();
-    expect(w.n).toBe(1);
     expect(w.step(FIXED_DT, true)).toBe(1);
-    w.startNext();
-    expect(w.n).toBe(2);
-    expect(w.count).toBe(7);
-    expect(w.step(FIXED_DT, false)).toBe(1);
-  });
-});
-
-describe('hpLevel (시뮬 --dayMode m5 대비)', () => {
-  it('기본은 웨이브 번호, 바꿔 끼우면 그 레벨로 HP 계산 (마리 수는 그대로)', () => {
-    const w = new WaveRunner(CFG);
-    w.startNext();
-    w.startNext();
-    w.startNext(); // n = 3
-    expect(w.hp).toBeCloseTo(waveHp(CFG, 3), 10);
-    w.hpLevel = (n) => Math.ceil(n / 3);
-    expect(w.hp).toBe(waveHp(CFG, 1));
-    expect(w.count).toBe(waveCount(CFG, 3));
   });
 });

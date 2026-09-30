@@ -1,124 +1,152 @@
-// M3 임시 웨이브 (스펙 §4.3.1). M5에서 하루 구조(아침·낮·저녁)로 교체한다.
-// 웨이브 n: 걱정 countBase + countStep × (n-1)마리, spawnInterval 간격, HP = hpBase × hpGrowthPerDay^(n-1).
-// 모든 걱정이 처치·가라앉으면 waveGap초 후 다음 웨이브. 무한 반복.
+// 하루 3웨이브 (스펙 §5.1, §5.7). M3·M4의 무한 웨이브를 대체한다.
+// 일차 d의 웨이브: 걱정 round((countBase + countStep × (d-1)) × worryMultiplier)마리(최소 1), spawnInterval 간격,
+// HP = hpBase × hpGrowthPerDay^(d-1) × worryMultiplier. 웨이브 칸 하나는 역류 보스로 교체될 수 있다 (D-021).
+//
+// 흐름: idle → (startDay) → delay → spawning → clearing → gap → spawning … → 저녁 clearing → done
+//   delay: 첫 웨이브 전 dayStartDelay초 (전날 넘어온 역류면 bossPrepSeconds초 준비 시간)
 
-/** 게임 시작 후 첫 웨이브까지 (M3 임시 값, M5에서 하루 흐름으로 교체) */
-export const M3_FIRST_WAVE_DELAY = 2;
 const EPS = 1e-9;
 
+export type SlotId = 'morning' | 'noon' | 'evening';
+export const SLOT_IDS: readonly SlotId[] = ['morning', 'noon', 'evening'];
+
 export interface WaveConfig {
+  wavesPerDay: number;
   countBase: number;
   countStep: number;
   spawnInterval: number;
   waveGap: number;
+  dayStartDelay: number;
+  bossPrepSeconds: number;
   hpBase: number;
   hpGrowthPerDay: number;
 }
 
-export function waveCount(cfg: WaveConfig, n: number): number {
-  return Math.max(0, Math.floor(cfg.countBase + cfg.countStep * (n - 1)));
+/** 일차·배율 → 한 웨이브의 걱정 수 (최소 1) */
+export function waveCount(cfg: WaveConfig, day: number, mult = 1): number {
+  return Math.max(1, Math.round((cfg.countBase + cfg.countStep * (day - 1)) * mult));
 }
 
-export function waveHp(cfg: WaveConfig, n: number): number {
-  return cfg.hpBase * Math.pow(cfg.hpGrowthPerDay, n - 1);
+/** 일차·배율 → 걱정 HP */
+export function waveHp(cfg: WaveConfig, day: number, mult = 1): number {
+  return cfg.hpBase * Math.pow(cfg.hpGrowthPerDay, day - 1) * mult;
 }
 
-/** waiting: 첫 웨이브 전 / spawning: 등장 중 / clearing: 다 나왔고 남은 걱정 대기 / gap: 다음 웨이브까지 */
-export type WavePhase = 'waiting' | 'spawning' | 'clearing' | 'gap';
+/**
+ * idle: 하루가 시작되지 않음 / delay: 첫 웨이브 전 / spawning: 등장 중 / clearing: 다 나왔고 남은 걱정 대기 /
+ * gap: 다음 웨이브까지 / done: 저녁 웨이브까지 끝남
+ */
+export type WavePhase = 'idle' | 'delay' | 'spawning' | 'clearing' | 'gap' | 'done';
 
-export class WaveRunner {
-  /** 현재 웨이브 번호 (0 = 아직 시작 전) */
-  n = 0;
-  phase: WavePhase = 'waiting';
-  /** waiting·gap: 다음 웨이브까지 남은 시간 / spawning: 다음 등장까지 남은 시간 */
-  timer: number;
+export class DayWaves {
+  day = 1;
+  /** 그날 걱정 수·HP 배율 (이벤트 worryMultiplier) */
+  mult = 1;
+  /** 지금(또는 다음) 웨이브 칸 번호 0 ~ wavesPerDay-1 */
+  slot = 0;
+  phase: WavePhase = 'idle';
+  /** delay·gap: 다음 웨이브까지 / spawning: 다음 등장까지 남은 시간 */
+  timer = 0;
   spawned = 0;
   /** 디버그: 웨이브 진행(등장·간격)만 멈춘다. 이미 나온 걱정은 계속 움직임 */
   paused = false;
-  /**
-   * HP 성장에 쓰는 단계: 웨이브 번호 → 레벨. 기본은 웨이브 번호 그대로 (M3 임시: 웨이브 = 일차).
-   * 시뮬레이터 --dayMode m5는 일차(⌈n / wavesPerDay⌉)로 바꿔 끼운다. M5에서 하루 구조로 교체.
-   */
-  hpLevel: (n: number) => number = (n) => n;
-  /**
-   * 역류 보스 웨이브 (§4.3.2). bossPending이면 다음 웨이브 시작 때 보스 웨이브를 끼워 넣는다.
-   * 보스 웨이브는 일반 웨이브 번호 n을 올리지 않는다 (보스 뒤에 원래 다음 웨이브가 이어짐).
-   */
-  bossPending = false;
-  /** 지금 진행 중인 웨이브가 보스 웨이브인지 */
-  isBoss = false;
-  /**
-   * 보스 HP 성장에 쓰는 일차. 인자 n = 보스 직전까지 시작한 일반 웨이브 번호 (보스는 웨이브 n+1 자리 앞에 끼어든다).
-   * M4 무한 웨이브는 하루 구조가 없으므로 항상 1일차. 시뮬 --dayMode m5는 ⌈(n+1) / wavesPerDay⌉로 바꿔 끼운다.
-   */
-  bossDayOf: (n: number) => number = () => 1;
+  /** 오늘 역류 보스로 교체된 칸 */
+  readonly bossSlots = new Set<number>();
+  /** 오늘 아침이 전날 넘어온 역류 (준비 시간 bossPrepSeconds) */
+  prepMorning = false;
 
-  /** 이번 보스(또는 다음 보스)의 일차 */
-  get bossDay(): number {
-    return this.bossDayOf(this.n);
+  constructor(private readonly cfg: WaveConfig) {}
+
+  get wavesPerDay(): number {
+    return this.cfg.wavesPerDay;
   }
 
-  constructor(
-    private readonly cfg: WaveConfig,
-    startDelay = M3_FIRST_WAVE_DELAY,
-  ) {
-    this.timer = startDelay;
+  /** 하루 시작: 첫 웨이브 전 대기. carriedBoss면 아침이 보스이고 대기 = 준비 시간 */
+  startDay(day: number, mult: number, carriedBoss: boolean): void {
+    this.day = day;
+    this.mult = mult;
+    this.slot = 0;
+    this.spawned = 0;
+    this.bossSlots.clear();
+    this.prepMorning = carriedBoss;
+    if (carriedBoss) this.bossSlots.add(0);
+    this.phase = 'delay';
+    this.timer = carriedBoss ? this.cfg.bossPrepSeconds : this.cfg.dayStartDelay;
   }
 
-  get count(): number {
-    return this.isBoss ? 1 : waveCount(this.cfg, this.n);
+  get slotId(): SlotId {
+    return SLOT_IDS[Math.min(this.slot, SLOT_IDS.length - 1)];
   }
 
-  /** 웨이브가 진행 중 (걱정이 나오는 중이거나 남아 있음). Unhappy 멈춤 판정에 쓴다 */
+  /** 지금 진행 중인 웨이브가 보스 웨이브 */
+  get isBoss(): boolean {
+    return this.active && this.bossSlots.has(this.slot);
+  }
+
+  /** 웨이브가 진행 중 (걱정이 나오는 중이거나 남아 있음). Unhappy 멈춤 판정 */
   get active(): boolean {
     return this.phase === 'spawning' || this.phase === 'clearing';
   }
 
+  /** 준비 시간 중 (전날 넘어온 역류의 아침 보스 전) */
+  get inBossPrep(): boolean {
+    return this.phase === 'delay' && this.prepMorning;
+  }
+
+  get count(): number {
+    return this.bossSlots.has(this.slot) ? 1 : waveCount(this.cfg, this.day, this.mult);
+  }
+
   get hp(): number {
-    return waveHp(this.cfg, this.hpLevel(this.n));
+    return waveHp(this.cfg, this.day, this.mult);
   }
 
-  /** 다음 웨이브 즉시 시작 (디버그 "다음 웨이브" 포함). 첫 걱정은 이번 틱에 나온다 */
+  /** 아직 시작하지 않은 오늘의 다음 웨이브 칸. 없으면 null (저녁 도중·이후) */
+  nextSlot(): number | null {
+    if (this.phase === 'delay' || this.phase === 'gap') return this.slot;
+    if (this.phase === 'spawning' || this.phase === 'clearing') {
+      return this.slot + 1 < this.cfg.wavesPerDay ? this.slot + 1 : null;
+    }
+    return null;
+  }
+
+  /** 웨이브 칸을 보스로 교체 (하루는 항상 wavesPerDay웨이브) */
+  markBoss(slot: number): void {
+    this.bossSlots.add(slot);
+  }
+
+  /** 디버그: 대기·간격 중이면 다음 웨이브를 바로 시작 */
   startNext(): void {
-    this.n += 1;
-    this.isBoss = false;
-    this.phase = 'spawning';
-    this.spawned = 0;
-    this.timer = 0;
-  }
-
-  /** 보스 웨이브 시작 (웨이브 번호 유지) */
-  private startBoss(): void {
-    this.bossPending = false;
-    this.isBoss = true;
-    this.phase = 'spawning';
-    this.spawned = 0;
-    this.timer = 0;
+    if (this.phase === 'delay' || this.phase === 'gap') this.timer = 0;
   }
 
   /**
-   * 한 틱 (§4.3.1 처리 순서 1단계). 이번 틱에 등장시킬 걱정 수를 돌려준다.
-   * fieldEmpty: 레인에 걱정이 하나도 없는지 (웨이브 종료 판정)
+   * 한 틱 (처리 순서 1단계). 이번 틱에 등장시킬 수를 돌려준다.
+   * fieldEmpty: 방어 레인에 걱정이 하나도 없는지 (웨이브 종료 판정)
    */
   step(dt: number, fieldEmpty: boolean): number {
-    if (this.paused) return 0;
-    if (this.phase === 'waiting' || this.phase === 'gap') {
+    if (this.paused || this.phase === 'idle' || this.phase === 'done') return 0;
+    if (this.phase === 'delay' || this.phase === 'gap') {
       this.timer -= dt;
       if (this.timer > EPS) return 0;
-      if (this.bossPending) this.startBoss();
-      else this.startNext();
+      this.phase = 'spawning';
+      this.spawned = 0;
+      this.timer = 0;
     }
     if (this.phase === 'clearing') {
-      if (fieldEmpty) {
+      if (!fieldEmpty) return 0;
+      if (this.slot + 1 < this.cfg.wavesPerDay) {
+        this.slot += 1;
         this.phase = 'gap';
         this.timer = this.cfg.waveGap;
+      } else {
+        this.phase = 'done';
       }
       return 0;
     }
-    // spawning
+    // spawning: 첫 마리는 시작 틱에, 이후 틱마다 시간을 빼고 0 이하가 될 때마다 한 마리씩
     let spawns = 0;
     const count = this.count;
-    // 첫 마리는 시작 틱에. 이후 틱마다 시간을 빼고 0 이하가 될 때마다 한 마리씩
     if (this.spawned > 0) this.timer -= dt;
     while (this.spawned < count && this.timer <= EPS) {
       this.spawned += 1;

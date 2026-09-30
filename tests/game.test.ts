@@ -11,7 +11,11 @@ const { spawnCostBase, spawnCostStep, releaseRefund, returnQueueCap } = data.bal
 const DOG = 'companion_animal';
 
 function game(seed = 1, cols = 4, rows = 4): GameState {
-  return new GameState(data, { cols, rows }, mulberry32(seed), gameGeometry(data.balance.lane.laneCap));
+  const g = new GameState(data, { cols, rows }, mulberry32(seed), gameGeometry(data.balance.lane.laneCap));
+  // 1일차를 평범한 하루로 시작 (이벤트 효과가 수치를 흔들지 않게) → waves 단계
+  g.debugForceEvent('plain');
+  g.confirmDay();
+  return g;
 }
 
 describe('GameState — 조각 생성', () => {

@@ -28,6 +28,10 @@ export interface Balance {
     countStep: number;
     spawnInterval: number;
     waveGap: number;
+    /** 하루 첫 웨이브 전 대기(초) */
+    dayStartDelay: number;
+    /** 전날 저녁에 예약된 역류: 다음 날 아침 보스 전 준비 시간(초) (D-021) */
+    bossPrepSeconds: number;
     hpGrowthPerDay: number;
   };
   abyss: {

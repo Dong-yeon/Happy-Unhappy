@@ -70,7 +70,7 @@ describe('applyOverrides', () => {
 
   it('덮어쓴 값이 시뮬레이션에 실제로 반영된다', () => {
     const cfg = simJson as SimConfig;
-    const opt = { seed: 1, grid: { cols: 5, rows: 4 }, untilWave: 0, dayReset: null, dayMode: 'm5' as const };
+    const opt = { seed: 1, grid: { cols: 5, rows: 4 } };
     const plain = runOne(data, cfg, POLICIES.idle, opt);
     const calm = runOne(applyOverrides(data, [parseSet('abyss.unhappyStallShadowPerSec=0'), parseSet('shadow.sinkShadow=0')]), cfg, POLICIES.idle, opt);
     expect(plain.backflows).toBeGreaterThan(0);

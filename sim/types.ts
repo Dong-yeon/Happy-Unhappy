@@ -25,4 +25,6 @@ export interface Policy {
   readonly name: string;
   /** null = 이번 결정에서는 아무것도 안 함 */
   decide(ctx: PolicyContext): Action | null;
+  /** 이정표 선택 (하루 시작 카드). 없으면 첫 선택지 */
+  milestone?(ctx: PolicyContext, choices: { id: string; label: string }[]): string;
 }

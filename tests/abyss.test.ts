@@ -17,7 +17,11 @@ const BLANKET = 'comfort_object';
 function game(edit: (d: GameData) => void = () => {}, seed = 1, cols = 4, rows = 4): GameState {
   const d = structuredClone(base);
   edit(d);
-  return new GameState(d, { cols, rows }, mulberry32(seed), gameGeometry(d.balance.lane.laneCap));
+  const g = new GameState(d, { cols, rows }, mulberry32(seed), gameGeometry(d.balance.lane.laneCap));
+  // 1일차를 평범한 하루로 시작 (이벤트 효과가 수치를 흔들지 않게) → waves 단계
+  g.debugForceEvent('plain');
+  g.confirmDay();
+  return g;
 }
 function ticks(g: GameState, n: number): CoreEvent[] {
   const out: CoreEvent[] = [];
@@ -221,9 +225,11 @@ describe('Unhappy 멈춤', () => {
 
   it('심연 유닛 0기 + 웨이브 진행 중에만 그림자 증가 (stallStart / stallEnd)', () => {
     const g = game();
-    g.wave.startNext(); // spawning
-    g.wave.paused = true; // 걱정은 안 나오게
-    const es = ticks(g, 60);
+    g.wave.startNext(); // 대기 건너뛰기 → 다음 틱에 아침 웨이브 시작
+    const es = ticks(g, 1);
+    g.wave.paused = true; // 이후 걱정은 더 안 나오게
+    expect(g.wave.active).toBe(true);
+    es.push(...ticks(g, 59));
     expect(g.unhappyStalled).toBe(true);
     expect(ofType(es, 'stallStart')).toHaveLength(1);
     expect(g.shadow).toBeCloseTo(rate * 1, 9);
@@ -284,7 +290,7 @@ describe('역류', () => {
     return g;
   }
 
-  it('shadowMax 도달 → 역류 예약 → 다음 웨이브 전에 보스 삽입, 일반 웨이브 번호 유지', () => {
+  it('shadowMax 도달 → 역류 예약 → 남은 다음 웨이브 칸(아침)이 보스로 교체', () => {
     const g = maxed(3);
     const es = ticks(g, 1);
     expect(ofType(es, 'backflowPending')).toHaveLength(1);
@@ -295,16 +301,16 @@ describe('역류', () => {
     expect(g.shadow).toBe(S.shadowMax);
     expect(g.stats.shadowPurified).toBe(0);
 
-    // 첫 웨이브 시작 시각(2초)에 보스가 나온다
-    const start = ticks(g, 120);
+    // 첫 웨이브 시작 시각(dayStartDelay)에 아침 칸이 보스로 나온다
+    const start = ticks(g, 60 * base.balance.wave.dayStartDelay);
     expect(ofType(start, 'backflowStart')).toHaveLength(1);
-    expect(g.wave).toMatchObject({ isBoss: true, n: 0 });
+    expect(g.wave).toMatchObject({ isBoss: true, slot: 0 });
     expect(g.defense.worries).toHaveLength(1);
     expect(g.defense.worries[0]).toMatchObject({ boss: true, hp: BOSS.hp });
     expect(g.stats.backflows).toBe(1);
   });
 
-  it('처치: 그림자 = shadowAfterBossWin (감소분은 shadowPurified), 기쁨 +joyReward, 다음은 일반 웨이브 1', () => {
+  it('처치: 그림자 = shadowAfterBossWin (감소분은 shadowPurified), 기쁨 +joyReward, 다음 칸(낮)은 일반 웨이브', () => {
     const g = maxed(3);
     const joy = g.joy;
     const es: CoreEvent[] = [];
@@ -314,9 +320,9 @@ describe('역류', () => {
     expect(g.stats.shadowPurified).toBe(S.shadowMax - S.shadowAfterBossWin);
     expect(g.joy).toBe(joy + BOSS.joyReward);
     expect(g.stats).toMatchObject({ bossWins: 1, bossLosses: 0 });
-    // 보스가 끝나면 원래 다음 웨이브 (번호 1)
-    for (let k = 0; k < 60 * 10 && g.wave.n === 0; k++) g.tick(FIXED_DT);
-    expect(g.wave).toMatchObject({ n: 1, isBoss: false });
+    // 보스(아침)가 끝나면 낮 웨이브는 일반 (하루는 항상 3웨이브)
+    for (let k = 0; k < 60 * 10 && !(g.wave.slot === 1 && g.wave.active); k++) g.tick(FIXED_DT);
+    expect(g.wave).toMatchObject({ slot: 1, isBoss: false });
   });
 
   it('가라앉음: 그림자 = shadowAfterBossLose, 기쁨 −joyPenalty(0 미만 불가), 층 extraHp +sinkLayerHp, 일반 규칙 미적용', () => {
@@ -357,7 +363,7 @@ function snapshot(g: GameState) {
     tick: g.tickCount,
     joy: g.joy,
     shadow: g.shadow,
-    wave: { n: g.wave.n, phase: g.wave.phase, boss: g.wave.isBoss },
+    wave: { day: g.day, slot: g.wave.slot, phase: g.wave.phase, boss: g.wave.isBoss },
     grid: g.grid.cells.map((c) => (c ? `${c.id}:${c.chain}:${c.tier}` : null)),
     defense: g.defense.units.map((u) => [u.id, u.hp, u.cd]),
     worries: g.defense.worries.map((w) => [w.id, w.x, w.y, w.hp]),
@@ -408,30 +414,28 @@ describe('역류 보스 HP 성장 (monsters.backflowBoss.hpGrowthPerDay)', () =>
     expect(bossHp(boss, 0)).toBe(350); // 1일차 미만은 1일차로
   });
 
-  it('M4 무한 웨이브: 몇 번째 웨이브든 보스는 1일차 HP', () => {
+  it('보스 HP는 그날 일차 기준: 1일차 = hp', () => {
     const g = game((d) => {
       d.monsters.backflowBoss.hpGrowthPerDay = 1.5;
       d.balance.lane.abyssAdvanceSpeed = 0;
     });
     g.summon(g.debugGrant(DOG, 1)!, 'unhappy');
-    for (let k = 0; k < 5; k++) g.wave.startNext(); // 일반 웨이브 5까지 진행한 셈
-    g.wave.phase = 'gap';
-    g.wave.timer = 0.5;
     g.debugScheduleBackflow();
-    ticks(g, 60);
-    expect(g.wave.isBoss).toBe(true);
+    ticks(g, 60 * base.balance.wave.dayStartDelay + 1);
     expect(g.defense.worries.find((w) => w.boss)?.hp).toBe(base.monsters.backflowBoss.hp);
   });
 
-  it('bossDayOf를 바꿔 끼우면 그 일차로 성장 (시뮬 --dayMode m5)', () => {
+  it('3일차 보스 HP = hp × hpGrowthPerDay²', () => {
     const g = game((d) => {
       d.monsters.backflowBoss.hpGrowthPerDay = 1.5;
       d.balance.lane.abyssAdvanceSpeed = 0;
     });
-    g.wave.bossDayOf = () => 3;
+    g.debugGotoDay(3);
+    g.debugForceEvent('plain');
+    g.confirmDay();
     g.summon(g.debugGrant(DOG, 1)!, 'unhappy');
     g.debugScheduleBackflow();
-    ticks(g, 150); // 첫 웨이브 자리(2초)에 보스
+    ticks(g, 60 * base.balance.wave.dayStartDelay + 1);
     expect(g.defense.worries.find((w) => w.boss)?.hp).toBeCloseTo(base.monsters.backflowBoss.hp * 2.25, 9);
   });
 });

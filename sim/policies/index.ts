@@ -21,6 +21,7 @@ const idle: Policy = {
 /** 가능한 행동 종류 중 무작위 → 그 안에서 무작위 대상 (보낼 곳도 무작위). 하한선 */
 const random: Policy = {
   name: 'random',
+  milestone: ({ rng }, choices) => pick(rng, choices).id,
   decide({ state, rng }) {
     const cells = state.grid.cells;
     const filled = cells.flatMap((c, i) => (c ? [i] : []));
@@ -46,6 +47,7 @@ const random: Policy = {
 /** 합칠 수 있으면 합치고, 나머지는 전부 창문으로 (= greedy). 퇴화 전략 검사: 역류가 반복돼야 함 */
 const alwaysHappy: Policy = {
   name: 'alwaysHappy',
+  milestone: (_ctx, choices) => choices.find((c) => c.id === 'happy')?.id ?? choices[0].id,
   decide({ state }) {
     return (
       bestMerge(state) ??
@@ -58,6 +60,7 @@ const alwaysHappy: Policy = {
 /** 합칠 수 있으면 합치고, 나머지는 전부 손거울로. 퇴화 전략 검사: 방어가 무너져야 함 */
 const alwaysUnhappy: Policy = {
   name: 'alwaysUnhappy',
+  milestone: (_ctx, choices) => choices.find((c) => c.id === 'unhappy')?.id ?? choices[0].id,
   decide({ state }) {
     return (
       bestMerge(state) ??
@@ -97,6 +100,8 @@ const hoarder: Policy = {
  */
 const balanced: Policy = {
   name: 'balanced',
+  // 잘하는 사람은 마주한다 (층 HP 감소 + 귀환 보너스)
+  milestone: (_ctx, choices) => choices.find((c) => c.id === 'unhappy')?.id ?? choices[0].id,
   decide({ state, cfg }) {
     const p = cfg.balanced;
     const lane = state.defense;

@@ -162,13 +162,15 @@ function checkBalance(c: Checker, v: unknown): { maxTier?: number; lifeLengthDay
   const h = c.nums(b.happy, `${p}.happy`, ['atk', 'atkInterval', 'range'], { min: 0 });
   if (h) c.num(h.atkInterval, `${p}.happy.atkInterval`, { min: 0.01 });
 
-  const w = c.obj(b.wave, `${p}.wave`, ['wavesPerDay', 'countBase', 'countStep', 'spawnInterval', 'waveGap', 'hpGrowthPerDay']);
+  const w = c.obj(b.wave, `${p}.wave`, ['wavesPerDay', 'countBase', 'countStep', 'spawnInterval', 'waveGap', 'dayStartDelay', 'bossPrepSeconds', 'hpGrowthPerDay']);
   if (w) {
     c.num(w.wavesPerDay, `${p}.wave.wavesPerDay`, { int: true, min: 1 });
     c.num(w.countBase, `${p}.wave.countBase`, { int: true, min: 0 });
     c.num(w.countStep, `${p}.wave.countStep`, { min: 0 });
     c.num(w.spawnInterval, `${p}.wave.spawnInterval`, { min: 0 });
     c.num(w.waveGap, `${p}.wave.waveGap`, { min: 0 });
+    c.num(w.dayStartDelay, `${p}.wave.dayStartDelay`, { min: 0 });
+    c.num(w.bossPrepSeconds, `${p}.wave.bossPrepSeconds`, { min: 0 });
     c.num(w.hpGrowthPerDay, `${p}.wave.hpGrowthPerDay`, { min: 0 });
   }
 
