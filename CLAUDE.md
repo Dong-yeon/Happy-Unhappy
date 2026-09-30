@@ -2,7 +2,7 @@
 
 ## 이 repo의 성격
 - 재미 검증용 프로토타입. 버리는 코드. 본 개발은 Godot에서 새로 한다.
-- 스펙: docs/prototype-spec.md / 세계관: docs/worldview.md
+- 문서 목차: docs/README.md / 스펙: docs/02-spec/prototype-spec.md / 세계관: docs/01-planning/worldview.md / 결정 기록: docs/03-decisions/decision-log.md
 
 ## 규칙
 - 스펙의 "제외" 항목은 구현하지 않는다. 범위 밖 기능이 필요해 보이면 구현 전에 물어본다.
