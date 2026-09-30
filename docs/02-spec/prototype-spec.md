@@ -1,8 +1,13 @@
-# Happy And Unhappy — 프로토타입 스펙 v0.4.2 (2026-09-30)
+# Happy And Unhappy — 프로토타입 스펙 v0.4.3 (2026-09-30)
 
 > Claude Code에서 프로토타입을 구현하기 위한 스펙이다.
 > 기획 배경: `docs/01-planning/worldview.md` / 결정 근거: `docs/03-decisions/decision-log.md` (D-010 ~ D-016)
 > **프로토타입은 버리는 코드다.** 목적은 재미 검증이며, 본 개발(Godot)로 넘기는 것은 코드가 아니라 이 규칙과 JSON 수치다.
+
+### v0.4.2 → v0.4.3
+- §8.1 시뮬레이터에 `--set key=value`(JSON 수치를 파일 수정 없이 덮어쓰기)·`--sweep key=a,b,c`(값별 비교 표, §8.2 M4 목표 충족 여부 포함) 추가.
+- §8.2 `hoarder` 목표에서 "1일차 전멸 아님" 삭제 (M3·M4 표 모두).
+- §6 `balance.shadow.weatherThresholds` 반영 (M4 구현 시 추가된 마음 날씨 경계값).
 
 ### v0.4.1 → v0.4.2
 - §4.3.2 심연 레인·그림자·역류 세부 규칙 추가 (M4 구현 기준). `balance.abyss.counterRange` 추가. 기획 변경 없음.
@@ -568,7 +573,8 @@ unhappyScore = sentDownTierSum    × wDownTier
     "sinkShadow": 4,
     "sinkLayerHp": 15,
     "shadowAfterBossWin": 30,
-    "shadowAfterBossLose": 60
+    "shadowAfterBossLose": 60,
+    "weatherThresholds": [25, 50, 75]
   },
   "days": {
     "lifeLengthDays": 14,
@@ -783,6 +789,9 @@ interface SaveData {
 - `sim/` 폴더 (게임 번들에 포함하지 않음). Node에서 core만 import해 **Phaser 없이** 실행. core가 Phaser 비의존이라 가능.
 - 실행: `npm run sim -- --policy balanced --seeds 200 --grid 5x4 --until wave:30` (M5 이후 `--until life`)
 - **`--dayMode m5`** (M5 전용 근사, v0.4.1): 3웨이브 = 하루로 보고 ① 하루 시작 시 `spawnedToday = 0` ② 하루 끝(저녁 웨이브 후) 방어 레인 유닛 해산 ③ 걱정 HP = `hpBase × hpGrowthPerDay^(일차-1)` (웨이브가 아니라 일차 기준) ④ 14일(42웨이브)에서 종료. 기존 `--dayReset N`은 ①만 하므로 참고용으로만 쓴다.
+- **`--set key=value`** (v0.4.3): JSON 수치를 파일 수정 없이 메모리 사본에서 덮어쓴다. 여러 번 쓸 수 있다. 키는 `balance.json` 기준(`shadow.shadowAfterBossWin`), 다른 파일은 이름을 앞에 붙인다(`monsters.backflowBoss.hp`, `chains.0.hero.atk`). 이미 있는 키만, 같은 타입만 허용하고 적용 후 데이터 검증을 다시 한다. 리포트에 덮어쓴 값을 기록한다.
+  - 예) `npm run sim -- --policy all --dayMode m5 --set shadow.shadowAfterBossWin=50 --set abyss.unhappyStallShadowPerSec=0.15`
+- **`--sweep key=a,b,c`** (v0.4.3): 한 키를 값별로 돌려 비교 표를 출력한다 (balanced·alwaysHappy 핵심 지표 + §8.2 M4 목표 충족 여부 열). `--policy`를 생략하면 전 정책. `--set`과 함께 쓰면 나머지 값은 고정.
 - 입력은 사람과 **같은 core API만** 사용: `spawn()`, `drop(from, to)`, `summon(cell, side)`, `release(cell)`. 봇 전용 치트 API 금지.
 - 사람 흉내 제약 (JSON `sim.json`): 결정 간격 `decisionInterval`(기본 0.6초 게임 시간), 반응 지연, 실수 확률 `mistakeRate`(엉뚱한 칸 드롭 → 원위치). 완벽한 봇이 기준이 되지 않도록.
 - 모든 봇은 `rng` 시드 고정. 같은 시드·같은 정책이면 같은 결과 (재현 가능).
@@ -833,7 +842,7 @@ interface SaveData {
   | 하루 끝 남는 기쁨 | 하루 시작 기쁨 이하 (쓰고도 남아돌면 경제가 너무 넉넉함) |
   | 소환 단계 분포 | 1단계만으로 버티지 못함 (1단계 비율 ≤ 50%) — "더 합칠까"의 이유가 있어야 함 (H2) |
   | 그리드 가득 참 비율 | 0보다 큼 (가득 차는 순간이 있어야 그리드 크기 비교 D-012가 의미 있음) |
-  | `hoarder` | `balanced`보다 나쁨, 단 1일차부터 전멸은 아님 (쌓아두기가 "손해"지 "즉사"는 아님) |
+  | `hoarder` | `balanced`보다 나쁨 (쌓아두기가 지배 전략이 아님) |
 - 난이도 곡선(첫 가라앉음 시점, 역류 빈도, 결말 분포)은 **M4 이후** `balanced`가 위/아래로 자원을 나눌 때 맞춘다.
 - **M4 부분 목표** (`--dayMode m5`, 14일 = 42웨이브, 시드 200)
   | 대상 | 목표 |
@@ -842,7 +851,7 @@ interface SaveData {
   | `alwaysUnhappy` | 가라앉음 다수 (1일차부터), 층 돌파는 일어남 |
   | `balanced` | 역류 **0~2회**, 층 돌파가 꾸준함 (이틀에 1층 이상), Unhappy에게 보낸 비율 30~60% |
   | `balanced` 그리드 | 가득 차는 순간이 있는 시드 ≥ 50% (귀환 조각이 들어오므로) |
-  | `hoarder` | `balanced`보다 나쁨, 1일차 전멸은 아님 |
+  | `hoarder` | `balanced`보다 나쁨 |
   | 귀환 대기열 소실 | `balanced`에서 거의 없음 (있으면 그리드가 좁거나 `returnQueueCap` 부족) |
 
 ## 9. 폴더 구조
