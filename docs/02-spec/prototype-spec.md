@@ -1,8 +1,14 @@
-# Happy And Unhappy — 프로토타입 스펙 v0.4.3 (2026-09-30)
+# Happy And Unhappy — 프로토타입 스펙 v0.4.4 (2026-09-30)
 
 > Claude Code에서 프로토타입을 구현하기 위한 스펙이다.
 > 기획 배경: `docs/01-planning/worldview.md` / 결정 근거: `docs/03-decisions/decision-log.md` (D-010 ~ D-016)
 > **프로토타입은 버리는 코드다.** 목적은 재미 검증이며, 본 개발(Godot)로 넘기는 것은 코드가 아니라 이 규칙과 JSON 수치다.
+
+### v0.4.3 → v0.4.4
+- 밸런스 A안 적용: `shadowAfterBossWin` 30→50, `shadowAfterBossLose` 60→40, `backflowBoss.joyReward` 40→0, `unhappyStallShadowPerSec` 0.3→0.15.
+- `monsters.backflowBoss.hpGrowthPerDay` 추가: 보스 HP = `hp × hpGrowthPerDay^(일차-1)` (M4 무한 웨이브는 1일차 취급, 임시 값 1).
+- §8.2 M4 목표에서 "`balanced` 그리드 가득 참" 제거 → M7 사람 플레이 metrics로 확인.
+- §8.1 `balanced`: 역류 예약 중이면 창문 보강 우선.
 
 ### v0.4.2 → v0.4.3
 - §8.1 시뮬레이터에 `--set key=value`(JSON 수치를 파일 수정 없이 덮어쓰기)·`--sweep key=a,b,c`(값별 비교 표, §8.2 M4 목표 충족 여부 포함) 추가.
@@ -395,7 +401,7 @@ M4 범위: **◐ 손거울 소환 + 심연 레인(같은 `Lane` 모듈의 `abyss
 **역류**
 - 그림자가 `shadowMax`에 닿은 틱에 `pendingBackflow = true` (이미 예약돼 있으면 무시).
 - M4(무한 웨이브)에서는 **다음 웨이브 시작 시 보스 웨이브를 끼워 넣는다**: 일반 웨이브 번호 n은 올라가지 않음 (보스 뒤에 원래 다음 웨이브가 이어짐). M5에서는 하루의 남은 웨이브 칸 하나를 교체.
-- 보스 웨이브: `backflowBoss` 1마리. 방어 레인에서 걱정과 같은 규칙으로 이동·정지·공격 (방어 유닛이 있으면 방어선에서 멈춤).
+- 보스 웨이브: `backflowBoss` 1마리 (HP = `hp × hpGrowthPerDay^(일차-1)`, M4 무한 웨이브는 1일차 취급. M5에서는 보스가 들어가는 웨이브 칸의 일차). 방어 레인에서 걱정과 같은 규칙으로 이동·정지·공격 (방어 유닛이 있으면 방어선에서 멈춤).
 - 예약 중에는 그림자가 `shadowMax`에 머문다.
 - 결과
   | 결과 | 처리 |
@@ -566,14 +572,14 @@ unhappyScore = sentDownTierSum    × wDownTier
     "counterRange": 60,
     "abyssDeathShadow": 5,
     "layerClearShadowReduce": 15,
-    "unhappyStallShadowPerSec": 0.3
+    "unhappyStallShadowPerSec": 0.15
   },
   "shadow": {
     "shadowMax": 100,
     "sinkShadow": 4,
     "sinkLayerHp": 15,
-    "shadowAfterBossWin": 30,
-    "shadowAfterBossLose": 60,
+    "shadowAfterBossWin": 50,
+    "shadowAfterBossLose": 40,
     "weatherThresholds": [25, 50, 75]
   },
   "days": {
@@ -624,7 +630,7 @@ unhappyScore = sentDownTierSum    × wDownTier
   "backflowBoss": {
     "name": "역류",
     "hp": 350, "speed": 20, "atk": 8, "atkInterval": 1.0,
-    "joyReward": 40, "joyPenalty": 30, "sinkLayerHp": 80
+    "joyReward": 0, "joyPenalty": 30, "sinkLayerHp": 80, "hpGrowthPerDay": 1
   }
 }
 ```
@@ -850,8 +856,8 @@ interface SaveData {
   | `alwaysHappy` | 역류 **반복** (14일 중 3회 이상), 층 돌파 0 |
   | `alwaysUnhappy` | 가라앉음 다수 (1일차부터), 층 돌파는 일어남 |
   | `balanced` | 역류 **0~2회**, 층 돌파가 꾸준함 (이틀에 1층 이상), Unhappy에게 보낸 비율 30~60% |
-  | `balanced` 그리드 | 가득 차는 순간이 있는 시드 ≥ 50% (귀환 조각이 들어오므로) |
   | `hoarder` | `balanced`보다 나쁨 |
+  | ~~`balanced` 그리드 가득 참~~ | v0.4.4에서 제거 → M7 사람 플레이 metrics(그리드 가득 참 비율)로 확인 (봇이 조각을 쌓아두지 않아 판정에 부적합) |
   | 귀환 대기열 소실 | `balanced`에서 거의 없음 (있으면 그리드가 좁거나 `returnQueueCap` 부족) |
 
 ## 9. 폴더 구조
