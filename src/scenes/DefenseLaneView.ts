@@ -4,7 +4,8 @@ import Phaser from 'phaser';
 import type { CoreEvent, GameState } from '../core/game';
 import type { Unit, Worry } from '../core/lane';
 import type { Chain } from '../data/types';
-import { DEFENSE_UNIT_Y, PORTAL, REGION } from './layout';
+import { isWildcard, type Piece } from '../core/grid';
+import { DEFENSE_UNIT_Y, PORTAL, PORTAL_RADIUS, REGION, cellCenter } from './layout';
 import { text } from './ui';
 
 const WORRY_R = 8;
@@ -19,7 +20,8 @@ const HP_BAR_W = 16;
 
 const SUMMON_MS = 250; // 조각 → 창문 → 슬롯
 const JOY_DOT_MS = 400; // 처치 지점 → 창문 → HUD 기쁨
-const SINK_MS = 400; // 거울 쪽으로 흘러감 → 그림자 벽에 흡수 (각 구간)
+const SINK_MS = 400;
+const RETURN_MS = 450; // 하루 끝 귀환: 유닛 자리 → 창문 → 그리드 칸 (D-022) // 거울 쪽으로 흘러감 → 그림자 벽에 흡수 (각 구간)
 
 interface HpView {
   container: Phaser.GameObjects.Container;
@@ -80,6 +82,20 @@ export class DefenseLaneView {
         case 'unitDie':
           this.removeUnit(e.unitId);
           break;
+        case 'dayReturn': {
+          if (e.side !== 'happy') break;
+          for (const r of e.returns) {
+            const v = this.units.get(r.unitId);
+            const from = v ? { x: v.container.x, y: v.container.y } : { x: r.x, y: DEFENSE_UNIT_Y };
+            if (v) {
+              this.scene.tweens.killTweensOf(v.container);
+              v.container.destroy();
+              this.units.delete(r.unitId);
+            }
+            this.returnFlow(r.piece, from.x, from.y, r.placedAt, r.lost);
+          }
+          break;
+        }
         default:
           break;
       }
@@ -152,6 +168,30 @@ export class DefenseLaneView {
     if (!v) return;
     this.scene.tweens.killTweensOf(v.container);
     this.scene.tweens.add({ targets: v.container, alpha: 0, duration: 150, onComplete: () => v.container.destroy() });
+  }
+
+  /**
+   * 하루 끝 귀환 (D-022): 살아남은 방어 유닛이 빛 조각이 되어 ☀ 창문 포탈을 지나 그리드 칸으로.
+   * 대기열이면 손거울 옆 대기 표시로, 소실이면 창문에서 사라짐.
+   */
+  private returnFlow(piece: Piece, x: number, y: number, placedAt: number | null, lost: boolean): void {
+    const fill = isWildcard(piece) ? 0xffffff : (this.chainColor.get(piece.chain) ?? 0xffffff);
+    const light = this.scene.add.rectangle(x, y, 12, 12, fill).setStrokeStyle(1, 0xffffff).setDepth(40);
+    const { cols, rows } = this.state.grid;
+    const dest =
+      placedAt !== null
+        ? cellCenter(cols, rows, placedAt)
+        : lost
+          ? { x: PORTAL.happy.x, y: PORTAL.happy.y }
+          : { x: PORTAL.unhappy.x + PORTAL_RADIUS + 16, y: PORTAL.unhappy.y };
+    this.scene.tweens.chain({
+      targets: light,
+      tweens: [
+        { x: PORTAL.happy.x, y: PORTAL.happy.y, duration: RETURN_MS / 2, ease: 'Sine.easeIn' },
+        { x: dest.x, y: dest.y, alpha: lost ? 0 : 1, duration: RETURN_MS / 2, ease: 'Sine.easeOut' },
+      ],
+      onComplete: () => light.destroy(),
+    });
   }
 
   /** 처치 → 작은 빛 점이 ☀ 창문을 지나 HUD 기쁨으로 (HUD 숫자는 core 값으로 이미 갱신됨) */

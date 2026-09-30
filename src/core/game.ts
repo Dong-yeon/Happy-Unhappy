@@ -116,8 +116,8 @@ export type CoreEvent =
   // §5.7
   | { type: 'dayBegin'; day: number; event: DayEvent; bossMorning: boolean }
   | { type: 'freePiece'; ret: LayerReturn }
-  | { type: 'disband'; unitIds: number[] }
-  | { type: 'dayReturn'; returns: LayerReturn[] }
+  /** 하루 끝 귀환 (D-022): 방어(side happy) → 심연(side unhappy) 순으로 한 번씩, 레인 안에서는 소환 순서 */
+  | { type: 'dayReturn'; side: Side; returns: LayerReturn[] }
   | { type: 'dayEnd'; day: number; entry: DiaryEntry; stats: DayStats }
   | { type: 'dayStart'; day: number; event: DayEvent }
   | { type: 'lifeEnd' };
@@ -582,20 +582,22 @@ export class GameState {
 
   /**
    * 하루 끝 처리 (저녁 웨이브의 마지막 걱정이 처치·가라앉음된 틱 이후, 이 순서):
-   * 1. 방어 레인 유닛 해산 2. 심연 레인 유닛 단계 그대로 귀환 3. 그림일기 생성 4. dayStats 초기화
+   * 1. 방어 레인의 살아남은 유닛 단계 그대로 귀환 (D-022). 방어선에 남은 걱정은 사라짐 (가라앉음 아님)
+   * 2. 심연 레인 유닛 단계 그대로 귀환
+   *    귀환 순서: 방어 → 심연, 각 레인 안에서는 소환 순서. 칸이 모자라면 대기열 → 상한 초과 소실
+   * 3. 그림일기 생성 4. dayStats 초기화
    * 그리드·그림자·심연 층·역류 예약은 다음 날로 이어진다.
    */
   private endDay(out: CoreEvent[]): void {
     this.phase = 'dayEnd';
     this.updateStall(out); // 멈춤 해제
-    // 1
-    const disbanded = this.defense.units.splice(0).map((u) => u.id);
-    this.defense.worries.length = 0;
-    out.push({ type: 'disband', unitIds: disbanded });
-    // 2
-    const back = this.abyss.units.splice(0);
-    const returns = back.map((u) => this.returnPiece(u.id, u.x, u.y, this.newPiece(u.chain, u.tier)));
-    out.push({ type: 'dayReturn', returns });
+    // 1·2 (귀환 연출 시작점은 유닛이 있던 곳)
+    this.defense.worries.length = 0; // 사라짐: 가라앉음·그림자·층 HP 없음
+    for (const side of ['happy', 'unhappy'] as const) {
+      const back = this.laneOf(side).units.splice(0);
+      const returns = back.map((u) => this.returnPiece(u.id, u.x, u.y, this.newPiece(u.chain, u.tier)));
+      out.push({ type: 'dayReturn', side, returns });
+    }
     // 3
     this.dayStats.joyEnd = this.joy;
     const prev = this.diary.length ? this.diary[this.diary.length - 1].resultLine : null;

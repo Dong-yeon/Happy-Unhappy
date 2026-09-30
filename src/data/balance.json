@@ -34,7 +34,7 @@
     "counterRange": 60,
     "abyssDeathShadow": 5,
     "layerClearShadowReduce": 15,
-    "unhappyStallShadowPerSec": 0.15
+    "unhappyStallShadowPerSec": 0.3
   },
   "shadow": {
     "shadowMax": 100,

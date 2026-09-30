@@ -86,7 +86,7 @@ export class AbyssLaneView {
   handle(events: CoreEvent[]): void {
     for (const e of events) {
       if (e.type === 'abyssUnitDie') this.removeUnit(e.unitId, true);
-      else if (e.type === 'layerClear' || e.type === 'dayReturn') {
+      else if (e.type === 'layerClear' || (e.type === 'dayReturn' && e.side === 'unhappy')) {
         for (const r of e.returns) {
           this.removeUnit(r.unitId, false);
           this.returnFlow(r.piece, r.x, r.y, r.placedAt, r.lost);

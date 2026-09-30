@@ -305,21 +305,25 @@ describe('역류의 시점 (D-021)', () => {
   });
 });
 
-describe('하루 끝 처리', () => {
-  it('해산 → 심연 귀환(단계 그대로) → 일기 순서, dayStats 초기화, 그리드·그림자·층은 유지', () => {
+describe('하루 끝 처리 (D-022: 방어 유닛도 귀환)', () => {
+  it('방어 귀환 → 심연 귀환 → 일기 순서, dayStats 초기화, 그리드·그림자·층은 유지', () => {
     const g = fresh((d) => (d.balance.lane.abyssAdvanceSpeed = 0));
     begin(g);
-    g.summon(g.debugGrant(DOG, 2)!, 'happy');
+    g.summon(g.debugGrant(DOG, 3)!, 'happy'); // 영웅이면 저녁까지 살아남는다
     g.summon(g.debugGrant(BLANKET, 2)!, 'unhappy');
     g.summon(g.debugGrant(DOG, 3)!, 'unhappy');
     g.abyss.addExtraHp(7);
     const es = runDay(g);
-    const order = es.filter((e) => ['disband', 'dayReturn', 'dayEnd'].includes(e.type)).map((e) => e.type);
-    expect(order).toEqual(['disband', 'dayReturn', 'dayEnd']);
+    const order = es
+      .filter((e) => e.type === 'dayReturn' || e.type === 'dayEnd')
+      .map((e) => (e.type === 'dayReturn' ? `return:${e.side}` : e.type));
+    expect(order).toEqual(['return:happy', 'return:unhappy', 'dayEnd']);
+    expect(ofType(es, 'disband' as CoreEvent['type'])).toEqual([]); // 해산 없음
     expect(g.defense.units).toEqual([]);
     expect(g.abyss.units).toEqual([]);
-    const [ret] = ofType(es, 'dayReturn');
-    expect(ret.returns.map((r) => [r.piece.chain, r.piece.tier])).toEqual([
+    const [def, aby] = ofType(es, 'dayReturn');
+    expect(def.returns.map((r) => [r.piece.chain, r.piece.tier])).toEqual([[DOG, 3]]);
+    expect(aby.returns.map((r) => [r.piece.chain, r.piece.tier])).toEqual([
       [BLANKET, 2],
       [DOG, 3], // 영웅도 단계 그대로
     ]);
@@ -328,6 +332,80 @@ describe('하루 끝 처리', () => {
     expect(g.dayStats).toMatchObject({ sunk: 0, defeated: 0, sentUp: 0, realSeconds: 0 });
     expect(g.lastDayStats!.sentUp).toBe(1);
     expect(g.lastDayStats!.realSeconds).toBeGreaterThan(30);
+  });
+
+  it('살아남은 방어 유닛은 단계 그대로 귀환 (성장 없음), 다친 유닛도 같은 조각', () => {
+    const g = fresh();
+    begin(g);
+    const r1 = g.summon(g.debugGrant(DOG, 1)!, 'happy');
+    g.summon(g.debugGrant(BLANKET, 2)!, 'happy');
+    if (r1.ok) r1.unit.hp = 1; // 다쳐 있어도
+    g.debugEndDay();
+    const [def] = ofType(g.tick(0), 'dayReturn');
+    expect(def.side).toBe('happy');
+    expect(def.returns.map((r) => [r.piece.chain, r.piece.tier])).toEqual([
+      [DOG, 1],
+      [BLANKET, 2],
+    ]);
+    for (const r of def.returns) expect(g.grid.cells[r.placedAt!]).toBe(r.piece);
+    expect(g.defense.units).toEqual([]);
+  });
+
+  it('귀환 순서: 방어 → 심연, 각 레인 안에서는 소환 순서 (piece id가 그 순서로 증가)', () => {
+    const g = fresh((d) => (d.balance.lane.abyssAdvanceSpeed = 0));
+    begin(g);
+    g.summon(g.debugGrant(BLANKET, 1)!, 'unhappy'); // 심연 먼저 소환해도
+    g.summon(g.debugGrant(DOG, 2)!, 'happy');
+    g.summon(g.debugGrant(DOG, 1)!, 'unhappy');
+    g.summon(g.debugGrant(BLANKET, 3)!, 'happy');
+    g.debugEndDay();
+    const rets = ofType(g.tick(0), 'dayReturn');
+    const seq = rets.flatMap((e) => e.returns.map((r) => `${e.side}:${r.piece.chain}:${r.piece.tier}`));
+    expect(seq).toEqual([
+      `happy:${DOG}:2`,
+      `happy:${BLANKET}:3`,
+      `unhappy:${BLANKET}:1`,
+      `unhappy:${DOG}:1`,
+    ]);
+    const ids = rets.flatMap((e) => e.returns.map((r) => r.piece.id));
+    expect([...ids].sort((a, b) => a - b)).toEqual(ids);
+  });
+
+  it('칸이 모자라면 대기열 → returnQueueCap 초과는 소실', () => {
+    const cap = base.balance.grid.returnQueueCap;
+    const g = fresh((d) => (d.balance.lane.abyssAdvanceSpeed = 0));
+    begin(g);
+    for (let k = 0; k < 5; k++) g.summon(g.debugGrant(DOG, 1)!, 'happy');
+    for (let k = 0; k < 5; k++) g.summon(g.debugGrant(BLANKET, 1)!, 'unhappy');
+    while (g.debugGrant(DOG, 1) !== null); // 그리드 가득
+    g.debugEndDay();
+    const rets = ofType(g.tick(0), 'dayReturn').flatMap((e) => e.returns);
+    expect(rets).toHaveLength(10);
+    expect(rets.filter((r) => r.placedAt !== null)).toHaveLength(0);
+    expect(rets.filter((r) => r.queued)).toHaveLength(cap);
+    expect(rets.filter((r) => r.lost)).toHaveLength(10 - cap);
+    // 대기열은 방어 유닛부터 찬다
+    expect(rets.slice(0, cap).every((r) => r.queued)).toBe(true);
+    expect(g.lostReturns).toBe(10 - cap);
+  });
+
+  it('방어선에 남은 걱정은 사라진다 (가라앉음 아님: 그림자·층 HP·sunk 변화 없음)', () => {
+    const g = fresh((d) => (d.balance.lane.abyssAdvanceSpeed = 0));
+    begin(g);
+    g.summon(g.debugGrant(DOG, 1)!, 'unhappy'); // 멈춤 그림자 방지
+    ticks(g, 60 * (base.balance.wave.dayStartDelay + 2)); // 아침 걱정 몇 마리 등장
+    expect(g.defense.worries.length).toBeGreaterThan(0);
+    const shadow = g.shadow;
+    const extra = g.abyss.wall.extraHp;
+    const sunk = g.stats.sunkCount;
+    g.debugEndDay();
+    const es = g.tick(0);
+    expect(g.defense.worries).toEqual([]);
+    expect(ofType(es, 'sink')).toEqual([]);
+    expect(g.shadow).toBe(shadow);
+    expect(g.abyss.wall.extraHp).toBe(extra);
+    expect(g.stats.sunkCount).toBe(sunk);
+    expect(g.lastDayStats!.sunk).toBe(0);
   });
 });
 
