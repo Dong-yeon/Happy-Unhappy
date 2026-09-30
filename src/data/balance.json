@@ -1,0 +1,49 @@
+{
+  "version": 2,
+  "start": { "joy": 60, "shadow": 0 },
+  "grid": {
+    "gridCols": 5,
+    "gridRows": 4,
+    "gridPresets": [[4, 4], [5, 4], [6, 4]],
+    "spawnCostBase": 10,
+    "spawnCostStep": 2,
+    "maxTier": 3,
+    "releaseRefund": 4,
+    "returnQueueCap": 6
+  },
+  "lane": {
+    "laneCap": 5,
+    "abyssAdvanceSpeed": 30
+  },
+  "happy": { "atk": 2, "atkInterval": 1.0, "range": 60 },
+  "wave": {
+    "wavesPerDay": 3,
+    "countBase": 6,
+    "countStep": 1,
+    "spawnInterval": 1.5,
+    "waveGap": 3,
+    "hpGrowthPerDay": 1.08
+  },
+  "abyss": {
+    "layerHpBase": 120,
+    "layerHpGrowth": 1.2,
+    "counterAtk": 4,
+    "counterAtkInterval": 1.5,
+    "abyssDeathShadow": 5,
+    "layerClearShadowReduce": 15,
+    "unhappyStallShadowPerSec": 0.3
+  },
+  "shadow": {
+    "shadowMax": 100,
+    "sinkShadow": 4,
+    "sinkLayerHp": 15,
+    "shadowAfterBossWin": 30,
+    "shadowAfterBossLose": 60
+  },
+  "days": {
+    "lifeLengthDays": 14,
+    "dailyLimit": 2,
+    "storeCap": 4
+  },
+  "diary": { "diarySinkThreshold": 3 }
+}

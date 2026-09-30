@@ -1,0 +1,31 @@
+{
+  "milestones": [
+    {
+      "id": "first_tooth",
+      "world": "modern",
+      "archetypeId": "first_loss",
+      "title": "처음 이가 빠진 날",
+      "text": "흔들리던 이가 드디어 빠졌다. 이 일은 누가 맡을까?",
+      "choices": [
+        { "id": "happy",   "label": "Happy가 맡는다 (웃어넘긴다)", "flag": "avoid", "joy": 25,  "shadow": 20 },
+        { "id": "unhappy", "label": "Unhappy가 맡는다 (마주한다)", "flag": "face",  "joy": -10, "shadow": 0, "faceLayerHpReduce": 0.3, "bonusReturnPiece": true }
+      ],
+      "diaryLine": "오늘은 이가 빠졌다."
+    }
+  ],
+  "seasonal": [
+    {
+      "id": "birthday", "world": "modern", "archetypeId": "celebration",
+      "title": "생일", "text": "오늘은 생일이다!",
+      "effects": { "joy": 30, "freePieces": [{ "chain": "companion_animal", "tier": 2 }], "worryMultiplier": 0.8 },
+      "diaryLine": "오늘은 내 생일이었다."
+    }
+  ],
+  "daily": [
+    { "id": "scraped_knee", "world": "modern", "title": "넘어져 다친 날", "effects": { "worryMultiplier": 1.4 }, "diaryLine": "운동장에서 넘어졌다." },
+    { "id": "favorite_lunch", "world": "modern", "title": "좋아하는 반찬", "effects": { "joy": 15 }, "diaryLine": "급식에 좋아하는 반찬이 나왔다." },
+    { "id": "rainy_day", "world": "modern", "title": "비 오는 날", "effects": { "chainWeight": { "comfort_object": 2 } }, "diaryLine": "하루 종일 비가 왔다." },
+    { "id": "dog_walk", "world": "modern", "title": "강아지와 산책", "effects": { "chainWeight": { "companion_animal": 2 } }, "diaryLine": "강아지랑 동네를 한 바퀴 돌았다." }
+  ],
+  "plainDay": { "title": "평범한 하루", "diaryLines": ["평범한 하루였다.", "창밖에 무지개가 떴다.", "오늘은 별일 없었다."] }
+}

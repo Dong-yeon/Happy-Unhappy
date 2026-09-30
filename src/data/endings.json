@@ -1,0 +1,15 @@
+{
+  "weights": {
+    "wUpTier": 3, "wDefeat": 0.5, "wJoy": 0.05,
+    "wDownTier": 3, "wLayer": 10, "wPurified": 0.3
+  },
+  "threshold": 100,
+  "balanceGap": 20,
+  "endings": {
+    "hidden": { "name": "Happy와 Unhappy의 화해", "title": "(Un)Happy",         "desc": "불행 속에도 행복이 들어 있었어." },
+    "solid":  { "name": "단단한 어른",            "title": "Happy And Unhappy", "desc": "슬픔을 안고도 웃을 수 있는 어른." },
+    "mask":   { "name": "웃는 가면의 어른",       "title": "Happy",             "desc": "늘 웃지만, 어딘가 비어 있다." },
+    "quiet":  { "name": "조용한 어른",            "title": "Unhappy",           "desc": "아픔을 알지만 웃는 법을 잊었다." },
+    "rainy":  { "name": "비 오는 어른",           "title": "Happy And Unhappy", "desc": "쓸쓸하지만, 우산을 건네는 누군가가 있다." }
+  }
+}

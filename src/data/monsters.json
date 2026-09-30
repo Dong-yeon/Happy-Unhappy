@@ -1,0 +1,8 @@
+{
+  "worry": { "name": "걱정", "hpBase": 18, "speed": 35, "atk": 3, "atkInterval": 1.2, "joyReward": 3 },
+  "backflowBoss": {
+    "name": "역류",
+    "hp": 350, "speed": 20, "atk": 8, "atkInterval": 1.0,
+    "joyReward": 40, "joyPenalty": 30, "sinkLayerHp": 80
+  }
+}
