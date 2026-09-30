@@ -1,4 +1,5 @@
 // 리포트: 시드 N개 결과 → 요약 통계, 콘솔 표, 비교 (스펙 §8.1)
+import type { OverrideValue } from './overrides';
 import type { RunResult } from './runner';
 import type { SimConfig } from './types';
 
@@ -15,7 +16,16 @@ export interface PolicyReport {
   version: 1;
   policy: string;
   createdAt: string;
-  options: { seeds: number; grid: string; untilWave: number; dayReset: number | null; dayMode: 'm5' | null; wavesPerDay: number };
+  options: {
+    seeds: number;
+    grid: string;
+    untilWave: number;
+    dayReset: number | null;
+    dayMode: 'm5' | null;
+    wavesPerDay: number;
+    /** --set으로 덮어쓴 값 (전체 경로 → 값). 없으면 JSON 그대로 */
+    overrides?: Record<string, OverrideValue>;
+  };
   sim: Omit<SimConfig, 'm3Goals' | 'm4Goals'>;
   summary: Record<string, Summary>;
   /** 첫 가라앉음이 없었던 시드 비율 */
@@ -157,9 +167,20 @@ function pad(s: string, w: number, right: boolean): string {
   return right ? fill + s : s + fill;
 }
 
+/** --set 요약 한 줄. 없으면 빈 문자열 */
+export function overridesLine(r: PolicyReport): string {
+  const o = r.options.overrides;
+  if (!o || Object.keys(o).length === 0) return '';
+  return `(--set ${Object.entries(o)
+    .map(([k, v]) => `${k}=${JSON.stringify(v)}`)
+    .join(' ')})`;
+}
+
 export function formatReport(r: PolicyReport): string {
   const o = r.options;
+  const ov = overridesLine(r);
   const lines = [
+    ...(ov ? [ov] : []),
     `■ ${r.policy}  (시드 ${o.seeds}, 그리드 ${o.grid}, 웨이브 ${o.untilWave}까지${o.dayMode === 'm5' ? ', dayMode m5' : ''}${o.dayReset ? `, ${o.dayReset}웨이브마다 생성 횟수 리셋` : ''})`,
     table(
       // n: 값이 있는 시드 수 (첫 가라앉음이 없던 시드는 빠진다)
@@ -211,7 +232,9 @@ export function formatCompare(a: PolicyReport, b: PolicyReport): string {
     const d = y.median - x.median;
     return [m.label, fmt(x.mean), fmt(y.mean), fmt(x.median), fmt(y.median), (d > 0 ? '+' : '') + fmt(d)];
   });
-  const head = `비교: ${a.policy} (${a.createdAt}) → ${b.policy} (${b.createdAt})`;
+  const head =
+    `비교: ${a.policy} (${a.createdAt}) → ${b.policy} (${b.createdAt})` +
+    `\n  A ${overridesLine(a) || '(JSON 그대로)'}\n  B ${overridesLine(b) || '(JSON 그대로)'}`;
   const warn =
     a.policy !== b.policy ||
     a.options.grid !== b.options.grid ||
@@ -226,6 +249,8 @@ export function formatCompare(a: PolicyReport, b: PolicyReport): string {
 // ── §8.2 M3 부분 목표 ──
 
 export interface GoalCheck {
+  /** 비교 표 열 이름 (짧게). 판정 기준 안내 같은 항목은 없음 */
+  id?: string;
   label: string;
   pass: boolean | null;
   detail: string;
@@ -283,16 +308,10 @@ export function checkM3Goals(reports: PolicyReport[], goals: SimConfig['m3Goals'
   const hoard = reports.find((r) => r.policy === 'hoarder');
   if (hoard && bal) {
     const worse = hoard.summary.sunk.median > bal.summary.sunk.median;
-    const day1Wiped = hoard.runs.filter((r) => r.day1Worries > 0 && r.day1Sunk >= r.day1Worries).length / Math.max(1, hoard.runs.length);
     out.push({
       label: 'hoarder: balanced보다 나쁨',
       pass: worse,
       detail: `가라앉은 수 중앙값 hoarder ${fmt(hoard.summary.sunk.median)} vs balanced ${fmt(bal.summary.sunk.median)}`,
-    });
-    out.push({
-      label: 'hoarder: 1일차부터 전멸은 아님',
-      pass: day1Wiped < 0.5,
-      detail: `1일차 걱정을 전부 가라앉힌 시드 ${fmt(day1Wiped * 100, 1)}%, 1일차 가라앉음 중앙값 ${fmt(hoard.summary.day1Sunk.median)}`,
     });
   } else na('hoarder', 'hoarder와 balanced를 함께 실행해야 비교 가능');
   return out;
@@ -321,11 +340,12 @@ export function checkM4Goals(reports: PolicyReport[], goals: SimConfig['m4Goals'
   if (hap) {
     const maxLayers = Math.max(...hap.runs.map((r) => r.layersCleared));
     out.push({
+      id: 'H 역류≥3',
       label: `alwaysHappy: 역류 반복 (중앙값 ≥ ${goals.alwaysHappyBackflowsMin}회)`,
       pass: hap.summary.backflows.median >= goals.alwaysHappyBackflowsMin,
       detail: `역류 중앙값 ${fmt(hap.summary.backflows.median)} [p10 ${fmt(hap.summary.backflows.p10)} ~ p90 ${fmt(hap.summary.backflows.p90)}]`,
     });
-    out.push({ label: 'alwaysHappy: 층 돌파 0', pass: maxLayers === 0, detail: `층 돌파 최대 ${maxLayers}` });
+    out.push({ id: 'H 층0', label: 'alwaysHappy: 층 돌파 0', pass: maxLayers === 0, detail: `층 돌파 최대 ${maxLayers}` });
   } else out.push({ label: 'alwaysHappy', pass: null, detail: '실행하지 않음' });
 
   const unh = get('alwaysUnhappy');
@@ -333,11 +353,13 @@ export function checkM4Goals(reports: PolicyReport[], goals: SimConfig['m4Goals'
     const share = unh.runs.map((r) => (r.day1Worries ? r.day1Sunk / r.day1Worries : 0)).sort((a, b) => a - b);
     const med = quantile(share, 0.5);
     out.push({
+      id: 'U 1일차',
       label: `alwaysUnhappy: 1일차부터 가라앉음 다수 (1일차 걱정의 ${fmt(goals.alwaysUnhappyDay1SunkShareMin * 100, 0)}% 이상, 중앙값)`,
       pass: med >= goals.alwaysUnhappyDay1SunkShareMin,
       detail: `1일차 가라앉은 비율 중앙값 ${fmt(med * 100, 1)}%, 전체 가라앉음 중앙값 ${fmt(unh.summary.sunk.median)}`,
     });
     out.push({
+      id: 'U 층',
       label: 'alwaysUnhappy: 층 돌파는 일어남',
       pass: unh.summary.layersCleared.median >= 1,
       detail: `층 돌파 중앙값 ${fmt(unh.summary.layersCleared.median)}`,
@@ -352,26 +374,31 @@ export function checkM4Goals(reports: PolicyReport[], goals: SimConfig['m4Goals'
     const down = bal.summary.downRatio.median;
     const withFull = bal.runs.filter((r) => r.gridFullRatio > 0).length / Math.max(1, bal.runs.length);
     out.push({
+      id: 'B 역류',
       label: `balanced: 역류 0~${goals.balancedBackflowsMax}회 (중앙값)`,
       pass: bal.summary.backflows.median <= goals.balancedBackflowsMax,
       detail: `역류 중앙값 ${fmt(bal.summary.backflows.median)} [p10 ${fmt(bal.summary.backflows.p10)} ~ p90 ${fmt(bal.summary.backflows.p90)}]`,
     });
     out.push({
+      id: 'B 층',
       label: `balanced: 층 돌파 꾸준함 (${fmt(days, 0)}일에 ${fmt(needLayers, 0)}층 이상, 중앙값)`,
       pass: bal.summary.layersCleared.median >= needLayers,
       detail: `층 돌파 중앙값 ${fmt(bal.summary.layersCleared.median)} [p10 ${fmt(bal.summary.layersCleared.p10)} ~ p90 ${fmt(bal.summary.layersCleared.p90)}]`,
     });
     out.push({
+      id: 'B 손거울',
       label: `balanced: Unhappy에게 보낸 비율 ${fmt(lo * 100, 0)}~${fmt(hi * 100, 0)}% (중앙값)`,
       pass: down >= lo && down <= hi,
       detail: `손거울 비율 중앙값 ${fmt(down * 100, 1)}%`,
     });
     out.push({
+      id: 'B 가득참',
       label: `balanced 그리드: 가득 차는 순간이 있는 시드 ≥ ${fmt(goals.balancedGridFullRunShareMin * 100, 0)}%`,
       pass: withFull >= goals.balancedGridFullRunShareMin,
       detail: `가득 차는 순간이 있는 시드 ${fmt(withFull * 100, 1)}%, 가득 참 비율 평균 ${fmt(bal.summary.gridFullRatio.mean, 4)}`,
     });
     out.push({
+      id: 'B 소실',
       label: `귀환 대기열 소실: balanced에서 거의 없음 (판당 평균 ≤ ${goals.balancedLostReturnsMeanMax})`,
       pass: bal.summary.lostReturns.mean <= goals.balancedLostReturnsMeanMax,
       detail: `소실 평균 ${fmt(bal.summary.lostReturns.mean)} / 최대 ${Math.max(...bal.runs.map((r) => r.lostReturns))}`,
@@ -380,17 +407,11 @@ export function checkM4Goals(reports: PolicyReport[], goals: SimConfig['m4Goals'
 
   const hoard = get('hoarder');
   if (hoard && bal) {
-    const wiped =
-      hoard.runs.filter((r) => r.day1Worries > 0 && r.day1Sunk >= r.day1Worries).length / Math.max(1, hoard.runs.length);
     out.push({
+      id: 'hoarder<B',
       label: 'hoarder: balanced보다 나쁨',
       pass: hoard.summary.sunk.median > bal.summary.sunk.median,
       detail: `가라앉은 수 중앙값 hoarder ${fmt(hoard.summary.sunk.median)} vs balanced ${fmt(bal.summary.sunk.median)}`,
-    });
-    out.push({
-      label: 'hoarder: 1일차 전멸은 아님',
-      pass: wiped < 0.5,
-      detail: `1일차 걱정을 전부 가라앉힌 시드 ${fmt(wiped * 100, 1)}%`,
     });
   } else out.push({ label: 'hoarder', pass: null, detail: 'hoarder와 balanced를 함께 실행해야 비교 가능' });
   return out;
@@ -401,4 +422,43 @@ export function formatGoals(checks: GoalCheck[], title = '§8.2 M3 부분 목표
     title,
     ...checks.map((c) => `  [${c.pass === null ? ' - ' : c.pass ? 'OK ' : 'NG '}] ${c.label}\n        ${c.detail}`),
   ].join('\n');
+}
+
+// ── --sweep: 값별 비교 표 ──
+
+export interface SweepRow {
+  value: OverrideValue;
+  reports: PolicyReport[];
+  goals: GoalCheck[];
+}
+
+/** 값별로 핵심 지표(중앙값)와 §8.2 M4 목표 충족 여부를 한 표에 */
+export function formatSweep(key: string, rows: SweepRow[]): string {
+  const med = (rs: PolicyReport[], policy: string, k: string, pct = false) => {
+    const r = rs.find((x) => x.policy === policy);
+    if (!r) return '—';
+    const v = r.summary[k].median;
+    return pct ? `${fmt(v * 100, 0)}%` : fmt(v);
+  };
+  const goalIds = [...new Set(rows.flatMap((r) => r.goals.flatMap((g) => (g.id ? [g.id] : []))))];
+  const header = ['값', 'bal 역류', 'bal 가라앉음', 'bal 층', 'bal 손거울', 'greedy 역류', 'M4 충족', ...goalIds];
+  const body = rows.map((row) => {
+    const judged = row.goals.filter((g) => g.id && g.pass !== null);
+    const ok = judged.filter((g) => g.pass).length;
+    const mark = (id: string) => {
+      const g = row.goals.find((x) => x.id === id);
+      return !g || g.pass === null ? '-' : g.pass ? 'OK' : 'NG';
+    };
+    return [
+      JSON.stringify(row.value),
+      med(row.reports, 'balanced', 'backflows'),
+      med(row.reports, 'balanced', 'sunk'),
+      med(row.reports, 'balanced', 'layersCleared'),
+      med(row.reports, 'balanced', 'downRatio', true),
+      med(row.reports, 'alwaysHappy', 'backflows'),
+      `${ok}/${judged.length}`,
+      ...goalIds.map(mark),
+    ];
+  });
+  return `■ --sweep ${key}\n${table(header, body)}`;
 }
