@@ -77,3 +77,16 @@ describe('WaveRunner', () => {
     expect(w.step(FIXED_DT, false)).toBe(1);
   });
 });
+
+describe('hpLevel (시뮬 --dayMode m5 대비)', () => {
+  it('기본은 웨이브 번호, 바꿔 끼우면 그 레벨로 HP 계산 (마리 수는 그대로)', () => {
+    const w = new WaveRunner(CFG);
+    w.startNext();
+    w.startNext();
+    w.startNext(); // n = 3
+    expect(w.hp).toBeCloseTo(waveHp(CFG, 3), 10);
+    w.hpLevel = (n) => Math.ceil(n / 3);
+    expect(w.hp).toBe(waveHp(CFG, 1));
+    expect(w.count).toBe(waveCount(CFG, 3));
+  });
+});

@@ -15,7 +15,7 @@ export interface PolicyReport {
   version: 1;
   policy: string;
   createdAt: string;
-  options: { seeds: number; grid: string; untilWave: number; dayReset: number | null };
+  options: { seeds: number; grid: string; untilWave: number; dayReset: number | null; dayMode: 'm5' | null; wavesPerDay: number };
   sim: Omit<SimConfig, 'm3Goals'>;
   summary: Record<string, Summary>;
   /** 첫 가라앉음이 없었던 시드 비율 */
@@ -25,6 +25,20 @@ export interface PolicyReport {
   /** 소환 단계 분포 (전 시드 합산 비율) */
   tierShare: Record<string, number>;
   runs: RunResult[];
+}
+
+/** 한 판의 일차별 (하루 끝 기쁨 − 하루 시작 기쁨) 중앙값. dayMode m5가 아니면 null */
+export function dayJoyDeltaMedian(r: RunResult): number | null {
+  const d = dayJoyDeltas(r);
+  return d.length === 0 ? null : quantile([...d].sort((a, b) => a - b), 0.5);
+}
+
+export function dayJoyDeltas(r: RunResult): number[] {
+  const out: number[] = [];
+  for (let i = 0; i < r.dayEndJoy.length; i++) {
+    if (r.dayStartJoy[i] !== undefined && r.dayEndJoy[i] !== undefined) out.push(r.dayEndJoy[i] - r.dayStartJoy[i]);
+  }
+  return out;
 }
 
 /** 선형 보간 백분위 (q ∈ [0,1]) */
@@ -53,6 +67,8 @@ export const METRICS: { key: string; label: string; get: (r: RunResult) => numbe
   { key: 'meanSummonTier', label: '소환 평균 단계', get: (r) => r.meanSummonTier },
   { key: 'upRatio', label: '창문(Happy) 비율', get: (r) => r.upRatio },
   { key: 'releases', label: '놓아주기 수', get: (r) => r.releases },
+  { key: 'dayJoyDelta', label: '하루 끝−시작 기쁨', get: (r) => dayJoyDeltaMedian(r) },
+  { key: 'day1Sunk', label: '1일차 가라앉음', get: (r) => r.day1Sunk },
   { key: 'mistakes', label: '실수(원위치)', get: (r) => r.mistakes },
 ];
 
@@ -127,12 +143,13 @@ function pad(s: string, w: number, right: boolean): string {
 export function formatReport(r: PolicyReport): string {
   const o = r.options;
   const lines = [
-    `■ ${r.policy}  (시드 ${o.seeds}, 그리드 ${o.grid}, 웨이브 ${o.untilWave}까지${o.dayReset ? `, ${o.dayReset}웨이브마다 하루 리셋` : ''})`,
+    `■ ${r.policy}  (시드 ${o.seeds}, 그리드 ${o.grid}, 웨이브 ${o.untilWave}까지${o.dayMode === 'm5' ? ', dayMode m5' : ''}${o.dayReset ? `, ${o.dayReset}웨이브마다 생성 횟수 리셋` : ''})`,
     table(
-      ['지표', '평균', '중앙값', 'p10', 'p90'],
+      // n: 값이 있는 시드 수 (첫 가라앉음이 없던 시드는 빠진다)
+      ['지표', '평균', '중앙값', 'p10', 'p90', 'n'],
       METRICS.map((m) => {
         const s = r.summary[m.key];
-        return [m.label, fmt(s.mean), fmt(s.median), fmt(s.p10), fmt(s.p90)];
+        return [m.label, fmt(s.mean), fmt(s.median), fmt(s.p10), fmt(s.p90), String(s.n)];
       }),
     ),
     `가라앉음 없이 끝난 시드: ${fmt(r.neverSankRatio * 100, 1)}%`,
@@ -160,7 +177,7 @@ export function formatComparison(reports: PolicyReport[]): string {
   const header = ['정책', ...keys.map((k) => METRICS.find((m) => m.key === k)!.label + ' (중앙값)'), '무가라앉음%'];
   const rows = reports.map((r) => [
     r.policy,
-    ...keys.map((k) => fmt(r.summary[k].median)),
+    ...keys.map((k) => fmt(r.summary[k].median) + (r.summary[k].n < r.runs.length ? ` (n=${r.summary[k].n})` : '')),
     fmt(r.neverSankRatio * 100, 1),
   ]);
   return table(header, rows);
@@ -176,7 +193,11 @@ export function formatCompare(a: PolicyReport, b: PolicyReport): string {
   });
   const head = `비교: ${a.policy} (${a.createdAt}) → ${b.policy} (${b.createdAt})`;
   const warn =
-    a.policy !== b.policy || a.options.grid !== b.options.grid || a.options.untilWave !== b.options.untilWave
+    a.policy !== b.policy ||
+    a.options.grid !== b.options.grid ||
+    a.options.untilWave !== b.options.untilWave ||
+    (a.options.dayMode ?? null) !== (b.options.dayMode ?? null) ||
+    a.options.dayReset !== b.options.dayReset
       ? '\n※ 정책·그리드·웨이브 조건이 다릅니다. 조건을 맞춰 비교하세요.'
       : '';
   return `${head}${warn}\n${table(['지표', '평균 A', '평균 B', '중앙값 A', '중앙값 B', 'Δ중앙값'], rows)}`;
@@ -191,51 +212,79 @@ export interface GoalCheck {
 }
 
 /**
- * idle: 웨이브 1에서 가라앉음.
- * balanced(창문만): holdUntilWave까지 가라앉음 거의 없음(시드 평균 ≤ earlySinkMeanMax) → 이후 점점 무너짐(후반 가라앉음이 더 많음).
+ * §8.2 M3 부분 목표 (v0.4.1 표). 기준은 --dayMode m5.
+ * 방어만 있는 M3에서는 "붕괴 시점"이 아니라 "경제가 실제 제약인가"를 본다.
  */
 export function checkM3Goals(reports: PolicyReport[], goals: SimConfig['m3Goals']): GoalCheck[] {
   const out: GoalCheck[] = [];
-  const idle = reports.find((r) => r.policy === 'idle');
-  if (idle) {
-    const s = idle.summary.firstSinkWave;
-    const all = idle.runs.every((r) => r.firstSinkWave === goals.idleFirstSinkWave);
-    out.push({
-      label: `idle: 웨이브 ${goals.idleFirstSinkWave}에서 가라앉음`,
-      pass: all,
-      detail: `첫 가라앉음 웨이브 중앙값 ${fmt(s.median)}, 전 시드 일치 ${all ? '예' : '아니오'}`,
-    });
-  } else {
-    out.push({ label: 'idle', pass: null, detail: '실행하지 않음' });
+  const na = (label: string, why: string) => out.push({ label, pass: null, detail: why });
+  const m5 = reports.every((r) => r.options.dayMode === 'm5');
+  if (!m5) {
+    out.push({ label: '판정 기준', pass: null, detail: 'M3 목표는 --dayMode m5 기준입니다. 이번 실행은 참고용으로만 보세요.' });
   }
+
+  const idle = reports.find((r) => r.policy === 'idle');
+  const idleLabel = `idle: ${goals.idleSinkByDay}일차에 가라앉음`;
+  if (idle) {
+    const limit = goals.idleSinkByDay * idle.options.wavesPerDay;
+    const ok = idle.runs.every((r) => r.firstSinkWave !== null && r.firstSinkWave <= limit);
+    out.push({ label: idleLabel, pass: ok, detail: `첫 가라앉음 웨이브 중앙값 ${fmt(idle.summary.firstSinkWave.median)} (웨이브 ${limit} 이내, 전 시드 ${ok ? '충족' : '미충족'})` });
+  } else na(idleLabel, 'idle을 실행하지 않음');
+
   const bal = reports.find((r) => r.policy === 'balanced');
   if (bal) {
-    const h = goals.balancedHoldUntilWave;
-    const early = bal.runs.map((r) => r.sunkByWave.slice(0, h).reduce((s, v) => s + v, 0));
-    const late = bal.runs.map((r) => r.sunkByWave.slice(h).reduce((s, v) => s + v, 0));
-    const earlyMean = early.reduce((s, v) => s + v, 0) / Math.max(1, early.length);
-    const lateMean = late.reduce((s, v) => s + v, 0) / Math.max(1, late.length);
-    const first = bal.summary.firstSinkWave;
+    const deltas = bal.runs.flatMap(dayJoyDeltas).sort((a, b) => a - b);
+    const med = quantile(deltas, 0.5);
+    const shareOk = deltas.length ? deltas.filter((d) => d <= goals.dayEndJoyMaxDelta).length / deltas.length : NaN;
     out.push({
-      label: `balanced: 웨이브 1~${h} 가라앉음 거의 없음 (평균 ≤ ${goals.balancedEarlySinkMeanMax})`,
-      pass: earlyMean <= goals.balancedEarlySinkMeanMax,
-      detail: `웨이브 1~${h} 가라앉음 평균 ${fmt(earlyMean)}, 첫 가라앉음 웨이브 중앙값 ${fmt(first.median)} [p10 ${fmt(first.p10)} ~ p90 ${fmt(first.p90)}]`,
+      label: 'balanced: 하루 끝 남는 기쁨 ≤ 하루 시작 기쁨',
+      pass: deltas.length ? med <= goals.dayEndJoyMaxDelta : null,
+      detail: deltas.length
+        ? `하루 끝−시작 기쁨 중앙값 ${fmt(med)} [p10 ${fmt(quantile(deltas, 0.1))} ~ p90 ${fmt(quantile(deltas, 0.9))}], 충족한 날 ${fmt(shareOk * 100, 1)}%`
+        : '하루 단위 기록 없음 (--dayMode m5 필요)',
     });
-    const [lo, hi] = goals.balancedFirstSinkWaveRange;
+
+    const t1 = bal.tierShare['1'] ?? 0;
     out.push({
-      label: `balanced: 첫 가라앉음이 웨이브 ${h} 전후 (중앙값 ${lo}~${hi})`,
-      pass: first.median >= lo && first.median <= hi,
-      detail: `첫 가라앉음 웨이브 중앙값 ${fmt(first.median)}`,
+      label: `balanced: 1단계만으로 버티지 못함 (1단계 소환 비율 ≤ ${fmt(goals.tier1ShareMax * 100, 0)}%)`,
+      pass: t1 <= goals.tier1ShareMax,
+      detail: `소환 단계 분포 ${tierLine(bal)}`,
+    });
+
+    const withFull = bal.runs.filter((r) => r.gridFullRatio > goals.gridFullRatioMin).length / Math.max(1, bal.runs.length);
+    const g = bal.summary.gridFullRatio;
+    out.push({
+      label: `balanced: 그리드 가득 참 비율 > 0 (가득 차는 순간이 있는 시드 ≥ ${fmt(goals.gridFullRunShareMin * 100, 0)}%)`,
+      pass: withFull >= goals.gridFullRunShareMin,
+      detail: `가득 참 비율 평균 ${fmt(g.mean, 4)} / 중앙값 ${fmt(g.median, 4)}, 가득 차는 순간이 있는 시드 ${fmt(withFull * 100, 1)}%`,
+    });
+  } else na('balanced', 'balanced를 실행하지 않음');
+
+  const hoard = reports.find((r) => r.policy === 'hoarder');
+  if (hoard && bal) {
+    const worse = hoard.summary.sunk.median > bal.summary.sunk.median;
+    const day1Wiped = hoard.runs.filter((r) => r.day1Worries > 0 && r.day1Sunk >= r.day1Worries).length / Math.max(1, hoard.runs.length);
+    out.push({
+      label: 'hoarder: balanced보다 나쁨',
+      pass: worse,
+      detail: `가라앉은 수 중앙값 hoarder ${fmt(hoard.summary.sunk.median)} vs balanced ${fmt(bal.summary.sunk.median)}`,
     });
     out.push({
-      label: `balanced: 웨이브 ${h + 1}~ 점점 무너짐 (후반 가라앉음 > 전반)`,
-      pass: bal.options.untilWave > h ? lateMean > earlyMean : null,
-      detail: `웨이브 ${h + 1}~${bal.options.untilWave} 가라앉음 평균 ${fmt(lateMean)}`,
+      label: 'hoarder: 1일차부터 전멸은 아님',
+      pass: day1Wiped < 0.5,
+      detail: `1일차 걱정을 전부 가라앉힌 시드 ${fmt(day1Wiped * 100, 1)}%, 1일차 가라앉음 중앙값 ${fmt(hoard.summary.day1Sunk.median)}`,
     });
-  } else {
-    out.push({ label: 'balanced', pass: null, detail: '실행하지 않음' });
-  }
+  } else na('hoarder', 'hoarder와 balanced를 함께 실행해야 비교 가능');
   return out;
+}
+
+function tierLine(r: PolicyReport): string {
+  return (
+    Object.entries(r.tierShare)
+      .sort(([a], [b]) => Number(a) - Number(b))
+      .map(([t, s]) => `${t}단계 ${fmt(s * 100, 1)}%`)
+      .join(' / ') || '—'
+  );
 }
 
 export function formatGoals(checks: GoalCheck[]): string {

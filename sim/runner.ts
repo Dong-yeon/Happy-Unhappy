@@ -12,8 +12,19 @@ export interface RunOptions {
   grid: { cols: number; rows: number };
   /** 이 웨이브가 끝나면(다음 웨이브까지의 간격에 들어가면) 종료 */
   untilWave: number;
-  /** N웨이브마다 spawnedToday = 0 (M5 하루 구조 근사). null이면 리셋 없음 */
+  /** N웨이브마다 spawnedToday = 0 (참고용, 생성 횟수 리셋만). null이면 리셋 없음 */
   dayReset: number | null;
+  /**
+   * 'm5': M5 하루 구조 근사 (§8.1 v0.4.1). wavesPerDay웨이브 = 하루.
+   * ① 하루 시작 spawnedToday = 0 ② 하루 끝(저녁 웨이브 정리 후) 방어 유닛 해산 ③ 걱정 HP는 일차 기준 ④ lifeLengthDays일에서 종료.
+   * untilWave는 무시하고 lifeLengthDays × wavesPerDay로 정한다. dayReset과 함께 쓰지 않는다.
+   */
+  dayMode?: 'm5' | null;
+}
+
+/** dayMode m5의 종료 웨이브 */
+export function m5LastWave(data: GameData): number {
+  return data.balance.days.lifeLengthDays * data.balance.wave.wavesPerDay;
 }
 
 export interface RunResult {
@@ -45,6 +56,14 @@ export interface RunResult {
   /** 반응 지연 사이에 상태가 바뀌어 core가 거절한 행동 */
   staleActions: number;
   playTime: number;
+  /** dayMode m5: 일차별 하루 시작·끝 기쁨 (index 0 = 1일차). 그 외 모드는 빈 배열 */
+  dayStartJoy: number[];
+  dayEndJoy: number[];
+  /** 1일차(첫 wavesPerDay웨이브)의 걱정 수·가라앉은 수 */
+  day1Worries: number;
+  day1Sunk: number;
+  /** 방어 유닛 해산 수 (dayMode m5) */
+  disbanded: number;
 }
 
 /** 봇 rng는 게임 rng와 다른 수열 (같은 시드에서도 서로 간섭하지 않게) */
@@ -55,6 +74,16 @@ function botSeed(seed: number): number {
 export function runOne(data: GameData, cfg: SimConfig, policy: Policy, opt: RunOptions): RunResult {
   const state = new GameState(data, opt.grid, mulberry32(opt.seed), defenseGeometry(data.balance.lane.laneCap));
   const botRng = mulberry32(botSeed(opt.seed));
+  const m5 = opt.dayMode === 'm5';
+  const wpd = data.balance.wave.wavesPerDay;
+  const untilWave = m5 ? m5LastWave(data) : opt.untilWave;
+  const dayOf = (n: number) => Math.ceil(n / wpd);
+  if (m5) state.wave.hpLevel = dayOf; // ③ HP는 일차 기준 (마리 수는 웨이브 기준 그대로)
+  const dayStartJoy: number[] = [];
+  const dayEndJoy: number[] = [];
+  let disbanded = 0;
+  let endedDay = 0;
+  let day1Worries = 0;
 
   const sunkByWave: number[] = [];
   const joyByWave: number[] = [];
@@ -123,8 +152,21 @@ export function runOne(data: GameData, cfg: SimConfig, policy: Policy, opt: RunO
       }
       lastWave = w.n;
       if (opt.dayReset && w.n > 1 && (w.n - 1) % opt.dayReset === 0) state.spawnedToday = 0;
+      if (m5 && (w.n - 1) % wpd === 0) {
+        // ① 하루 시작 (첫 걱정은 이미 이번 틱에 나왔지만 생성 횟수 리셋은 봇의 다음 행동 전)
+        state.spawnedToday = 0;
+        dayStartJoy[dayOf(w.n) - 1] = state.joy;
+      }
+    }
+    if (m5 && w.n % wpd === 0 && w.phase === 'gap' && endedDay < dayOf(w.n)) {
+      // ② 하루 끝: 저녁 웨이브 정리 후 방어 유닛 해산 (M5에서 core의 하루 끝 처리로 대체)
+      endedDay = dayOf(w.n);
+      dayEndJoy[endedDay - 1] = state.joy;
+      disbanded += state.defense.units.length;
+      state.defense.units.length = 0;
     }
     for (const e of events) {
+      if (e.type === 'spawnWorry' && w.n <= wpd) day1Worries += 1;
       if (e.type === 'worryDie') kills += 1;
       else if (e.type === 'sink') {
         const idx = Math.max(0, w.n - 1);
@@ -133,10 +175,10 @@ export function runOne(data: GameData, cfg: SimConfig, policy: Policy, opt: RunO
       }
     }
 
-    if (w.n > opt.untilWave || (w.n === opt.untilWave && w.phase === 'gap')) break;
+    if (w.n > untilWave || (w.n === untilWave && w.phase === 'gap')) break;
   }
 
-  const reachedWave = Math.min(state.wave.n, opt.untilWave);
+  const reachedWave = Math.min(state.wave.n, untilWave);
   joyByWave[reachedWave - 1] ??= state.joy;
   for (let k = 0; k < reachedWave; k++) sunkByWave[k] ??= 0;
   sunkByWave.length = reachedWave;
@@ -163,5 +205,10 @@ export function runOne(data: GameData, cfg: SimConfig, policy: Policy, opt: RunO
     upRatio: summons === 0 ? null : up / summons,
     ...counts,
     playTime: state.playTime,
+    dayStartJoy,
+    dayEndJoy,
+    day1Worries,
+    day1Sunk: sunkByWave.slice(0, wpd).reduce((s, v) => s + v, 0),
+    disbanded,
   };
 }

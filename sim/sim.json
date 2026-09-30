@@ -10,12 +10,10 @@
     "proactiveSummonTier": 2
   },
   "m3Goals": {
-    "idleFirstSinkWave": 1,
-    "balancedHoldUntilWave": 8,
-    "balancedEarlySinkMeanMax": 1,
-    "balancedFirstSinkWaveRange": [
-      6,
-      12
-    ]
+    "idleSinkByDay": 1,
+    "dayEndJoyMaxDelta": 0,
+    "tier1ShareMax": 0.5,
+    "gridFullRatioMin": 0,
+    "gridFullRunShareMin": 0.5
   }
 }

@@ -1,6 +1,7 @@
 // 자동 플레이 시뮬레이터 CLI (스펙 §8.1). Node 전용: core + data + layout 좌표만 import (Phaser 없음).
 //
 //   npm run sim -- --policy balanced --seeds 200 --grid 5x4 --until wave:30 [--dayReset 3] [--out 파일]
+//   npm run sim -- --policy all --seeds 200 --grid 5x4 --dayMode m5      (M5 하루 구조 근사, 14일 = 42웨이브)
 //   npm run sim -- --policy idle,random,alwaysHappy,hoarder,balanced ...   (여러 정책 + 비교 표)
 //   npm run sim -- --policy all ...
 //   npm run sim -- --compare a.json b.json
@@ -19,7 +20,7 @@ import {
   formatReport,
   type PolicyReport,
 } from './report';
-import { runOne } from './runner';
+import { m5LastWave, runOne } from './runner';
 import simJson from './sim.json';
 import type { SimConfig } from './types';
 
@@ -32,6 +33,8 @@ interface Args {
   grid: { cols: number; rows: number };
   untilWave: number;
   dayReset: number | null;
+  dayMode: 'm5' | null;
+  untilGiven: boolean;
   out: string | null;
   compare: [string, string] | null;
 }
@@ -78,7 +81,22 @@ function parseArgs(argv: string[]): Args {
   const dayReset = dr === undefined ? null : Number(dr);
   if (dayReset !== null && (!Number.isInteger(dayReset) || dayReset < 1)) fail('--dayReset은 1 이상의 정수');
 
-  return { policies, seeds, grid, untilWave, dayReset, out: get('out') ?? null, compare };
+  const dm = get('dayMode');
+  if (dm !== undefined && dm !== 'm5') fail('--dayMode는 m5만 지원');
+  const dayMode = dm === 'm5' ? 'm5' : null;
+  if (dayMode && dayReset !== null) fail('--dayMode m5는 생성 횟수 리셋을 포함하므로 --dayReset과 함께 쓰지 않습니다');
+
+  return {
+    policies,
+    seeds,
+    grid,
+    untilWave,
+    dayReset,
+    dayMode,
+    untilGiven: get('until') !== undefined,
+    out: get('out') ?? null,
+    compare,
+  };
 }
 
 function today(): string {
@@ -106,6 +124,8 @@ function main(): void {
     fail(`--grid ${args.grid.cols}x${args.grid.rows}는 gridPresets에 없음`);
   }
   const cfg = simJson as SimConfig;
+  const untilWave = args.dayMode === 'm5' ? m5LastWave(data) : args.untilWave;
+  if (args.dayMode === 'm5' && args.untilGiven) console.warn(`sim: --dayMode m5는 ${untilWave}웨이브(14일)에서 끝나므로 --until은 무시합니다`);
   if (args.out && args.policies.length > 1) fail('--out은 정책 하나일 때만');
 
   mkdirSync(OUT_DIR, { recursive: true });
@@ -113,15 +133,28 @@ function main(): void {
   for (const name of args.policies) {
     const started = Date.now();
     const runs = Array.from({ length: args.seeds }, (_, i) =>
-      runOne(data, cfg, POLICIES[name], { seed: i + 1, grid: args.grid, untilWave: args.untilWave, dayReset: args.dayReset }),
+      runOne(data, cfg, POLICIES[name], {
+        seed: i + 1,
+        grid: args.grid,
+        untilWave,
+        dayReset: args.dayReset,
+        dayMode: args.dayMode,
+      }),
     );
     const report = buildReport(
       name,
       runs,
-      { seeds: args.seeds, grid: `${args.grid.cols}x${args.grid.rows}`, untilWave: args.untilWave, dayReset: args.dayReset },
+      {
+        seeds: args.seeds,
+        grid: `${args.grid.cols}x${args.grid.rows}`,
+        untilWave,
+        dayReset: args.dayReset,
+        dayMode: args.dayMode,
+        wavesPerDay: data.balance.wave.wavesPerDay,
+      },
       cfg,
     );
-    const file = args.out ?? join(OUT_DIR, `${today()}_${name}.json`);
+    const file = args.out ?? join(OUT_DIR, `${today()}_${name}${args.dayMode ? `_${args.dayMode}` : ''}.json`);
     writeFileSync(file, JSON.stringify(report, null, 2));
     reports.push(report);
     console.log(formatReport(report));

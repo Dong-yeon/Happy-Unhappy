@@ -35,6 +35,11 @@ export class WaveRunner {
   spawned = 0;
   /** 디버그: 웨이브 진행(등장·간격)만 멈춘다. 이미 나온 걱정은 계속 움직임 */
   paused = false;
+  /**
+   * HP 성장에 쓰는 단계: 웨이브 번호 → 레벨. 기본은 웨이브 번호 그대로 (M3 임시: 웨이브 = 일차).
+   * 시뮬레이터 --dayMode m5는 일차(⌈n / wavesPerDay⌉)로 바꿔 끼운다. M5에서 하루 구조로 교체.
+   */
+  hpLevel: (n: number) => number = (n) => n;
 
   constructor(
     private readonly cfg: WaveConfig,
@@ -48,7 +53,7 @@ export class WaveRunner {
   }
 
   get hp(): number {
-    return waveHp(this.cfg, this.n);
+    return waveHp(this.cfg, this.hpLevel(this.n));
   }
 
   /** 다음 웨이브 즉시 시작 (디버그 "다음 웨이브" 포함). 첫 걱정은 이번 틱에 나온다 */

@@ -4,7 +4,8 @@ import { rawGameData } from '../src/data';
 import type { GameData } from '../src/data/types';
 import { POLICIES } from '../sim/policies';
 import { buildReport, checkM3Goals, quantile, summarize } from '../sim/report';
-import { runOne, type RunOptions } from '../sim/runner';
+import { m5LastWave, runOne, type RunOptions } from '../sim/runner';
+import { waveHp } from '../src/core/wave';
 import simJson from '../sim/sim.json';
 import type { SimConfig } from '../sim/types';
 
@@ -85,12 +86,56 @@ describe('통계', () => {
 
   it('리포트: 곡선 길이 = 도달 웨이브, 소환 단계 비율 합 = 1, M3 목표 판정', () => {
     const runs = [1, 2, 3].map((s) => runOne(data, cfg, POLICIES.balanced, opt(s)));
-    const rep = buildReport('balanced', runs, { seeds: 3, grid: '5x4', untilWave: 6, dayReset: null }, cfg);
+    const rep = buildReport('balanced', runs, { seeds: 3, grid: '5x4', untilWave: 6, dayReset: null, dayMode: null, wavesPerDay: 3 }, cfg);
     expect(rep.curves).toHaveLength(6);
     const share = Object.values(rep.tierShare).reduce((s, v) => s + v, 0);
     expect(share).toBeCloseTo(1, 10);
     const idle = buildReport('idle', [runOne(data, cfg, POLICIES.idle, opt(1))], rep.options, cfg);
     const checks = checkM3Goals([idle, rep], cfg.m3Goals);
-    expect(checks[0].pass).toBe(true); // idle은 웨이브 1에서 가라앉음
+    expect(checks[0]).toMatchObject({ label: '판정 기준', pass: null }); // dayMode m5가 아니면 참고용 안내
+    expect(checks.find((c) => c.label.startsWith('idle'))?.pass).toBe(true); // idle은 1일차에 가라앉음
+  });
+});
+
+describe('--dayMode m5 (§8.1 v0.4.1)', () => {
+  const WPD = data.balance.wave.wavesPerDay;
+  const DAYS = data.balance.days.lifeLengthDays;
+  const m5 = (seed: number, policy = 'balanced') =>
+    runOne(data, cfg, POLICIES[policy], opt(seed, { dayMode: 'm5', untilWave: 999 }));
+
+  it('④ lifeLengthDays × wavesPerDay웨이브에서 끝남 (untilWave 무시)', () => {
+    expect(m5LastWave(data)).toBe(DAYS * WPD);
+    const r = m5(1);
+    expect(r.reachedWave).toBe(DAYS * WPD);
+    expect(r.dayStartJoy).toHaveLength(DAYS);
+    expect(r.dayEndJoy).toHaveLength(DAYS);
+  });
+
+  it('② 하루 끝마다 방어 유닛 해산', () => {
+    const r = m5(2);
+    expect(r.summons).toBeGreaterThan(0);
+    expect(r.disbanded).toBeGreaterThan(0);
+    expect(r.disbanded).toBeLessThanOrEqual(r.summons);
+  });
+
+  it('① 하루 시작마다 생성 횟수 리셋 → 같은 봇이 더 많이 생성', () => {
+    const plain = runOne(data, cfg, POLICIES.alwaysHappy, opt(1, { untilWave: DAYS * WPD }));
+    const day = runOne(data, cfg, POLICIES.alwaysHappy, opt(1, { dayMode: 'm5' }));
+    expect(day.spawns).toBeGreaterThan(plain.spawns);
+  });
+
+  it('③ 걱정 HP는 일차 기준 (같은 날의 웨이브는 같은 HP)', () => {
+    const cfgW = { ...data.balance.wave, hpBase: data.monsters.worry.hpBase };
+    // 4웨이브 = 2일차 첫 웨이브 → 레벨 2, 웨이브 3 = 1일차 저녁 → 레벨 1
+    expect(waveHp(cfgW, Math.ceil(3 / WPD))).toBe(waveHp(cfgW, 1));
+    expect(waveHp(cfgW, Math.ceil(4 / WPD))).toBe(waveHp(cfgW, 2));
+  });
+
+  it('idle은 1일차에 가라앉고, 결과는 시드로 재현된다', () => {
+    const a = m5(5, 'idle');
+    expect(a.firstSinkWave).not.toBeNull();
+    expect(a.firstSinkWave!).toBeLessThanOrEqual(WPD);
+    expect(a.day1Sunk).toBe(a.day1Worries);
+    expect(m5(5)).toEqual(m5(5));
   });
 });
