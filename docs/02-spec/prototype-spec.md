@@ -1,8 +1,12 @@
-# Happy And Unhappy — 프로토타입 스펙 v0.4.1 (2026-09-30)
+# Happy And Unhappy — 프로토타입 스펙 v0.4.2 (2026-09-30)
 
 > Claude Code에서 프로토타입을 구현하기 위한 스펙이다.
 > 기획 배경: `docs/01-planning/worldview.md` / 결정 근거: `docs/03-decisions/decision-log.md` (D-010 ~ D-016)
 > **프로토타입은 버리는 코드다.** 목적은 재미 검증이며, 본 개발(Godot)로 넘기는 것은 코드가 아니라 이 규칙과 JSON 수치다.
+
+### v0.4.1 → v0.4.2
+- §4.3.2 심연 레인·그림자·역류 세부 규칙 추가 (M4 구현 기준). `balance.abyss.counterRange` 추가. 기획 변경 없음.
+- §8.2에 M4 부분 목표 추가.
 
 ### v0.4 → v0.4.1
 - §8.1 `--dayMode m5` 추가: M5 하루 구조를 근사할 때 **생성 횟수 리셋 + 하루 끝 방어 유닛 해산 + 걱정 HP를 일차 기준으로 성장**을 함께 적용 (`--dayReset`은 생성 횟수 리셋만이라 근사가 불완전).
@@ -339,6 +343,87 @@ M3 범위: **공용 레인 전투 모듈 + 방어 레인 + Happy 거점 + ☀ �
 - 웨이브: 마리 수·HP 공식, 웨이브 종료 → `waveGap` 후 다음 웨이브
 - 시드 고정 시 같은 입력이면 같은 결과
 
+### 4.3.2 심연 레인·그림자·역류 세부 규칙 (v0.4.2, M4 구현 기준)
+
+M4 범위: **◐ 손거울 소환 + 심연 레인(같은 `Lane` 모듈의 `abyss`) + 층 돌파 귀환 + Unhappy 멈춤 + 그림자 + 역류 보스 + 마음 날씨(텍스트).** 하루 구조·이벤트는 M5.
+
+**한 틱 처리 순서 (§4.3.1을 확장, 고정)**
+1. 웨이브 진행 (걱정·역류 보스 등장)
+2. 방어 레인 step (§4.3.1의 2~6)
+3. 심연 레인 step: 유닛 전진 → 유닛의 벽 공격 → 벽의 반격 → 사망 처리 → 층 돌파 처리
+4. Unhappy 멈춤에 의한 그림자 증가
+5. 이번 틱의 가라앉음 반영 (그림자 +, 현재 층 추가 HP +)
+6. 역류 판정 (그림자 ≥ `shadowMax`면 역류 예약)
+
+**심연 레인 좌표·이동**
+- 유닛은 출발선(`ABYSS_START_Y`, 손거울 포탈 바로 위)에서 위쪽으로 `lane.abyssAdvanceSpeed` px/초 전진.
+- 그림자 벽의 아래 변(`SHADOW_WALL.y + h`)까지의 거리가 자기 `range` 이하가 되면 멈추고 공격. 전투 판정은 y축만.
+- 유닛끼리는 막지 않는다 (겹쳐 지나감). 표시 x는 방어 레인처럼 슬롯(`laneCap`개) — 슬롯 규칙은 §4.3.1과 동일.
+- 공격 타이밍: 사거리에 들어온 틱에 쿨다운 0 → 즉시 첫 공격, 이후 `atkInterval`마다 (`stepAttack` 공용).
+
+**그림자 벽**
+- 현재 층 HP = `layerHpBase × layerHpGrowth^(층-1) + extraHp`. `extraHp`는 가라앉음·보스 가라앉음으로 **현재 층에만** 누적되고, 층을 돌파하면 0으로 초기화.
+- 반격: 벽은 `counterAtkInterval`마다 **벽에서 `counterRange`(신규, 기본 60px) 안에 있는 유닛 중 가장 앞(y 최소, 같으면 먼저 소환)**에게 `counterAtk` 피해. 사거리 안에 유닛이 없으면 쿨다운 0에서 대기 (`stepAttack` 공용).
+- 벽은 움직이지 않는다.
+
+**유닛 사망 (심연)**
+- 조각 소실 + 그림자 +`abyssDeathShadow`. 슬롯이 빈다.
+
+**층 돌파 (HP ≤ 0이 된 틱)**
+- 그 틱에 **레인에 살아 있는 모든 유닛**(전진 중인 유닛 포함)이 귀환:
+  - 1~2단계 → 같은 체인 **단계 +1** 조각 (새 id, `bornAt` = 현재 playTime)
+  - 3단계 영웅 → **와일드카드 1개** + `heroFirstPurify`에 체인 기록 (처음일 때만 추가)
+  - 배치는 `enqueueReturn` (rng 빈 칸 → 대기열 → 상한 초과 소실)
+- 그림자 −`layerClearShadowReduce` (0 미만 불가). `stats.shadowPurified += 실제 감소량`, `stats.layersCleared += 1`.
+- 다음 층 생성 (`extraHp` = 0). 돌파 직후 레인은 비므로 Unhappy는 다시 멈춤 상태가 될 수 있다.
+
+**Unhappy 멈춤**
+- 심연 레인 유닛 0기 **그리고** 웨이브가 진행 중(`spawning`·`clearing`, 역류 보스 웨이브 포함)일 때 그림자 +`unhappyStallShadowPerSec × dt`. `waiting`·`gap`에는 증가 없음.
+- 멈춤 시작/해제 시 이벤트 (`stallStart` / `stallEnd`) — scene은 Unhappy 표시를 바꿈.
+
+**그림자**
+- 범위 0 ~ `shadowMax` (넘치면 잘라냄).
+- 증가: 가라앉음 +`sinkShadow`(현재 층 `extraHp` +`sinkLayerHp`도 함께), 심연 유닛 사망, Unhappy 멈춤.
+- 감소: 층 돌파, 역류 보스 처치 (보스 결과는 "설정", 아래 참고).
+- 마음 날씨(텍스트): 0~24 맑음 / 25~49 흐림 / 50~74 비 / 75~ 폭우 — HUD에 표시.
+
+**역류**
+- 그림자가 `shadowMax`에 닿은 틱에 `pendingBackflow = true` (이미 예약돼 있으면 무시).
+- M4(무한 웨이브)에서는 **다음 웨이브 시작 시 보스 웨이브를 끼워 넣는다**: 일반 웨이브 번호 n은 올라가지 않음 (보스 뒤에 원래 다음 웨이브가 이어짐). M5에서는 하루의 남은 웨이브 칸 하나를 교체.
+- 보스 웨이브: `backflowBoss` 1마리. 방어 레인에서 걱정과 같은 규칙으로 이동·정지·공격 (방어 유닛이 있으면 방어선에서 멈춤).
+- 예약 중에는 그림자가 `shadowMax`에 머문다.
+- 결과
+  | 결과 | 처리 |
+  |---|---|
+  | 처치 | 그림자 = `shadowAfterBossWin` (감소분은 `shadowPurified`에 포함), 기쁨 +`backflowBoss.joyReward` |
+  | 가라앉음 | 그림자 = `shadowAfterBossLose`, 기쁨 −`backflowBoss.joyPenalty`(0 미만 불가), 현재 층 `extraHp` +`backflowBoss.sinkLayerHp`. **일반 가라앉음 규칙(sinkShadow·sinkLayerHp)은 적용하지 않는다** |
+- 이벤트: `backflowPending`, `backflowStart`, `backflowEnd { win }`. `stats.backflows += 1`.
+
+**소환 (◐ 손거울)**
+- `summon(cell, 'unhappy')`: §4.3.1과 같은 흐름 (거부 사유 `laneFull` / `wildcard`), 유닛은 출발선의 빈 슬롯에서 시작.
+- `stats.sentDownTierSum += tier`, 소환 기록 `side: 'unhappy'`.
+
+**core → scene 이벤트 (추가)**
+- `abyssArrive`(사거리 도달), `wallHit`, `counter`, `abyssUnitDie`, `layerClear { layer, returns: [{ piece, placedAt | queued | lost }] }`, `shadowChange { value, weather }`, `stallStart`, `stallEnd`, `backflowPending`, `backflowStart`, `backflowEnd`.
+
+**흐름 연출 (§4.2.1 중 M4 분)**
+- 층 돌파 귀환: 유닛이 빛 조각이 되어 ◐ 손거울 포탈 → 그리드 배치 칸으로 (대기열에 들어간 조각은 손거울 옆에 작은 대기 표시).
+- 가라앉음: M3의 "거울 쪽으로 사라짐"을 이어서 거울 → 그림자 벽에 흡수 (벽이 잠깐 부풀어 오름).
+
+**디버그 (M4 추가)**
+- 그림자 값 설정, 역류 즉시 예약, 현재 층 HP 0으로 (돌파 테스트), 손거울 레인 유닛 전멸.
+
+**테스트 (필수)**
+- 심연 유닛: 출발 → 사거리 도달 시 정지 → 즉시 첫 공격 → `atkInterval`
+- 반격 대상 = `counterRange` 안 가장 앞 유닛, 범위 밖이면 반격 없음
+- 층 돌파: 전진 중 유닛 포함 전원 귀환, 1·2단계 → +1, 3단계 → 와일드카드 + heroFirstPurify(중복 없음), extraHp 초기화, 그림자 감소량 = shadowPurified 증가량
+- 귀환 칸 부족 → 대기열 → 상한 초과 소실
+- 심연 유닛 사망 → 조각 소실 + 그림자 증가
+- Unhappy 멈춤: 유닛 0기 + 웨이브 진행 중에만 그림자 증가 (gap에는 없음)
+- 가라앉음 → 그림자 +sinkShadow, 현재 층 extraHp +sinkLayerHp
+- 역류: shadowMax 도달 → 다음 웨이브 전에 보스 삽입, 일반 웨이브 번호 유지, 처치/가라앉음 결과 각각, 보스 가라앉음에 일반 규칙 미적용
+- 결정성: 같은 시드·같은 입력이면 같은 결과 (심연 포함)
+
 ### 4.4 그림자와 역류
 
 - 그림자 0 ~ `shadowMax`
@@ -473,6 +558,7 @@ unhappyScore = sentDownTierSum    × wDownTier
     "layerHpGrowth": 1.2,
     "counterAtk": 4,
     "counterAtkInterval": 1.5,
+    "counterRange": 60,
     "abyssDeathShadow": 5,
     "layerClearShadowReduce": 15,
     "unhappyStallShadowPerSec": 0.3
@@ -749,6 +835,15 @@ interface SaveData {
   | 그리드 가득 참 비율 | 0보다 큼 (가득 차는 순간이 있어야 그리드 크기 비교 D-012가 의미 있음) |
   | `hoarder` | `balanced`보다 나쁨, 단 1일차부터 전멸은 아님 (쌓아두기가 "손해"지 "즉사"는 아님) |
 - 난이도 곡선(첫 가라앉음 시점, 역류 빈도, 결말 분포)은 **M4 이후** `balanced`가 위/아래로 자원을 나눌 때 맞춘다.
+- **M4 부분 목표** (`--dayMode m5`, 14일 = 42웨이브, 시드 200)
+  | 대상 | 목표 |
+  |---|---|
+  | `alwaysHappy` | 역류 **반복** (14일 중 3회 이상), 층 돌파 0 |
+  | `alwaysUnhappy` | 가라앉음 다수 (1일차부터), 층 돌파는 일어남 |
+  | `balanced` | 역류 **0~2회**, 층 돌파가 꾸준함 (이틀에 1층 이상), Unhappy에게 보낸 비율 30~60% |
+  | `balanced` 그리드 | 가득 차는 순간이 있는 시드 ≥ 50% (귀환 조각이 들어오므로) |
+  | `hoarder` | `balanced`보다 나쁨, 1일차 전멸은 아님 |
+  | 귀환 대기열 소실 | `balanced`에서 거의 없음 (있으면 그리드가 좁거나 `returnQueueCap` 부족) |
 
 ## 9. 폴더 구조
 
@@ -791,7 +886,7 @@ Happy-Unhappy/
 | M2 | 그리드: 생성·머지·와일드카드·놓아주기 | core 테스트 통과, 드래그 머지 동작 |
 | M3 | 레인 공용 전투 + 방어 레인 + Happy 거점 + 창문 포탈 소환 + 임시 웨이브 (§4.3.1) | 창문으로 소환한 유닛이 걱정을 막고, 유닛이 없으면 걱정이 가라앉음. 고정 틱 결정성 테스트 통과 |
 | M3.5 | 자동 플레이 시뮬레이터 하네스 (§8.1): `idle`·`random`·`alwaysHappy`·`hoarder`·`balanced`(창문만) + 리포트 | 시드 200개 리포트 생성, 같은 시드 재현, §8.2의 M3 부분 목표 확인 |
-| M4 | 심연 레인 + 층 돌파 귀환 + Unhappy 멈춤 + 그림자·역류 | Unhappy에게 보내면 단계 +1로 돌아오고, 안 보내면 역류. `alwaysUnhappy` 추가, 시뮬 리포트 |
+| M4 | 심연 레인 + 층 돌파 귀환 + Unhappy 멈춤 + 그림자·역류 (§4.3.2) | Unhappy에게 보내면 단계 +1로 돌아오고, 안 보내면 역류. `alwaysUnhappy` 추가, `balanced`를 위/아래 배분으로 확장, 시뮬 리포트 (§8.2 M4 부분 목표) |
 | M5 | 하루 구조: 3웨이브·이벤트·이정표·하루 끝·그림일기 | 14일 연속 플레이 가능. 시뮬 `--until life` 지원 |
 | M6 | C안 gating + 결말 판정 + 저장/복원 | 5개 결말 디버그로 도달, 날짜 엣지 케이스 테스트 통과. **시뮬 결말 분포가 §8.2 목표에 들어옴** |
 | M7 | metrics + 디버그 패널 완성 | metrics JSON 복사 가능 |
