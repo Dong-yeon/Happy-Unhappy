@@ -8,6 +8,8 @@
 //584 ├ 하단 바 ──────────────────────┤
 //640 └──────────────────────────────┘
 
+import type { LaneGeometry } from '../core/lane';
+
 export const VIEW_W = 360;
 export const VIEW_H = 640;
 /** 폰 고해상도 화면에서 글자가 흐려지지 않도록 내부 캔버스를 배율로 키운다. 좌표계는 논리 해상도 그대로. */
@@ -58,6 +60,44 @@ export const WORRY_SPAWN_Y = LANE_TOP + 8;
 export const ABYSS_START_Y = DEFENSE_LINE_Y;
 /** 심연 레인: 그림자 벽 (레인 위쪽 끝) */
 export const SHADOW_WALL: Rect = { x: REGION.abyssLane.x, y: LANE_TOP, w: REGION.abyssLane.w, h: 16 };
+
+// ── 방어 레인 전투 좌표 (§4.3.1) ──
+/** 방어선 아래 이만큼 지나면 가라앉음 */
+export const SINK_MARGIN = 16;
+/** 걱정 등장 x의 레인 양 끝 여백 */
+export const WORRY_X_MARGIN = 12;
+/** 방어 유닛·Happy가 서는 줄 (방어선 바로 아래, 포탈 위) */
+export const DEFENSE_UNIT_Y = HOME_Y;
+
+/**
+ * 방어선 슬롯 x: 레인 폭을 (laneCap + 1)칸으로 균등 분할한 중심 중 Happy 자리(☀ 창문 포탈 위)에 가장 가까운 하나를 뺀다.
+ */
+export function defenseSlotXs(laneCap: number): number[] {
+  const { x, w } = REGION.defenseLane;
+  const step = w / (laneCap + 1);
+  const xs = Array.from({ length: laneCap + 1 }, (_, i) => x + step * (i + 0.5));
+  let happyIdx = 0;
+  xs.forEach((sx, i) => {
+    if (Math.abs(sx - PORTAL.happy.x) < Math.abs(xs[happyIdx] - PORTAL.happy.x)) happyIdx = i;
+  });
+  xs.splice(happyIdx, 1);
+  return xs;
+}
+
+/** core/lane.ts의 LaneGeometry (import type만 쓰므로 core 의존은 타입뿐) */
+export function defenseGeometry(laneCap: number): LaneGeometry {
+  const r = REGION.defenseLane;
+  return {
+    spawnY: WORRY_SPAWN_Y,
+    lineY: DEFENSE_LINE_Y,
+    sinkY: DEFENSE_LINE_Y + SINK_MARGIN,
+    spawnXMin: r.x + WORRY_X_MARGIN,
+    spawnXMax: r.x + r.w - WORRY_X_MARGIN,
+    centerX: r.x + r.w / 2,
+    slotXs: defenseSlotXs(laneCap),
+    happyX: PORTAL.happy.x,
+  };
+}
 
 // ── 그리드 ──
 export const CELL_W = 52;

@@ -1,0 +1,21 @@
+{
+  "decisionInterval": 0.6,
+  "reactionDelay": 0.25,
+  "reactionJitter": 0.2,
+  "mistakeRate": 0.05,
+  "maxGameSeconds": 7200,
+  "balanced": {
+    "dangerDistance": 140,
+    "minUnits": 2,
+    "proactiveSummonTier": 2
+  },
+  "m3Goals": {
+    "idleFirstSinkWave": 1,
+    "balancedHoldUntilWave": 8,
+    "balancedEarlySinkMeanMax": 1,
+    "balancedFirstSinkWaveRange": [
+      6,
+      12
+    ]
+  }
+}

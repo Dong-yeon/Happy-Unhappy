@@ -5,7 +5,9 @@ import type { GridSize } from '../core/grid';
 import { mulberry32, parseSeed } from '../core/rng';
 import { createDebugPanel } from '../debug/DebugPanel';
 import { isDebug } from '../debug/gridPreset';
-import { GridView } from './GridView';
+import { DefenseLaneView } from './DefenseLaneView';
+import { GridView, type DragHover } from './GridView';
+import { PortalView } from './PortalView';
 import { ReleaseZoneView } from './ReleaseZoneView';
 import {
   DEFENSE_LINE_Y,
@@ -16,13 +18,17 @@ import {
   SHADOW_WALL,
   VIEW_W,
   WORRY_SPAWN_Y,
+  defenseGeometry,
   gridLayout,
   type Rect,
 } from './layout';
 import { Button, COLOR, setupCamera, text } from './ui';
 
+/** 한 프레임에 넘기는 시간 상한 (백그라운드 복귀 직후 몰아서 처리하지 않도록) */
+const MAX_FRAME_MS = 100;
+
 /**
- * M2: 그리드(생성·머지·와일드카드·놓아주기 영역). 포탈·레인은 M3.
+ * M3: 그리드 + 방어 레인(☀ 창문 소환, 걱정, Happy). ◐ 손거울·심연 레인은 M4.
  * 게임 규칙은 core(GameState)에서, 이 씬은 표시·입력만.
  */
 export class GameScene extends Phaser.Scene {
@@ -31,6 +37,11 @@ export class GameScene extends Phaser.Scene {
   private joyText!: Phaser.GameObjects.Text;
   private spawnBtn!: Button;
   private releaseZone!: ReleaseZoneView;
+  private laneView!: DefenseLaneView;
+  private portals!: Record<'happy' | 'unhappy', PortalView>;
+  private phaseText!: Phaser.GameObjects.Text;
+  /** 디버그 배속 (dt 배율) */
+  private speed = 1;
 
   constructor() {
     super('Game');
@@ -42,7 +53,12 @@ export class GameScene extends Phaser.Scene {
     const size = this.registry.get('gridSize') as GridSize;
     // ?seed= 가 있으면 시드 고정, 없으면 Math.random
     const seed = parseSeed(new URLSearchParams(window.location.search).get('seed'));
-    this.state = new GameState(data, size, seed === null ? Math.random : mulberry32(seed));
+    this.state = new GameState(
+      data,
+      size,
+      seed === null ? Math.random : mulberry32(seed),
+      defenseGeometry(data.balance.lane.laneCap),
+    );
 
     this.drawHud(data);
     this.drawDefenseLane();
@@ -51,18 +67,33 @@ export class GameScene extends Phaser.Scene {
     this.drawGrid(size);
     this.drawPortals();
     this.drawBottomBar(data);
+    this.laneView = new DefenseLaneView(this, this.state, data.chains, { x: this.joyText.x, y: this.joyText.y });
     this.gridView = new GridView(this, this.state, data.chains, {
       onChange: () => this.syncUi(),
-      onReleaseHover: (hover) => this.releaseZone.setHover(hover),
+      onHover: (hover) => this.onDragHover(hover),
+      onSummon: (unit, x, y) => this.laneView.onSummon(unit, x, y),
     });
-    if (isDebug()) createDebugPanel(this, data, this.state, size, seed, () => this.onDebugChange());
+    if (isDebug()) {
+      createDebugPanel(this, data, this.state, size, seed, {
+        setSpeed: (s) => (this.speed = s),
+        onChange: () => this.onDebugChange(),
+      });
+    }
     this.syncUi();
   }
 
   update(_time: number, delta: number): void {
-    // 배속은 M7 디버그 패널에서 dt 배율로
-    this.state.tick(delta / 1000);
+    const events = this.state.tick((Math.min(delta, MAX_FRAME_MS) / 1000) * this.speed);
+    this.laneView.handle(events);
+    this.laneView.sync();
     this.syncUi();
+  }
+
+  private onDragHover(hover: DragHover): void {
+    this.releaseZone.setHover(hover?.kind === 'release' ? hover.hover : null);
+    for (const id of ['happy', 'unhappy'] as const) {
+      this.portals[id].setHovered(hover?.kind === 'summon' && hover.portal === id && hover.block === null);
+    }
   }
 
   private onDebugChange(): void {
@@ -75,6 +106,10 @@ export class GameScene extends Phaser.Scene {
     const s = this.state;
     const joy = `기쁨 ${s.joy}`;
     if (this.joyText.text !== joy) this.joyText.setText(joy);
+    const w = s.wave;
+    const phase = w.n === 0 ? '웨이브 준비' : `웨이브 ${w.n}${w.paused ? ' (정지)' : ''}`;
+    if (this.phaseText.text !== phase) this.phaseText.setText(phase);
+    this.portals.happy.setClosed(s.defense.isFull);
     const block = s.spawnBlock;
     this.spawnBtn
       .setLabel(block === 'full' ? '칸 가득' : block === 'noJoy' ? `기쁨 부족 (${s.spawnCost})` : `조각 생성 (${s.spawnCost})`)
@@ -94,8 +129,9 @@ export class GameScene extends Phaser.Scene {
     const r = REGION.hud;
     this.fill(r, COLOR.hud);
     const midY = r.y + r.h / 2;
-    // 일차·시간대·날씨는 M5/M4에서 core 상태로 연결
-    text(this, 8, midY, `${data.days.age}살 · 1일째 · 아침`, { fontSize: '12px' }).setOrigin(0, 0.5);
+    // 일차·날씨는 M5/M4에서 core 상태로 연결. 시간대 칸은 M3 임시로 "웨이브 n"
+    text(this, 8, midY, `${data.days.age}살 · 1일째 ·`, { fontSize: '12px' }).setOrigin(0, 0.5);
+    this.phaseText = text(this, 86, midY, '', { fontSize: '12px' }).setOrigin(0, 0.5);
     this.joyText = text(this, VIEW_W / 2 + 30, midY, `기쁨 ${data.balance.start.joy}`, { fontSize: '12px', color: '#f2c94c' }).setOrigin(0.5);
     text(this, VIEW_W - 8, midY, '마음 날씨 —', { fontSize: '12px', color: '#9fb4e0' }).setOrigin(1, 0.5);
   }
@@ -125,11 +161,10 @@ export class GameScene extends Phaser.Scene {
     this.character(PORTAL.unhappy.x, HOME_Y, COLOR.unhappy, 'Unhappy', '#9fb0e0');
   }
 
-  /** 이름은 포탈 반대편(바깥쪽)에 표시해 거울 쪽을 비워 둔다 */
+  /** 이름은 머리 위에 작게 (옆은 방어선 슬롯이 쓴다) */
   private character(x: number, y: number, color: number, name: string, textColor: string): void {
-    this.add.circle(x, y, 10, color);
-    const outward = x < VIEW_W / 2 ? -1 : 1;
-    text(this, x + outward * 14, y, name, { fontSize: '10px', color: textColor }).setOrigin(outward < 0 ? 1 : 0, 0.5);
+    this.add.circle(x, y, 10, color).setDepth(2);
+    text(this, x, y - 17, name, { fontSize: '8px', color: textColor }).setOrigin(0.5).setDepth(2);
   }
 
   /** 가운데 세로 거울 → 아래 끝이 포탈 받침으로 이어진다 */
@@ -144,15 +179,10 @@ export class GameScene extends Phaser.Scene {
   }
 
   private drawPortals(): void {
-    this.portal(PORTAL.happy, COLOR.portalHappy, '☀', '창문', '#3b3526');
-    this.portal(PORTAL.unhappy, COLOR.portalUnhappy, '◐', '손거울', '#10131c');
-  }
-
-  /** 열린 포탈만. 닫힌 모습(정원 초과)·드래그 강조는 M3에서 */
-  private portal(p: { x: number; y: number }, color: number, icon: string, label: string, textColor: string): void {
-    this.add.circle(p.x, p.y, PORTAL_RADIUS, color).setStrokeStyle(2, COLOR.mirror);
-    text(this, p.x, p.y - 5, icon, { fontSize: '16px', color: textColor }).setOrigin(0.5);
-    text(this, p.x, p.y + 12, label, { fontSize: '8px', color: textColor }).setOrigin(0.5);
+    this.portals = {
+      happy: new PortalView(this, PORTAL.happy.x, PORTAL.happy.y, COLOR.portalHappy, '☀', '창문', '#3b3526'),
+      unhappy: new PortalView(this, PORTAL.unhappy.x, PORTAL.unhappy.y, COLOR.portalUnhappy, '◐', '손거울', '#10131c'),
+    };
   }
 
   /** 그리드는 중립 색 (좌우를 양/음 색으로 칠하지 않음, D-018) */

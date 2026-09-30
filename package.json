@@ -5,15 +5,18 @@
   "type": "module",
   "scripts": {
     "dev": "vite --host",
-    "build": "tsc --noEmit && vite build",
+    "build": "tsc --noEmit && tsc --noEmit -p sim && vite build",
     "preview": "vite preview --host",
     "test": "vitest run",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit && tsc --noEmit -p sim",
+    "sim": "tsx sim/run.ts"
   },
   "dependencies": {
     "phaser": "3.90.0"
   },
   "devDependencies": {
+    "@types/node": "24.19.0",
+    "tsx": "4.23.15",
     "typescript": "7.0.2",
     "vite": "8.3.1",
     "vitest": "5.0.2"

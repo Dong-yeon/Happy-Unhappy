@@ -1,10 +1,11 @@
 // 그리드 조각 표시 + 드래그 입력. 규칙 판정은 core(GameState), 드롭 위치 판정은 layout.dropTarget.
-// 모든 조작은 드래그 하나: 칸(이동·머지·교환) / 놓아주기 영역 / 포탈·레인(M3) (v0.3.2, D-019).
+// 모든 조작은 드래그 하나: 칸(이동·머지·교환) / 놓아주기 영역 / 포탈·레인(소환) (v0.3.2, D-019, §4.3.1).
 import Phaser from 'phaser';
-import type { GameState } from '../core/game';
+import type { GameState, SummonBlock } from '../core/game';
 import { isWildcard, type Piece } from '../core/grid';
+import type { Unit } from '../core/lane';
 import type { Chain } from '../data/types';
-import { CELL_H, CELL_W, DRAG_THRESHOLD, cellAt, cellCenter, dropTarget } from './layout';
+import { CELL_H, CELL_W, DRAG_THRESHOLD, cellAt, cellCenter, dropTarget, type PortalId } from './layout';
 import { releaseHoverLabel, type ReleaseHover } from './ReleaseZoneView';
 import { COLOR, text } from './ui';
 
@@ -16,12 +17,22 @@ interface Press {
   dragging: boolean;
 }
 
+/** 드래그 중 조각이 올라가 있는 드롭 대상 */
+export type DragHover =
+  | { kind: 'release'; hover: Exclude<ReleaseHover, null> }
+  | { kind: 'summon'; portal: PortalId; block: SummonBlock | null }
+  | null;
+
 export interface GridViewHooks {
   /** core 상태가 바뀐 뒤 (HUD·버튼 갱신) */
   onChange(): void;
-  /** 드래그 중 놓아주기 영역 위 여부 */
-  onReleaseHover(hover: ReleaseHover): void;
+  /** 드래그 중 놓아주기 영역·포탈 위 여부 */
+  onHover(hover: DragHover): void;
+  /** 소환 성공: 드롭 지점에서 연출 시작 (core는 이미 유닛 생성) */
+  onSummon(unit: Unit, fromX: number, fromY: number): void;
 }
+
+const SUMMON_BLOCKED_LABEL = '보낼 수 없음';
 
 /** 놓아주기 연출: 위로 떠오르며 사라짐 */
 const RELEASE_FLOAT_PX = 36;
@@ -114,23 +125,37 @@ export class GridView {
     press.dragging = true;
     this.views[press.from]?.setPosition(w.x, w.y).setDepth(10).setScale(1.1);
 
-    let hover: ReleaseHover = null;
-    if (dropTarget(this.state.grid, w.x, w.y).kind === 'release') {
+    const target = dropTarget(this.state.grid, w.x, w.y);
+    let hover: DragHover = null;
+    if (target.kind === 'release') {
       const refund = this.state.releasePreview(press.from);
-      hover = refund === null ? 'blocked' : { refund };
+      hover = { kind: 'release', hover: refund === null ? 'blocked' : { refund } };
+    } else if (target.kind === 'summon') {
+      hover = { kind: 'summon', portal: target.portal, block: this.state.canSummon(press.from, target.portal) };
     }
     this.setHover(hover, w.x, w.y);
   }
 
-  private setHover(hover: ReleaseHover, x = 0, y = 0): void {
-    this.hooks.onReleaseHover(hover);
-    if (hover === null) {
+  /** 영역·포탈 표시는 scene에, 조각 위 태그는 여기서 (조각·손가락이 영역 라벨을 가리므로) */
+  private setHover(hover: DragHover, x = 0, y = 0): void {
+    this.hooks.onHover(hover);
+    let label: string | null = null;
+    let blocked = false;
+    if (hover?.kind === 'release') {
+      label = releaseHoverLabel(hover.hover);
+      blocked = hover.hover === 'blocked';
+    } else if (hover?.kind === 'summon' && hover.block === 'wildcard') {
+      // laneFull은 닫힌 포탈로 보여 주므로 태그 없음
+      label = SUMMON_BLOCKED_LABEL;
+      blocked = true;
+    }
+    if (label === null) {
       this.tag.setVisible(false);
       return;
     }
     this.tag
-      .setText(releaseHoverLabel(hover))
-      .setColor(hover === 'blocked' ? '#8a8f9e' : '#ffffff')
+      .setText(label)
+      .setColor(blocked ? '#8a8f9e' : '#ffffff')
       .setPosition(x, y + TAG_OFFSET_Y)
       .setVisible(true);
   }
@@ -156,10 +181,18 @@ export class GridView {
         this.floatAway(press.from);
         this.hooks.onChange();
         return;
-      case 'summon':
-        // M3에서 소환으로 연결. 지금은 원위치
-        console.debug(`[grid] ${target.portal} 쪽 드롭 — M3 전이라 원위치`);
-        break;
+      case 'summon': {
+        // ◐ 손거울은 M4 전까지 canSummon이 'unavailable' → 원위치
+        const r = this.state.summon(press.from, target.portal);
+        if (!r.ok) break;
+        const v = this.views[press.from];
+        this.views[press.from] = null;
+        v?.destroy(); // 소환 연출은 레인 쪽에서 새 표시로
+        this.refresh(); // 귀환 대기열이 그 칸을 채웠을 수 있음
+        this.hooks.onSummon(r.unit, w.x, w.y);
+        this.hooks.onChange();
+        return;
+      }
       case 'none':
         break;
     }

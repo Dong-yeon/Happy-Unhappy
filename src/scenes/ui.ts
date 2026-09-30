@@ -20,6 +20,7 @@ export const COLOR = {
   buttonOn: 0x7b8cc4,
   buttonOff: 0x353a4a,
   wildcard: 0xffffff,
+  portalClosed: 0x3a3f4f,
   mirror: 0xb8c4d6,
   portalHappy: 0xf6d98a,
   portalUnhappy: 0x8ea3d6,
@@ -73,9 +74,16 @@ export class Button {
     this.label = text(scene, 0, 0, label, { fontSize, color: '#ffffff' }).setOrigin(0.5);
     this.container = scene.add.container(x, y, [this.rect, this.label]);
     if (onClick) {
-      this.rect.setInteractive({ useHandCursor: true }).on('pointerup', () => {
-        if (this.enabled) onClick(this);
-      });
+      // 이 버튼 위에서 누른 경우만 (조각 드래그를 버튼 위에서 놓아도 눌리지 않게)
+      let pressed = false;
+      this.rect
+        .setInteractive({ useHandCursor: true })
+        .on('pointerdown', () => (pressed = true))
+        .on('pointerout', () => (pressed = false))
+        .on('pointerup', () => {
+          if (pressed && this.enabled) onClick(this);
+          pressed = false;
+        });
     }
   }
 
@@ -88,6 +96,13 @@ export class Button {
     this.enabled = enabled;
     this.label.setColor(enabled ? '#ffffff' : '#8a8f9e');
     this.rect.setFillStyle(this.active ? COLOR.buttonOn : enabled ? COLOR.button : COLOR.buttonOff);
+    return this;
+  }
+
+  /** 접힌 패널 안의 버튼: 보이지 않을 때는 입력도 받지 않는다 */
+  setShown(shown: boolean): this {
+    this.container.setVisible(shown);
+    if (this.rect.input) this.rect.input.enabled = shown;
     return this;
   }
 
