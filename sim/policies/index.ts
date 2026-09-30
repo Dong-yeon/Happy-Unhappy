@@ -86,7 +86,8 @@ const hoarder: Policy = {
 };
 
 /**
- * 잘하는 사람의 대리. 방어선 위험도·정원을 보고 위/아래로 배분한다.
+ * 잘하는 사람의 대리. 방어선 위험도·정원·역류 예약을 보고 위/아래로 배분한다.
+ * 0) 역류가 예약돼 있으면 창문 보강 우선 (보스를 막을 방어선)
  * 1) 위험(방어선 근처 걱정)하면 창문으로 가장 좋은 조각
  * 2) 방어 유닛이 minUnits 미만이면 창문으로
  * 3) 합칠 수 있으면 합침 (높은 단계 우선)
@@ -101,8 +102,12 @@ const balanced: Policy = {
     const lane = state.defense;
     const lineY = lane.geo.lineY;
     const danger = lane.worries.some((w) => w.state === 'stopped' || lineY - w.y < p.dangerDistance);
-    const safe = !danger && lane.units.length >= p.minUnits;
+    const safe = !danger && lane.units.length >= p.minUnits && !state.pendingBackflow;
 
+    if (state.pendingBackflow && !lane.isFull) {
+      const a = summonHappy(state, bestSummonCell(state));
+      if (a) return a;
+    }
     if (!lane.isFull && (danger || lane.units.length < p.minUnits)) {
       const a = summonHappy(state, bestSummonCell(state));
       if (a) return a;

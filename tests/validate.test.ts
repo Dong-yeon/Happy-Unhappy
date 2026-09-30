@@ -61,6 +61,23 @@ describe('validateGameData', () => {
     );
   });
 
+  it('monsters.backflowBoss.hpGrowthPerDay 필수, 0보다 커야 함', () => {
+    expectIssue(
+      issuesAfter((d) => {
+        delete (d.monsters.backflowBoss as Partial<Raw['monsters']['backflowBoss']>).hpGrowthPerDay;
+      }),
+      'monsters.backflowBoss.hpGrowthPerDay',
+      /필수 키/,
+    );
+    expectIssue(
+      issuesAfter((d) => {
+        d.monsters.backflowBoss.hpGrowthPerDay = 0;
+      }),
+      'monsters.backflowBoss.hpGrowthPerDay',
+      /이상/,
+    );
+  });
+
   it('필수 키 없음', () => {
     const issues = issuesAfter((d) => {
       delete (d.balance.lane as Partial<Raw['balance']['lane']>).abyssAdvanceSpeed;

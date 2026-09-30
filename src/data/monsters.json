@@ -3,6 +3,6 @@
   "backflowBoss": {
     "name": "역류",
     "hp": 350, "speed": 20, "atk": 8, "atkInterval": 1.0,
-    "joyReward": 40, "joyPenalty": 30, "sinkLayerHp": 80
+    "joyReward": 0, "joyPenalty": 30, "sinkLayerHp": 80, "hpGrowthPerDay": 1
   }
 }

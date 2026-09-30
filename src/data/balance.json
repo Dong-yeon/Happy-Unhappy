@@ -32,14 +32,14 @@
     "counterRange": 60,
     "abyssDeathShadow": 5,
     "layerClearShadowReduce": 15,
-    "unhappyStallShadowPerSec": 0.3
+    "unhappyStallShadowPerSec": 0.15
   },
   "shadow": {
     "shadowMax": 100,
     "sinkShadow": 4,
     "sinkLayerHp": 15,
-    "shadowAfterBossWin": 30,
-    "shadowAfterBossLose": 60,
+    "shadowAfterBossWin": 50,
+    "shadowAfterBossLose": 40,
     "weatherThresholds": [25, 50, 75]
   },
   "days": {

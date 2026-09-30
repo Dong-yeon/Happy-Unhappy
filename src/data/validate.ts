@@ -275,7 +275,7 @@ function checkMonsters(c: Checker, v: unknown): void {
     c.num(w.joyReward, 'monsters.worry.joyReward', { min: 0 });
   }
   const b = c.obj(m.backflowBoss, 'monsters.backflowBoss', [
-    'name', 'hp', 'speed', 'atk', 'atkInterval', 'joyReward', 'joyPenalty', 'sinkLayerHp',
+    'name', 'hp', 'speed', 'atk', 'atkInterval', 'joyReward', 'joyPenalty', 'sinkLayerHp', 'hpGrowthPerDay',
   ]);
   if (b) {
     c.str(b.name, 'monsters.backflowBoss.name');
@@ -286,6 +286,7 @@ function checkMonsters(c: Checker, v: unknown): void {
     c.num(b.joyReward, 'monsters.backflowBoss.joyReward', { min: 0 });
     c.num(b.joyPenalty, 'monsters.backflowBoss.joyPenalty', { min: 0 });
     c.num(b.sinkLayerHp, 'monsters.backflowBoss.sinkLayerHp', { min: 0 });
+    c.num(b.hpGrowthPerDay, 'monsters.backflowBoss.hpGrowthPerDay', { min: 0.01 });
   }
 }
 

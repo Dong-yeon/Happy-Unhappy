@@ -95,7 +95,11 @@ export function runOne(data: GameData, cfg: SimConfig, policy: Policy, opt: RunO
   const wpd = data.balance.wave.wavesPerDay;
   const untilWave = m5 ? m5LastWave(data) : opt.untilWave;
   const dayOf = (n: number) => Math.ceil(n / wpd);
-  if (m5) state.wave.hpLevel = dayOf; // ③ HP는 일차 기준 (마리 수는 웨이브 기준 그대로)
+  if (m5) {
+    state.wave.hpLevel = dayOf; // ③ HP는 일차 기준 (마리 수는 웨이브 기준 그대로)
+    // 역류 보스는 끼어드는 자리(다음 일반 웨이브 n+1)의 일차. 저녁 뒤면 다음 날 (§4.4 "다음 날 아침")
+    state.wave.bossDayOf = (n) => dayOf(n + 1);
+  }
   const dayStartJoy: number[] = [];
   const dayEndJoy: number[] = [];
   let disbanded = 0;

@@ -170,3 +170,46 @@ describe('M4 정책', () => {
     expect(r.backflows).toBeGreaterThan(0);
   });
 });
+
+describe('M4 조정 (A안 이후)', () => {
+  it('--dayMode m5: 보스는 끼어드는 자리(다음 일반 웨이브)의 일차 HP', async () => {
+    const { GameState } = await import('../src/core/game');
+    const orig = GameState.prototype.tick;
+    const bossHps: { n: number; hp: number }[] = [];
+    GameState.prototype.tick = function (dt: number) {
+      const ev = orig.call(this, dt);
+      for (const e of ev) {
+        if (e.type === 'spawnWorry' && e.boss) bossHps.push({ n: this.wave.n, hp: this.defense.worries.at(-1)!.maxHp });
+      }
+      return ev;
+    };
+    try {
+      const d = structuredClone(data);
+      d.monsters.backflowBoss.hpGrowthPerDay = 1.1;
+      runOne(d, cfg, POLICIES.idle, opt(1, { dayMode: 'm5' }));
+    } finally {
+      GameState.prototype.tick = orig;
+    }
+    const wpd = data.balance.wave.wavesPerDay;
+    expect(bossHps.length).toBeGreaterThan(0);
+    for (const b of bossHps) {
+      const day = Math.ceil((b.n + 1) / wpd);
+      expect(b.hp).toBeCloseTo(data.monsters.backflowBoss.hp * Math.pow(1.1, day - 1), 6);
+    }
+  });
+
+  it('balanced: 역류가 예약되면 창문 보강을 먼저 한다 (평소라면 손거울로 갈 조각도)', async () => {
+    const { GameState } = await import('../src/core/game');
+    const { mulberry32 } = await import('../src/core/rng');
+    const { gameGeometry } = await import('../src/scenes/layout');
+    const g = new GameState(data, { cols: 5, rows: 4 }, mulberry32(1), gameGeometry(data.balance.lane.laneCap));
+    g.wave.paused = true;
+    for (let k = 0; k < cfg.balanced.minUnits; k++) g.summon(g.debugGrant('companion_animal', 1)!, 'happy');
+    const cell = g.debugGrant('comfort_object', 2)!;
+    const ctx = { state: g, rng: mulberry32(9), cfg };
+    // 안전 + 2단계 → 평소에는 손거울
+    expect(POLICIES.balanced.decide(ctx)).toEqual({ type: 'summon', cell, side: 'unhappy' });
+    g.debugScheduleBackflow();
+    expect(POLICIES.balanced.decide(ctx)).toEqual({ type: 'summon', cell, side: 'happy' });
+  });
+});

@@ -2,7 +2,7 @@
 import { describe, expect, it } from 'vitest';
 import { rawGameData } from '../src/data';
 import type { GameData } from '../src/data/types';
-import { GameState, type CoreEvent } from '../src/core/game';
+import { GameState, bossHp, type CoreEvent } from '../src/core/game';
 import { WILDCARD } from '../src/core/grid';
 import { FIXED_DT, Lane, layerBaseHp, type AbyssGeometry, type LaneEvent, type WallStats } from '../src/core/lane';
 import { mulberry32 } from '../src/core/rng';
@@ -397,5 +397,41 @@ describe('결정성 (심연 포함)', () => {
     expect(scenario(9, small)).toEqual(a);
     expect(scenario(9, big)).toEqual(a);
     expect(a.snap.stats.layersCleared).toBeGreaterThan(0); // 심연이 실제로 돌았는지
+  });
+});
+
+describe('역류 보스 HP 성장 (monsters.backflowBoss.hpGrowthPerDay)', () => {
+  it('bossHp = hp × hpGrowthPerDay^(일차-1)', () => {
+    const boss = { hp: 350, hpGrowthPerDay: 1.1 };
+    expect(bossHp(boss, 1)).toBe(350);
+    expect(bossHp(boss, 3)).toBeCloseTo(350 * 1.21, 9);
+    expect(bossHp(boss, 0)).toBe(350); // 1일차 미만은 1일차로
+  });
+
+  it('M4 무한 웨이브: 몇 번째 웨이브든 보스는 1일차 HP', () => {
+    const g = game((d) => {
+      d.monsters.backflowBoss.hpGrowthPerDay = 1.5;
+      d.balance.lane.abyssAdvanceSpeed = 0;
+    });
+    g.summon(g.debugGrant(DOG, 1)!, 'unhappy');
+    for (let k = 0; k < 5; k++) g.wave.startNext(); // 일반 웨이브 5까지 진행한 셈
+    g.wave.phase = 'gap';
+    g.wave.timer = 0.5;
+    g.debugScheduleBackflow();
+    ticks(g, 60);
+    expect(g.wave.isBoss).toBe(true);
+    expect(g.defense.worries.find((w) => w.boss)?.hp).toBe(base.monsters.backflowBoss.hp);
+  });
+
+  it('bossDayOf를 바꿔 끼우면 그 일차로 성장 (시뮬 --dayMode m5)', () => {
+    const g = game((d) => {
+      d.monsters.backflowBoss.hpGrowthPerDay = 1.5;
+      d.balance.lane.abyssAdvanceSpeed = 0;
+    });
+    g.wave.bossDayOf = () => 3;
+    g.summon(g.debugGrant(DOG, 1)!, 'unhappy');
+    g.debugScheduleBackflow();
+    ticks(g, 150); // 첫 웨이브 자리(2초)에 보스
+    expect(g.defense.worries.find((w) => w.boss)?.hp).toBeCloseTo(base.monsters.backflowBoss.hp * 2.25, 9);
   });
 });

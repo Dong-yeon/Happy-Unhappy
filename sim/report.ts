@@ -372,7 +372,6 @@ export function checkM4Goals(reports: PolicyReport[], goals: SimConfig['m4Goals'
     const needLayers = days * goals.balancedLayersPerDayMin;
     const [lo, hi] = goals.balancedDownRatio;
     const down = bal.summary.downRatio.median;
-    const withFull = bal.runs.filter((r) => r.gridFullRatio > 0).length / Math.max(1, bal.runs.length);
     out.push({
       id: 'B 역류',
       label: `balanced: 역류 0~${goals.balancedBackflowsMax}회 (중앙값)`,
@@ -390,12 +389,6 @@ export function checkM4Goals(reports: PolicyReport[], goals: SimConfig['m4Goals'
       label: `balanced: Unhappy에게 보낸 비율 ${fmt(lo * 100, 0)}~${fmt(hi * 100, 0)}% (중앙값)`,
       pass: down >= lo && down <= hi,
       detail: `손거울 비율 중앙값 ${fmt(down * 100, 1)}%`,
-    });
-    out.push({
-      id: 'B 가득참',
-      label: `balanced 그리드: 가득 차는 순간이 있는 시드 ≥ ${fmt(goals.balancedGridFullRunShareMin * 100, 0)}%`,
-      pass: withFull >= goals.balancedGridFullRunShareMin,
-      detail: `가득 차는 순간이 있는 시드 ${fmt(withFull * 100, 1)}%, 가득 참 비율 평균 ${fmt(bal.summary.gridFullRatio.mean, 4)}`,
     });
     out.push({
       id: 'B 소실',

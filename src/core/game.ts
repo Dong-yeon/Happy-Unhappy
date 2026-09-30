@@ -107,6 +107,11 @@ export interface GameStats {
   abyssDeaths: number;
 }
 
+/** 역류 보스 HP = hp × hpGrowthPerDay^(일차-1) */
+export function bossHp(boss: { hp: number; hpGrowthPerDay: number }, day: number): number {
+  return boss.hp * Math.pow(boss.hpGrowthPerDay, Math.max(1, day) - 1);
+}
+
 /** 부동소수 누적 오차로 틱이 하나 빠지지 않도록 */
 const TICK_EPS = 1e-9;
 
@@ -283,11 +288,12 @@ export class GameState {
       const x = geo.spawnXMin + this.rng() * (geo.spawnXMax - geo.spawnXMin);
       if (this.wave.isBoss) {
         const boss = this.data.monsters.backflowBoss;
+        const hp = bossHp(boss, this.wave.bossDay);
         this.bossActive = true;
         this.pendingBackflow = false;
         this.stats.backflows += 1;
         lane.spawnWorry(
-          { hp: boss.hp, speed: boss.speed, atk: boss.atk, atkInterval: boss.atkInterval, joyReward: boss.joyReward, boss: true },
+          { hp, speed: boss.speed, atk: boss.atk, atkInterval: boss.atkInterval, joyReward: boss.joyReward, boss: true },
           x,
           out,
         );

@@ -47,6 +47,16 @@ export class WaveRunner {
   bossPending = false;
   /** 지금 진행 중인 웨이브가 보스 웨이브인지 */
   isBoss = false;
+  /**
+   * 보스 HP 성장에 쓰는 일차. 인자 n = 보스 직전까지 시작한 일반 웨이브 번호 (보스는 웨이브 n+1 자리 앞에 끼어든다).
+   * M4 무한 웨이브는 하루 구조가 없으므로 항상 1일차. 시뮬 --dayMode m5는 ⌈(n+1) / wavesPerDay⌉로 바꿔 끼운다.
+   */
+  bossDayOf: (n: number) => number = () => 1;
+
+  /** 이번 보스(또는 다음 보스)의 일차 */
+  get bossDay(): number {
+    return this.bossDayOf(this.n);
+  }
 
   constructor(
     private readonly cfg: WaveConfig,

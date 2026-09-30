@@ -230,7 +230,12 @@ function main(): void {
     console.log(formatSweep(key, rows));
     if (args.dayMode !== 'm5') console.log('※ M4 목표는 --dayMode m5 기준입니다. 이번 표는 참고용.');
 
-    const file = join(OUT_DIR, `${today()}_sweep_${values[0].path.slice(1).join('.')}${args.dayMode ? `_${args.dayMode}` : ''}.json`);
+    // 같은 키를 다른 값으로 다시 돌려도 덮어쓰지 않도록 값 목록과 고정 --set을 이름에 넣는다
+    const valuesTag = values.map((v) => String(v.value)).join(',');
+    const file = join(
+      OUT_DIR,
+      `${today()}_sweep_${values[0].path.slice(1).join('.')}=${valuesTag}${setsTag(fixed)}${args.dayMode ? `_${args.dayMode}` : ''}.json`.replace(/[^\w.=+,-]/g, '_'),
+    );
     const compact = rows.map((r) => ({
       value: r.value,
       goals: r.goals.map(({ id, label, pass, detail }) => ({ id, label, pass, detail })),

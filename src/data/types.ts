@@ -78,6 +78,8 @@ export interface Monsters {
     joyReward: number;
     joyPenalty: number;
     sinkLayerHp: number;
+    /** 보스 HP = hp × hpGrowthPerDay^(일차-1). M4 무한 웨이브에서는 1일차 취급 */
+    hpGrowthPerDay: number;
   };
 }
 
