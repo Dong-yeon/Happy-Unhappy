@@ -3,16 +3,32 @@
 /** [0, 1) 균등 난수 */
 export type Rng = () => number;
 
-/** 시드 고정 PRNG (mulberry32) */
-export function mulberry32(seed: number): Rng {
+/** 상태를 저장·복원할 수 있는 Rng (저장/복원 후에도 같은 난수열, 스펙 §5.8-2) */
+export interface SeededRng extends Rng {
+  getState(): number;
+  setState(n: number): void;
+}
+
+/** 시드 고정 PRNG (mulberry32). 상태 = 32비트 정수 하나 */
+export function mulberry32(seed: number): SeededRng {
   let a = seed >>> 0;
-  return () => {
+  const next = (() => {
     a = (a + 0x6d2b79f5) >>> 0;
     let t = a;
     t = Math.imul(t ^ (t >>> 15), t | 1);
     t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  }) as SeededRng;
+  next.getState = () => a;
+  next.setState = (n: number) => {
+    a = n >>> 0;
   };
+  return next;
+}
+
+/** 새 일생의 시드 (?seed= 없을 때). 32비트 부호 없는 정수 */
+export function randomSeed(source: () => number): number {
+  return Math.floor(source() * 4294967296) >>> 0;
 }
 
 /** `?seed=` 값 → 정수 시드. 없거나 잘못되면 null */

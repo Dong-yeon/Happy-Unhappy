@@ -3,8 +3,8 @@
     "wUpTier": 3, "wDefeat": 0.5, "wJoy": 0.05,
     "wDownTier": 3, "wLayer": 10, "wPurified": 0.3
   },
-  "threshold": 100,
-  "balanceGap": 20,
+  "thresholds": { "happy": 100, "unhappy": 100 },
+  "balanceRatio": 0.15,
   "endings": {
     "hidden": { "name": "Happy와 Unhappy의 화해", "title": "(Un)Happy",         "desc": "불행 속에도 행복이 들어 있었어." },
     "solid":  { "name": "단단한 어른",            "title": "Happy And Unhappy", "desc": "슬픔을 안고도 웃을 수 있는 어른." },

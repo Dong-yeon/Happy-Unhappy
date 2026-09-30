@@ -48,7 +48,10 @@ import {
   type Side,
   type Unit,
 } from './lane';
-import type { Rng } from './rng';
+import { judgeEnding, type EndingResult } from './ending';
+import type { SeededRng } from './rng';
+import type { SaveGame } from './save';
+import { emptyGameStats, type GameStats } from './stats';
 import { clampShadow, weatherOf, type Weather } from './shadow';
 import { DayWaves, type SlotId } from './wave';
 
@@ -126,24 +129,7 @@ export type SummonResult = { ok: true; unit: Unit } | { ok: false; reason: Summo
 
 export type ConfirmResult = { ok: true } | { ok: false; reason: 'notDayStart' | 'needChoice' | 'badChoice' };
 
-export interface GameStats {
-  sentUpTierSum: number;
-  sentDownTierSum: number;
-  worriesDefeated: number;
-  totalJoyEarned: number;
-  /** 가라앉은 걱정 수 (역류 보스 제외: 보스 가라앉음은 일반 규칙을 따르지 않는다) */
-  sunkCount: number;
-  layersCleared: number;
-  /** 층 돌파·보스 처치로 실제로 줄어든 그림자 합 */
-  shadowPurified: number;
-  backflows: number;
-  bossWins: number;
-  bossLosses: number;
-  /** Unhappy 멈춤 누적 시간(초) */
-  stallSeconds: number;
-  /** 심연 유닛 사망 수 */
-  abyssDeaths: number;
-}
+export type { GameStats } from './stats';
 
 /** 역류 보스 HP = hp × hpGrowthPerDay^(일차-1) */
 export function bossHp(boss: { hp: number; hpGrowthPerDay: number }, day: number): number {
@@ -169,20 +155,7 @@ export class GameState {
   readonly defense: Lane<'defense'>;
   readonly abyss: Lane<'abyss'>;
   readonly wave: DayWaves;
-  readonly stats: GameStats = {
-    sentUpTierSum: 0,
-    sentDownTierSum: 0,
-    worriesDefeated: 0,
-    totalJoyEarned: 0,
-    sunkCount: 0,
-    layersCleared: 0,
-    shadowPurified: 0,
-    backflows: 0,
-    bossWins: 0,
-    bossLosses: 0,
-    stallSeconds: 0,
-    abyssDeaths: 0,
-  };
+  readonly stats: GameStats = emptyGameStats();
   readonly summonLog: SummonRecord[] = [];
   /** 0 ~ shadowMax */
   shadow: number;
@@ -216,8 +189,11 @@ export class GameState {
   private chainWeightToday: Record<string, number> = {};
   /** 디버그: 다음 dayStart에 강제할 이벤트 */
   private forcedNext: string | null = null;
+  /** 결말 (14일째 nextDay → lifeEnd에서 1회 판정, §5.8-3) */
+  ending: EndingResult | null = null;
 
-  private nextUnitId = 1;
+  /** 저장(save.ts)이 읽고 쓴다 */
+  nextUnitId = 1;
   /** 아직 틱으로 처리하지 않은 시간 */
   private acc = 0;
   /** 틱 밖(소환·하루 전환 등)에서 생긴 이벤트. 다음 tick()의 반환값에 앞서 포함된다 */
@@ -226,8 +202,10 @@ export class GameState {
   constructor(
     private readonly data: GameData,
     size: GridSize,
-    private readonly rng: Rng,
+    readonly rng: SeededRng,
     geometry: GameGeometry,
+    /** 이 일생의 시드 (저장·디버그 표시·재현용) */
+    readonly seed = 0,
   ) {
     const b = data.balance;
     this.joy = b.start.joy;
@@ -460,7 +438,8 @@ export class GameState {
     this.dayStats.bossWin = win ? 1 : 0;
     if (win) {
       const next = clampShadow(s.shadowAfterBossWin, s.shadowMax);
-      this.stats.shadowPurified += Math.max(0, this.shadow - next);
+      // 보스 승리 감소분은 결말 점수에 넣지 않는다 (D-023)
+      this.stats.shadowCalmed += Math.max(0, this.shadow - next);
       this.shadow = next;
       this.stats.bossWins += 1; // 기쁨 +joyReward는 일반 처치 처리로 이미 반영
     } else {
@@ -611,12 +590,11 @@ export class GameState {
     out.push({ type: 'dayEnd', day: this.day, entry, stats: this.lastDayStats });
   }
 
-  /** [다음 날]. 14일째 일기 뒤면 일생 끝 */
+  /** [다음 날]. 14일째 일기 뒤면 일생 끝 + 결말 판정 */
   nextDay(): boolean {
     if (this.phase !== 'diary') return false;
     if (this.day >= this.lifeLengthDays) {
-      this.phase = 'lifeEnd';
-      this.pending.push({ type: 'lifeEnd' });
+      this.enterLifeEnd();
       return true;
     }
     this.day += 1;
@@ -624,6 +602,58 @@ export class GameState {
     this.phase = 'dayStart';
     this.pending.push({ type: 'dayStart', day: this.day, event: this.today });
     return true;
+  }
+
+  private enterLifeEnd(): void {
+    this.ending = judgeEnding(this.stats, this.flags, this.data.endings);
+    this.phase = 'lifeEnd';
+    this.pending.push({ type: 'lifeEnd' });
+  }
+
+  /**
+   * 저장된 하루 경계 상태로 복원 (§5.8-2). 생성자가 쓴 rng는 마지막에 rngState로 되돌린다.
+   * 레인 유닛·걱정·웨이브 진행 상태는 경계에서 항상 비어 있으므로 기본값 그대로.
+   */
+  static fromSave(data: GameData, save: SaveGame, rng: SeededRng, geometry: GameGeometry, size: GridSize): GameState {
+    const g = new GameState(data, size, rng, geometry, save.seed);
+    if (g.grid.cells.length !== save.grid.length) throw new Error(`grid 길이 불일치: ${save.grid.length} ≠ ${g.grid.cells.length}`);
+    const today = eventById(data, save.todayId);
+    if (!today) throw new Error(`알 수 없는 이벤트: ${save.todayId}`);
+    const copy = <T>(v: T): T => structuredClone(v);
+    const refill = <T>(dst: T[], src: readonly T[]) => dst.splice(0, dst.length, ...copy(src));
+
+    g.day = save.day;
+    g.phase = save.phase;
+    g.today = today;
+    g.playTime = save.playTime;
+    g.tickCount = save.tickCount;
+    g.nextPieceId = save.nextPieceId;
+    g.nextUnitId = save.nextUnitId;
+    g.spawnedToday = save.spawnedToday;
+    g.joy = save.joy;
+    g.shadow = save.shadow;
+    g.pendingBackflow = save.pendingBackflow;
+    g.carryBackflow = save.carryBackflow;
+    refill(g.grid.cells, save.grid);
+    refill(g.returnQueue, save.returnQueue);
+    g.lostReturns = save.lostReturns;
+    Object.assign(g.abyss.wall, save.abyss);
+    g.defense.happy.cd = save.happyCd;
+    g.defense.nextWorryId = save.nextWorryId;
+    g.wave.day = save.waveDay;
+    Object.assign(g.stats, save.stats);
+    refill(g.heroFirstPurify, save.heroFirstPurify);
+    refill(g.diary, save.diary);
+    refill(g.flags, save.flags);
+    refill(g.dailyUsed, save.dailyUsed);
+    g.lastDayStats = copy(save.lastDayStats);
+    refill(g.bossLog, save.bossLog);
+    refill(g.summonLog, save.summonLog);
+    g.ending = copy(save.ending);
+    g.dayStats = emptyDayStats(g.joy);
+    g.pending = [];
+    rng.setState(save.rngState);
+    return g;
   }
 
   // ── 조각 생성 ──
@@ -813,6 +843,22 @@ export class GameState {
     this.endDay(this.pending);
   }
 
+  /** 즉시 결말 판정: 현재 stats·flags로 판정 → lifeEnd (레인은 비움) */
+  debugJudgeEnding(): void {
+    if (this.phase === 'lifeEnd') return;
+    this.clearLanes();
+    this.enterLifeEnd();
+  }
+
+  private clearLanes(): void {
+    this.defense.worries.length = 0;
+    this.defense.units.length = 0;
+    this.abyss.units.length = 0;
+    this.bossActive = false;
+    this.unhappyStalled = false;
+    this.wave.phase = 'idle';
+  }
+
   /** 다음 dayStart에 이 이벤트를 강제. 지금 dayStart면 오늘 이벤트를 바로 바꾼다 */
   debugForceEvent(id: string): boolean {
     const e = eventById(this.data, id);
@@ -829,12 +875,8 @@ export class GameState {
   /** 특정 일차의 dayStart로 이동 (그리드·그림자·층은 유지, 레인은 비움) */
   debugGotoDay(day: number): void {
     const d = Math.max(1, Math.min(this.lifeLengthDays, Math.floor(day)));
-    this.defense.worries.length = 0;
-    this.defense.units.length = 0;
-    this.abyss.units.length = 0;
-    this.bossActive = false;
-    this.unhappyStalled = false;
-    this.wave.phase = 'idle';
+    this.clearLanes();
+    this.ending = null;
     this.day = d;
     this.today = this.resolveToday();
     this.dayStats = emptyDayStats(this.joy);

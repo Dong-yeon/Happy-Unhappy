@@ -310,14 +310,15 @@ describe('역류', () => {
     expect(g.stats.backflows).toBe(1);
   });
 
-  it('처치: 그림자 = shadowAfterBossWin (감소분은 shadowPurified), 기쁨 +joyReward, 다음 칸(낮)은 일반 웨이브', () => {
+  it('처치: 그림자 = shadowAfterBossWin (감소분은 shadowCalmed, shadowPurified 아님 D-023), 기쁨 +joyReward, 다음 칸(낮)은 일반 웨이브', () => {
     const g = maxed(3);
     const joy = g.joy;
     const es: CoreEvent[] = [];
     for (let k = 0; k < 60 * 60 && !es.some((e) => e.type === 'backflowEnd'); k++) es.push(...g.tick(FIXED_DT));
     expect(ofType(es, 'backflowEnd')).toEqual([{ type: 'backflowEnd', win: true }]);
     expect(g.shadow).toBe(S.shadowAfterBossWin);
-    expect(g.stats.shadowPurified).toBe(S.shadowMax - S.shadowAfterBossWin);
+    expect(g.stats.shadowCalmed).toBe(S.shadowMax - S.shadowAfterBossWin);
+    expect(g.stats.shadowPurified).toBe(0);
     expect(g.joy).toBe(joy + BOSS.joyReward);
     expect(g.stats).toMatchObject({ bossWins: 1, bossLosses: 0 });
     // 보스(아침)가 끝나면 낮 웨이브는 일반 (하루는 항상 3웨이브)

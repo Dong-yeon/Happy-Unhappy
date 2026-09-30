@@ -38,5 +38,17 @@
       180,
       300
     ]
+  },
+  "m6Goals": {
+    "balancedSolid": [
+      0.3,
+      0.5
+    ],
+    "balancedHidden": [
+      0.05,
+      0.15
+    ],
+    "alwaysHappyMaskMin": 0.8,
+    "randomBestMax": 0.05
   }
 }

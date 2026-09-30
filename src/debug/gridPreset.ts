@@ -1,7 +1,8 @@
 // 디버그 전용 그리드 프리셋 오버라이드. M7 디버그 패널에 흡수 예정.
-// 저장(M6)이 생기면 프리셋 전환 시 저장 초기화를 함께 한다 (스펙 §8).
+// 프리셋 전환 시 게임 저장만 초기화하고 gating은 유지한다 (스펙 §5.8-2, DebugPanel).
 
 import type { GridSize } from '../core/grid';
+import { readKey, writeKey } from '../platform/storage';
 
 const KEY = 'hau_debug_grid';
 
@@ -10,9 +11,9 @@ export function isDebug(): boolean {
 }
 
 export function loadGridOverride(): GridSize | null {
+  const raw = readKey(KEY);
+  if (!raw) return null;
   try {
-    const raw = window.localStorage.getItem(KEY);
-    if (!raw) return null;
     const v = JSON.parse(raw) as Partial<GridSize>;
     if (typeof v.cols === 'number' && typeof v.rows === 'number') return { cols: v.cols, rows: v.rows };
   } catch {
@@ -22,5 +23,5 @@ export function loadGridOverride(): GridSize | null {
 }
 
 export function saveGridOverride(size: GridSize): void {
-  window.localStorage.setItem(KEY, JSON.stringify(size));
+  writeKey(KEY, JSON.stringify(size));
 }

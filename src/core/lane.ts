@@ -187,7 +187,8 @@ export class Lane<K extends LaneKind = LaneKind> {
   readonly wall!: Wall;
   private readonly wallStats?: WallStats;
   private readonly advanceSpeed: number = 0;
-  private nextWorryId = 1;
+  /** 저장(save.ts)이 읽고 쓴다 */
+  nextWorryId = 1;
 
   constructor(
     readonly kind: K,

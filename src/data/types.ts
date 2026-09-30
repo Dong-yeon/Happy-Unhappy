@@ -160,8 +160,10 @@ export type EndingId = 'hidden' | 'solid' | 'mask' | 'quiet' | 'rainy';
 
 export interface Endings {
   weights: { wUpTier: number; wDefeat: number; wJoy: number; wDownTier: number; wLayer: number; wPurified: number };
-  threshold: number;
-  balanceGap: number;
+  /** Tʜ·Tᴜ (v0.6, D-023) */
+  thresholds: { happy: number; unhappy: number };
+  /** 히든 균형: |happy − unhappy| ≤ balanceRatio × max(happy, unhappy) */
+  balanceRatio: number;
   endings: Record<EndingId, { name: string; title: string; desc: string }>;
 }
 

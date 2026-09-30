@@ -1,21 +1,28 @@
 // ?debug=1 디버그 패널. M7에서 정식 디버그 패널로 흡수.
 // 기본은 접힘: 포탈 받침 왼쪽 빈 자리의 [DBG] 토글만 보인다. 펼치면 방어 레인 위에 겹쳐 뜬다 (심연 레인은 가리지 않음).
 // 탭: 기본(그리드·기쁨·조각) / 웨이브(정지·다음·배속) / 심연(그림자·역류·층) / 하루(일차·하루 끝·이벤트·일기장)
+//     / 결말(즉시 판정·미리보기 5종) / 저장(gating·저장 초기화·JSON 복사·시드)
 import Phaser from 'phaser';
 import { allEventIds } from '../core/day';
+import { endingFixtures, judgeEnding, type EndingResult } from '../core/ending';
 import type { GameState } from '../core/game';
 import { WILDCARD, type GridSize } from '../core/grid';
-import type { GameData } from '../data/types';
+import type { EndingId, GameData } from '../data/types';
+import { dateOffset, setDateOffset, today } from '../platform/clock';
+import { storageStatus } from '../platform/storage';
 import { REGION } from '../scenes/layout';
+import type { SaveSession } from '../scenes/session';
 import { Button, text } from '../scenes/ui';
 import { saveGridOverride } from './gridPreset';
 
 const DEBUG_JOY = 100;
 const SPEEDS = [1, 3, 10] as const;
-const PANEL_DEPTH = 50;
+// 모달(DayUi, depth 60~72) 위: "내일 또 만나요"·결과 화면에서도 우회·미리보기를 쓸 수 있게
+const PANEL_DEPTH = 100;
 const PANEL_BG = 0x111318;
 const PANEL_ALPHA = 0.92;
-const TABS = ['기본', '웨이브', '심연', '하루'] as const;
+const TABS = ['기본', '웨이브', '심연', '하루', '결말', '저장'] as const;
+const ROWS = 5;
 type Tab = (typeof TABS)[number];
 
 export interface DebugControls {
@@ -25,14 +32,18 @@ export interface DebugControls {
   onChange(): void;
   /** 일기장 열기 */
   openDiary(): void;
+  /** 결과 화면만 띄움 (게임 상태·저장은 바꾸지 않음) */
+  previewEnding(result: EndingResult): void;
+  /** 저장을 바꾼 뒤 다시 부팅 */
+  reboot(): void;
 }
 
 export function createDebugPanel(
   scene: Phaser.Scene,
   data: GameData,
   state: GameState,
+  session: SaveSession,
   current: GridSize,
-  seed: number | null,
   controls: DebugControls,
 ): void {
   const lane = REGION.defenseLane;
@@ -54,14 +65,16 @@ export function createDebugPanel(
     return t;
   };
 
-  const header = text(scene, x0, top + 6, `DEBUG${seed === null ? '' : ` seed=${seed}`}`, { fontSize: '9px', color: '#ff9e6b' }).setDepth(
-    PANEL_DEPTH + 1,
-  );
+  const header = text(scene, x0, top + 6, '', { fontSize: '9px', color: '#ff9e6b' }).setDepth(PANEL_DEPTH + 1);
+  const syncHeader = () => {
+    const h = `DEBUG seed=${state.seed}${storageStatus.lastError ? ' · 저장 실패' : ''}`;
+    if (header.text !== h) header.setText(h).setColor(storageStatus.lastError ? '#ff5f5f' : '#ff9e6b');
+  };
   const tabBtns = TABS.map((t, i) =>
-    new Button(scene, x0 + 19 + i * 41, top + 28, 38, 18, t, () => {
+    new Button(scene, x0 + 13 + i * 27, top + 28, 26, 18, t, () => {
       page = t;
       apply();
-    }, '9px'),
+    }, '8px'),
   );
   for (const b of tabBtns) b.container.setDepth(PANEL_DEPTH + 1);
   const y0 = top + 56;
@@ -69,14 +82,15 @@ export function createDebugPanel(
   // ── 기본: 그리드 프리셋·기쁨·조각 지급 ──
   {
     let y = y0;
-    label('기본', y - 16, '그리드 (저장 초기화는 M6에서)');
+    label('기본', y - 16, '그리드 (전환 시 게임 저장 초기화, gating 유지)');
     y += 10;
     data.balance.grid.gridPresets.forEach(([cols, rows], i) => {
       const active = cols === current.cols && rows === current.rows;
       btn('기본', scene, x0 + 20 + i * 44, y, 40, 20, `${cols}×${rows}`, () => {
         if (active) return;
+        session.resetGame();
         saveGridOverride({ cols, rows });
-        scene.scene.start('Boot');
+        controls.reboot();
       }, '10px').setActive(active);
     });
     y += 26;
@@ -212,7 +226,90 @@ export function createDebugPanel(
     }, '10px');
   }
 
-  const bottom = y0 + 26 * 4 + 12;
+  // ── 결말: 즉시 판정·미리보기 5종 ──
+  {
+    let y = y0;
+    label('결말', y - 16, '결말 (미리보기는 상태·저장 불변)');
+    y += 10;
+    btn('결말', scene, x0 + 80, y, 160, 20, '즉시 결말 판정 → lifeEnd', () => {
+      state.debugJudgeEnding(); // lifeEnd 이벤트 → 씬이 저장
+      controls.onChange();
+    }, '10px');
+    y += 26;
+    const ids: EndingId[] = ['hidden', 'solid', 'mask', 'quiet', 'rainy'];
+    const fixtures = endingFixtures(data.endings);
+    ids.forEach((id, i) => {
+      const col = i % 3;
+      const row = Math.floor(i / 3);
+      btn('결말', scene, x0 + 28 + col * 56, y + row * 26, 52, 20, id, () => {
+        const f = fixtures[id];
+        controls.previewEnding(judgeEnding(f.stats, f.flags, data.endings));
+      }, '9px');
+    });
+    y += 52;
+    const now = label('결말', y - 8, '');
+    scene.time.addEvent({
+      delay: 500,
+      loop: true,
+      callback: () => {
+        const r = judgeEnding(state.stats, state.flags, data.endings);
+        now.setText(`지금 판정: ${r.id} · H ${Math.round(r.happy)} / U ${Math.round(r.unhappy)}`);
+      },
+    });
+  }
+
+  // ── 저장: gating·초기화·JSON·시드 ──
+  {
+    let y = y0;
+    label('저장', y - 16, 'gating · 저장');
+    y += 10;
+    const bypassLabel = () => `우회 ${session.bypass ? 'ON' : 'OFF'}`;
+    btn('저장', scene, x0 + 40, y, 80, 20, bypassLabel(), (b) => {
+      session.bypass = !session.bypass;
+      b.setLabel(bypassLabel()).setActive(session.bypass);
+      controls.onChange();
+    }, '10px');
+    btn('저장', scene, x0 + 124, y, 80, 20, '열 수 있는 날 +1', () => {
+      session.addOpenable(1);
+      controls.onChange();
+    }, '9px');
+    y += 26;
+    const shiftDate = (d: number) => {
+      setDateOffset(dateOffset() + d);
+      session.checkGrant(state);
+      controls.onChange();
+    };
+    btn('저장', scene, x0 + 40, y, 80, 20, '날짜 −1일', () => shiftDate(-1), '10px');
+    btn('저장', scene, x0 + 124, y, 80, 20, '날짜 +1일', () => shiftDate(1), '10px');
+    y += 18;
+    const status = label('저장', y, '');
+    const syncStatus = () => {
+      const g = session.gating;
+      status.setText(
+        `열 수 있는 날 ${g.openableDays} · last ${g.lastGrantDate ?? '-'}\n` +
+          `forgotten ${g.forgottenDays} (log ${g.forgottenLog.length}) · 오늘 ${today()} (오프셋 ${dateOffset()})`,
+      );
+    };
+    scene.time.addEvent({ delay: 500, loop: true, callback: () => (syncStatus(), syncHeader()) });
+    syncStatus();
+    y += 34;
+    btn('저장', scene, x0 + 40, y, 80, 20, '초기화: 게임만', () => {
+      session.resetGame();
+      controls.reboot();
+    }, '9px');
+    btn('저장', scene, x0 + 124, y, 80, 20, '초기화: 전부', () => {
+      session.resetAll();
+      controls.reboot();
+    }, '9px');
+    y += 26;
+    btn('저장', scene, x0 + 40, y, 80, 20, '저장 JSON 복사', () => {
+      const raw = session.rawJson();
+      console.info('[debug] 저장 JSON', raw);
+      navigator.clipboard?.writeText(raw).catch(() => console.warn('[debug] 클립보드 복사 실패 — 콘솔 참고'));
+    }, '9px');
+  }
+
+  const bottom = y0 + 26 * ROWS + 12;
   const bg = scene.add
     .rectangle(lane.x + 2, top, lane.w - 4, bottom - top, PANEL_BG, PANEL_ALPHA)
     .setOrigin(0)
@@ -240,5 +337,6 @@ export function createDebugPanel(
       for (const it of p.items) (it as unknown as Phaser.GameObjects.Components.Visible).setVisible(show);
     }
   }
+  syncHeader();
   apply();
 }

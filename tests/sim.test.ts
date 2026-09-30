@@ -6,7 +6,7 @@ import { GameState } from '../src/core/game';
 import { mulberry32 } from '../src/core/rng';
 import { gameGeometry } from '../src/scenes/layout';
 import { POLICIES } from '../sim/policies';
-import { bossDiagnostics, buildReport, checkM3Goals, checkM5Goals, quantile, summarize } from '../sim/report';
+import { bossDiagnostics, buildReport, checkM3Goals, checkM5Goals, checkM6Goals, endingStats, quantile, summarize } from '../sim/report';
 import { runOne, type RunOptions, type RunResult } from '../sim/runner';
 import simJson from '../sim/sim.json';
 import type { SimConfig } from '../sim/types';
@@ -164,5 +164,38 @@ describe('통계·리포트', () => {
     const m5 = checkM5Goals([bal], cfg.m5Goals);
     expect(m5.find((c) => c.label.startsWith('하루 길이'))?.pass).toBeNull();
     expect(m5.find((c) => c.id === 'B 역류')).toBeDefined();
+  });
+});
+
+describe('M6: 결말 리포트 (§5.8-4)', () => {
+  it('판마다 결말이 있고, 분포 합 = 1, 항목별 평균 기여의 합 = 점수 평균', () => {
+    const runs = [run('balanced', 1), run('alwaysHappy', 1), run('random', 1)];
+    for (const r of runs) expect(r.ending).not.toBeNull();
+    const e = endingStats(runs);
+    expect(e.n).toBe(3);
+    expect(Object.values(e.dist).reduce((a, b) => a + b, 0)).toBeCloseTo(1);
+    const b = e.breakdown;
+    expect(b.upTier + b.defeat + b.joy).toBeCloseTo(e.happy.mean);
+    expect(b.downTier + b.layer + b.purified).toBeCloseTo(e.unhappy.mean);
+  });
+
+  it('alwaysHappy는 보스 승리분이 unhappy 점수에 들어가지 않는다 (D-023)', () => {
+    const r = run('alwaysHappy', 1);
+    expect(r.bossWins).toBeGreaterThan(0);
+    expect(r.layersCleared).toBe(0);
+    expect(r.ending!.unhappy).toBe(0);
+  });
+
+  it('checkM6Goals: 판정 출력 (roundTrip 없으면 미판정, 있으면 일치 여부)', () => {
+    const reports = ['balanced', 'alwaysHappy', 'alwaysUnhappy', 'random', 'hoarder'].map((p) => buildReport(p, [run(p, 1)], options, cfg));
+    const none = checkM6Goals(reports, cfg.m6Goals, cfg.m5Goals, null);
+    expect(none.find((c) => c.label.startsWith('--saveRoundTrip'))?.pass).toBeNull();
+    for (const id of ['B solid', 'B hidden', 'H mask', 'H best0', 'U best0', 'R best<5', 'hoarder<B', 'M5 초반', 'M5 H역류']) {
+      expect(none.find((c) => c.id === id), id).toBeDefined();
+    }
+    const ok = checkM6Goals(reports, cfg.m6Goals, cfg.m5Goals, [{ policy: 'balanced', matched: 1, total: 1, mismatchSeeds: [] }]);
+    expect(ok.find((c) => c.id === 'roundTrip')?.pass).toBe(true);
+    const ng = checkM6Goals(reports, cfg.m6Goals, cfg.m5Goals, [{ policy: 'balanced', matched: 0, total: 1, mismatchSeeds: [1] }]);
+    expect(ng.find((c) => c.id === 'roundTrip')?.pass).toBe(false);
   });
 });

@@ -9,6 +9,8 @@
 //   npm run sim -- --policy all --set shadow.shadowAfterBossWin=50 --set abyss.unhappyStallShadowPerSec=0.15
 // 한 키를 여러 값으로 돌려 비교 표 (§8.2 M4 목표 충족 여부 포함). --policy를 안 주면 전 정책
 //   npm run sim -- --sweep abyss.unhappyStallShadowPerSec=0.1,0.2,0.3 [--set happy.atk=6]
+// 저장 누락 필드 검출 (§5.8-4): 경계마다 저장 round-trip한 실행이 끈 실행과 완전히 같은지 비교
+//   npm run sim -- --policy all --seeds 200 --saveRoundTrip
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -22,6 +24,7 @@ import {
   checkM3Goals,
   checkM4Goals,
   checkM5Goals,
+  checkM6Goals,
   formatComparison,
   formatCompare,
   formatGoals,
@@ -29,9 +32,11 @@ import {
   formatSweep,
   overridesLine,
   type PolicyReport,
+  type RoundTripCheck,
   type SweepRow,
 } from './report';
-import { runOne } from './runner';
+import { runLife, runOne } from './runner';
+import { serializeGame } from '../src/core/save';
 import simJson from './sim.json';
 import type { SimConfig } from './types';
 
@@ -47,6 +52,7 @@ interface Args {
   compare: [string, string] | null;
   sets: Override[];
   sweep: { key: string; values: Override[] } | null;
+  saveRoundTrip: boolean;
 }
 
 function fail(msg: string): never {
@@ -110,6 +116,7 @@ function parseArgs(argv: string[]): Args {
     compare,
     sets,
     sweep,
+    saveRoundTrip: argv.includes('--saveRoundTrip'),
   };
 }
 
@@ -159,6 +166,25 @@ function runPolicies(args: Args, data: GameData, sets: Override[], cfg: SimConfi
   return reports;
 }
 
+/**
+ * --saveRoundTrip: 정책별 시드마다 (a) 끊김 없이 (b) 경계마다 저장 round-trip → RunResult와 최종 상태(serializeGame)가 같은지.
+ * 봇 rng는 게임 rng와 별개라 그대로 유지된다.
+ */
+function checkRoundTrip(args: Args, data: GameData, cfg: SimConfig): RoundTripCheck[] {
+  return args.policies.map((name) => {
+    let matched = 0;
+    const mismatchSeeds: number[] = [];
+    for (let seed = 1; seed <= args.seeds; seed++) {
+      const a = runLife(data, cfg, POLICIES[name], { seed, grid: args.grid });
+      const b = runLife(data, cfg, POLICIES[name], { seed, grid: args.grid, saveRoundTrip: true });
+      const fin = (s: typeof a.state) => (s.phase === 'lifeEnd' ? JSON.stringify(serializeGame(s)) : '');
+      if (JSON.stringify(a.result) === JSON.stringify(b.result) && fin(a.state) === fin(b.state)) matched += 1;
+      else if (mismatchSeeds.length < 5) mismatchSeeds.push(seed);
+    }
+    return { policy: name, matched, total: args.seeds, mismatchSeeds };
+  });
+}
+
 function main(): void {
   const args = parseArgs(process.argv.slice(2));
 
@@ -195,7 +221,15 @@ function main(): void {
       const data = attempt(() => applyOverrides(base, sets));
       const started = Date.now();
       const reports = runPolicies(args, data, sets, cfg, false);
-      rows.push({ value: v.value, reports, goals: [...checkM5Goals(reports, cfg.m5Goals), ...checkM4Goals(reports, cfg.m4Goals)] });
+      rows.push({
+        value: v.value,
+        reports,
+        goals: [
+          ...checkM6Goals(reports, cfg.m6Goals, cfg.m5Goals, null).filter((g) => g.id && !g.id.startsWith('M5')),
+          ...checkM5Goals(reports, cfg.m5Goals),
+          ...checkM4Goals(reports, cfg.m4Goals),
+        ],
+      });
       console.log(`  ${key}=${JSON.stringify(v.value)} 완료 (${((Date.now() - started) / 1000).toFixed(1)}초)`);
     }
     console.log();
@@ -242,6 +276,19 @@ function main(): void {
   console.log(formatGoals(checkM4Goals(reports, cfg.m4Goals), '§8.2 M4 부분 목표'));
   console.log();
   console.log(formatGoals(checkM5Goals(reports, cfg.m5Goals), '§8.2 M5 부분 목표'));
+  console.log();
+
+  let roundTrip: RoundTripCheck[] | null = null;
+  if (args.saveRoundTrip) {
+    const started = Date.now();
+    roundTrip = checkRoundTrip(args, data, cfg);
+    console.log(
+      `--saveRoundTrip (${((Date.now() - started) / 1000).toFixed(1)}초): ` +
+        roundTrip.map((r) => `${r.policy} ${r.matched}/${r.total}`).join(' · '),
+    );
+    console.log();
+  }
+  console.log(formatGoals(checkM6Goals(reports, cfg.m6Goals, cfg.m5Goals, roundTrip), '§8.2 M6 목표 (M6: 판정 출력만, 통과는 M6.5)'));
 }
 
 main();

@@ -1,4 +1,6 @@
-// 리포트: 시드 N개 결과 → 요약 통계, 콘솔 표, 비교 (스펙 §8.1)
+// 리포트: 시드 N개 결과 → 요약 통계, 콘솔 표, 비교 (스펙 §8.1). M6: 결말 분포·점수 백분위·항목별 기여 (§5.8-4)
+import { BREAKDOWN_KEYS, type BreakdownKey } from '../src/core/ending';
+import type { EndingId } from '../src/data/types';
 import type { OverrideValue } from './overrides';
 import type { RunResult } from './runner';
 import type { SimConfig } from './types';
@@ -26,7 +28,7 @@ export interface PolicyReport {
     /** --set으로 덮어쓴 값 (전체 경로 → 값). 없으면 JSON 그대로 */
     overrides?: Record<string, OverrideValue>;
   };
-  sim: Omit<SimConfig, 'm3Goals' | 'm4Goals' | 'm5Goals'>;
+  sim: Omit<SimConfig, 'm3Goals' | 'm4Goals' | 'm5Goals' | 'm6Goals'>;
   summary: Record<string, Summary>;
   /** 첫 가라앉음이 없었던 시드 비율 */
   neverSankRatio: number;
@@ -45,7 +47,41 @@ export interface PolicyReport {
   bossDiag: BossDiag;
   /** 소환 단계 분포 (전 시드 합산 비율) */
   tierShare: Record<string, number>;
+  /** 결말 분포·점수 (M6, §5.8-4) */
+  endings: EndingStats;
   runs: RunResult[];
+}
+
+export const ENDING_IDS: EndingId[] = ['hidden', 'solid', 'mask', 'quiet', 'rainy'];
+
+export interface EndingStats {
+  /** 결말이 난 판 수 (14일을 다 산 판) */
+  n: number;
+  /** 결말별 비율 (n 기준) */
+  dist: Record<EndingId, number>;
+  happy: Summary;
+  unhappy: Summary;
+  /** happy + unhappy */
+  total: Summary;
+  /** 항목별 평균 기여 (가중치 곱한 값) */
+  breakdown: Record<BreakdownKey, number>;
+}
+
+export function endingStats(runs: RunResult[]): EndingStats {
+  const ends = runs.flatMap((r) => (r.ending ? [r.ending] : []));
+  const n = ends.length;
+  const dist = Object.fromEntries(ENDING_IDS.map((id) => [id, n ? ends.filter((e) => e.id === id).length / n : 0])) as Record<EndingId, number>;
+  const breakdown = Object.fromEntries(
+    BREAKDOWN_KEYS.map((k) => [k, n ? ends.reduce((s, e) => s + e.breakdown[k], 0) / n : NaN]),
+  ) as Record<BreakdownKey, number>;
+  return {
+    n,
+    dist,
+    happy: summarize(ends.map((e) => e.happy)),
+    unhappy: summarize(ends.map((e) => e.unhappy)),
+    total: summarize(ends.map((e) => e.happy + e.unhappy)),
+    breakdown,
+  };
 }
 
 export interface BossDiagRow {
@@ -190,7 +226,7 @@ export function buildReport(
   const tierShare: Record<string, number> = {};
   for (const [t, c] of Object.entries(tierCount)) tierShare[t] = total === 0 ? 0 : c / total;
 
-  const { m3Goals: _m3, m4Goals: _m4, m5Goals: _m5, ...sim } = cfg;
+  const { m3Goals: _m3, m4Goals: _m4, m5Goals: _m5, m6Goals: _m6, ...sim } = cfg;
   return {
     version: 1,
     policy,
@@ -202,6 +238,7 @@ export function buildReport(
     curves,
     bossDiag: bossDiagnostics(runs),
     tierShare,
+    endings: endingStats(runs),
     runs,
   };
 }
@@ -262,8 +299,39 @@ export function formatReport(r: PolicyReport): string {
     '일차별 (하루 끝 기쁨 중앙값 [p10~p90] / 가라앉음 평균 / 그림자 중앙값 [p90] / 하루 길이 중앙값):',
     curveLine(r),
     formatBossDiag(r),
+    formatEndings(r),
   ];
   return lines.join('\n');
+}
+
+const BREAKDOWN_LABEL: Record<BreakdownKey, string> = {
+  upTier: '위 단계(wUpTier)',
+  defeat: '처치(wDefeat)',
+  joy: '기쁨(wJoy)',
+  downTier: '아래 단계(wDownTier)',
+  layer: '층(wLayer)',
+  purified: '정화(wPurified)',
+};
+
+function pctOf(x: number): string {
+  return `${fmt(x * 100, 1)}%`;
+}
+
+/** 결말 분포 + 점수 백분위 + 항목별 평균 기여 (§5.8-4) */
+export function formatEndings(r: PolicyReport): string {
+  const e = r.endings;
+  if (!e || e.n === 0) return '결말: 없음 (14일을 다 산 판이 없음)';
+  const score = (label: string, s: Summary) => [label, fmt(s.p10, 0), fmt(s.median, 0), fmt(s.p90, 0), fmt(s.mean, 1)];
+  const share = (side: BreakdownKey[], total: number) =>
+    side.map((k) => `${BREAKDOWN_LABEL[k]} ${fmt(e.breakdown[k], 1)} (${total > 0 ? fmt((e.breakdown[k] / total) * 100, 0) : '—'}%)`).join(' · ');
+  const hMean = e.breakdown.upTier + e.breakdown.defeat + e.breakdown.joy;
+  const uMean = e.breakdown.downTier + e.breakdown.layer + e.breakdown.purified;
+  return [
+    `결말 분포 (n=${e.n}): ${ENDING_IDS.map((id) => `${id} ${pctOf(e.dist[id])}`).join(' / ')}`,
+    table(['점수', 'p10', 'p50', 'p90', '평균'], [score('Happy', e.happy), score('Unhappy', e.unhappy), score('합', e.total)]),
+    `항목별 평균 기여 — Happy: ${share(['upTier', 'defeat', 'joy'], hMean)}`,
+    `                  Unhappy: ${share(['downTier', 'layer', 'purified'], uMean)}`,
+  ].join('\n');
 }
 
 function curveLine(r: PolicyReport): string {
@@ -300,11 +368,25 @@ export function formatBossDiag(r: PolicyReport): string {
 /** 정책 간 비교 표 (중앙값 중심) */
 export function formatComparison(reports: PolicyReport[]): string {
   const keys = ['firstSinkDay', 'sunk', 'layersCleared', 'backflows', 'bossWins', 'downRatio', 'finalJoy', 'dayLength', 'meanSummonTier'];
-  const header = ['정책', ...keys.map((k) => METRICS.find((m) => m.key === k)!.label + ' (중앙값)'), '무가라앉음%'];
+  const header = [
+    '정책',
+    ...keys.map((k) => METRICS.find((m) => m.key === k)!.label + ' (중앙값)'),
+    '무가라앉음%',
+    'solid%',
+    'hidden%',
+    'mask%',
+    'H p50',
+    'U p50',
+  ];
   const rows = reports.map((r) => [
     r.policy,
     ...keys.map((k) => fmt(r.summary[k].median) + (r.summary[k].n < r.runs.length ? ` (n=${r.summary[k].n})` : '')),
     fmt(r.neverSankRatio * 100, 1),
+    fmt(r.endings.dist.solid * 100, 1),
+    fmt(r.endings.dist.hidden * 100, 1),
+    fmt(r.endings.dist.mask * 100, 1),
+    fmt(r.endings.happy.median, 0),
+    fmt(r.endings.unhappy.median, 0),
   ]);
   return table(header, rows);
 }
@@ -540,6 +622,129 @@ export function checkM5Goals(reports: PolicyReport[], goals: SimConfig['m5Goals'
   return out;
 }
 
+/** --saveRoundTrip 결과 (정책별 일치 시드 수) */
+export interface RoundTripCheck {
+  policy: string;
+  matched: number;
+  total: number;
+  /** 어긋난 시드 (앞 몇 개) */
+  mismatchSeeds: number[];
+}
+
+/**
+ * §8.2 M6 목표 (--until life). M6에서는 판정 출력만 하고 통과를 요구하지 않는다 (통과는 M6.5 완료 조건).
+ * roundTrip이 주어지면 --saveRoundTrip 일치(M6 완료 조건)도 판정한다.
+ */
+export function checkM6Goals(
+  reports: PolicyReport[],
+  goals: SimConfig['m6Goals'],
+  m5: SimConfig['m5Goals'],
+  roundTrip: RoundTripCheck[] | null,
+): GoalCheck[] {
+  const out: GoalCheck[] = [];
+  const get = (name: string) => reports.find((r) => r.policy === name);
+  const d = (r: PolicyReport) => r.endings.dist;
+  const inRange = (x: number, [lo, hi]: number[]) => x >= lo - 1e-12 && x <= hi + 1e-12;
+  const distLine = (r: PolicyReport) => ENDING_IDS.map((id) => `${id} ${pctOf(d(r)[id])}`).join(' / ');
+
+  const bal = get('balanced');
+  if (bal) {
+    const [sl, sh] = goals.balancedSolid;
+    const [hl, hh] = goals.balancedHidden;
+    out.push({
+      id: 'B solid',
+      label: `balanced: 단단한 어른 ${fmt(sl * 100, 0)}~${fmt(sh * 100, 0)}%`,
+      pass: inRange(d(bal).solid, goals.balancedSolid),
+      detail: distLine(bal),
+    });
+    out.push({
+      id: 'B hidden',
+      label: `balanced: 히든 ${fmt(hl * 100, 0)}~${fmt(hh * 100, 0)}%`,
+      pass: inRange(d(bal).hidden, goals.balancedHidden),
+      detail: `hidden ${pctOf(d(bal).hidden)}`,
+    });
+  } else out.push({ label: 'balanced', pass: null, detail: '실행하지 않음' });
+
+  const hap = get('alwaysHappy');
+  if (hap) {
+    out.push({
+      id: 'H mask',
+      label: `alwaysHappy: 웃는 가면 ≥ ${fmt(goals.alwaysHappyMaskMin * 100, 0)}%`,
+      pass: d(hap).mask >= goals.alwaysHappyMaskMin,
+      detail: distLine(hap),
+    });
+    out.push({
+      id: 'H best0',
+      label: 'alwaysHappy: 단단한 어른·히든 0%',
+      pass: d(hap).solid + d(hap).hidden === 0,
+      detail: `solid ${pctOf(d(hap).solid)} + hidden ${pctOf(d(hap).hidden)}`,
+    });
+  } else out.push({ label: 'alwaysHappy', pass: null, detail: '실행하지 않음' });
+
+  const unh = get('alwaysUnhappy');
+  if (unh) {
+    out.push({
+      id: 'U best0',
+      label: 'alwaysUnhappy: 단단한 어른·히든 0%',
+      pass: d(unh).solid + d(unh).hidden === 0,
+      detail: distLine(unh),
+    });
+  } else out.push({ label: 'alwaysUnhappy', pass: null, detail: '실행하지 않음' });
+
+  const rnd = get('random');
+  if (rnd) {
+    const best = d(rnd).solid + d(rnd).hidden;
+    out.push({
+      id: 'R best<5',
+      label: `random: 단단한 어른 + 히든 < ${fmt(goals.randomBestMax * 100, 0)}%`,
+      pass: best < goals.randomBestMax,
+      detail: `${pctOf(best)} (${distLine(rnd)})`,
+    });
+  } else out.push({ label: 'random', pass: null, detail: '실행하지 않음' });
+
+  const hoard = get('hoarder');
+  if (hoard && bal) {
+    out.push({
+      id: 'hoarder<B',
+      label: 'hoarder: 결말 점수(happy + unhappy 중앙값)가 balanced보다 낮음',
+      pass: hoard.endings.total.median < bal.endings.total.median,
+      detail: `hoarder ${fmt(hoard.endings.total.median, 0)} vs balanced ${fmt(bal.endings.total.median, 0)}`,
+    });
+  } else out.push({ label: 'hoarder', pass: null, detail: 'hoarder와 balanced를 함께 실행해야 비교 가능' });
+
+  if (roundTrip) {
+    const all = roundTrip.every((r) => r.matched === r.total);
+    out.push({
+      id: 'roundTrip',
+      label: '--saveRoundTrip: 끈 실행과 결과 완전 일치 (M6 완료 조건)',
+      pass: all,
+      detail: roundTrip
+        .map((r) => `${r.policy} ${r.matched}/${r.total}${r.mismatchSeeds.length ? ` (어긋난 시드 ${r.mismatchSeeds.join(',')})` : ''}`)
+        .join(' · '),
+    });
+  } else out.push({ label: '--saveRoundTrip', pass: null, detail: '--saveRoundTrip으로 실행하지 않음' });
+
+  // 기존 M5 목표 회귀 없음 (1~2일차 가라앉음 0~2, alwaysHappy 역류 ≥ 3)
+  if (bal) {
+    const early = bal.summary.earlySunk;
+    out.push({
+      id: 'M5 초반',
+      label: `M5 회귀: balanced 1~${m5.earlyDays}일차 가라앉음 0~${m5.balancedEarlySinkMax} (중앙값)`,
+      pass: early.median <= m5.balancedEarlySinkMax,
+      detail: `중앙값 ${fmt(early.median)} [p90 ${fmt(early.p90)}]`,
+    });
+  }
+  if (hap) {
+    out.push({
+      id: 'M5 H역류',
+      label: `M5 회귀: alwaysHappy 역류 ≥ ${m5.alwaysHappyBackflowsMin} (중앙값)`,
+      pass: hap.summary.backflows.median >= m5.alwaysHappyBackflowsMin,
+      detail: `역류 중앙값 ${fmt(hap.summary.backflows.median)}`,
+    });
+  }
+  return out;
+}
+
 export function formatGoals(checks: GoalCheck[], title = '§8.2 M3 부분 목표'): string {
   return [
     title,
@@ -584,5 +789,17 @@ export function formatSweep(key: string, rows: SweepRow[]): string {
       ...goalIds.map(mark),
     ];
   });
-  return `■ --sweep ${key}\n${table(header, body)}`;
+  // 결말 열 (정책별 solid / hidden / mask %)
+  const policies = [...new Set(rows.flatMap((r) => r.reports.map((p) => p.policy)))];
+  const endHeader = ['값', ...policies.map((p) => `${p} s/h/m%`)];
+  const endBody = rows.map((row) => [
+    JSON.stringify(row.value),
+    ...policies.map((p) => {
+      const r = row.reports.find((x) => x.policy === p);
+      if (!r) return '—';
+      const e = r.endings.dist;
+      return `${fmt(e.solid * 100, 0)}/${fmt(e.hidden * 100, 0)}/${fmt(e.mask * 100, 0)}`;
+    }),
+  ]);
+  return `■ --sweep ${key}\n${table(header, body)}\n\n결말 분포 (solid / hidden / mask %)\n${table(endHeader, endBody)}`;
 }

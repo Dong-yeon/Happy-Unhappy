@@ -18,7 +18,7 @@ interface NumOpts {
   int?: boolean;
 }
 
-class Checker {
+export class Checker {
   readonly issues: Issue[] = [];
 
   fail(path: string, reason: string): void {
@@ -424,11 +424,11 @@ function checkDiary(c: Checker, v: unknown): void {
 }
 
 function checkEndings(c: Checker, v: unknown): void {
-  const e = c.obj(v, 'endings', ['weights', 'threshold', 'balanceGap', 'endings']);
+  const e = c.obj(v, 'endings', ['weights', 'thresholds', 'balanceRatio', 'endings']);
   if (!e) return;
   c.nums(e.weights, 'endings.weights', ['wUpTier', 'wDefeat', 'wJoy', 'wDownTier', 'wLayer', 'wPurified'], { min: 0 });
-  c.num(e.threshold, 'endings.threshold', { min: 0 });
-  c.num(e.balanceGap, 'endings.balanceGap', { min: 0 });
+  c.nums(e.thresholds, 'endings.thresholds', ['happy', 'unhappy'], { min: 0 });
+  c.num(e.balanceRatio, 'endings.balanceRatio', { min: 0, max: 1 });
   const ids = ['hidden', 'solid', 'mask', 'quiet', 'rainy'];
   const list = c.obj(e.endings, 'endings.endings', ids);
   if (!list) return;

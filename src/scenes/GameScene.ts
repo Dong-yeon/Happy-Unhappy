@@ -1,8 +1,7 @@
 import Phaser from 'phaser';
 import type { GameData } from '../data/types';
-import { GameState } from '../core/game';
+import type { CoreEvent, GameState } from '../core/game';
 import type { GridSize } from '../core/grid';
-import { mulberry32, parseSeed } from '../core/rng';
 import type { SlotId } from '../core/wave';
 import { createDebugPanel } from '../debug/DebugPanel';
 import { isDebug } from '../debug/gridPreset';
@@ -12,6 +11,7 @@ import { DefenseLaneView } from './DefenseLaneView';
 import { GridView, type DragHover } from './GridView';
 import { PortalView } from './PortalView';
 import { ReleaseZoneView } from './ReleaseZoneView';
+import { SaveSession } from './session';
 import {
   DEFENSE_LINE_Y,
   HOME_Y,
@@ -21,7 +21,6 @@ import {
   SHADOW_WALL,
   VIEW_W,
   WORRY_SPAWN_Y,
-  gameGeometry,
   gridLayout,
   type Rect,
 } from './layout';
@@ -34,11 +33,12 @@ const SLOT_NAMES: Record<SlotId, string> = { morning: '아침', noon: '낮', eve
 const MAX_FRAME_MS = 100;
 
 /**
- * M5: 하루 = 한 판 (이벤트 카드·3웨이브·그림일기, 14일 일생) + 그리드 + 방어 레인(☀ 창문) + 심연 레인(◐ 손거울) + 그림자·역류.
- * 게임 규칙은 core(GameState)에서, 이 씬은 표시·입력만.
+ * M6: 하루 = 한 판 (이벤트 카드·3웨이브·그림일기, 14일 일생) + 그리드 + 방어 레인(☀ 창문) + 심연 레인(◐ 손거울) + 그림자·역류
+ * + C안 gating·하루 경계 저장/복원·결말 (§5.8). 게임 규칙은 core(GameState)에서, 이 씬은 표시·입력만.
  */
 export class GameScene extends Phaser.Scene {
   private state!: GameState;
+  private session!: SaveSession;
   private gridView!: GridView;
   private joyText!: Phaser.GameObjects.Text;
   private spawnBtn!: Button;
@@ -65,14 +65,9 @@ export class GameScene extends Phaser.Scene {
     setupCamera(this);
     const data = this.registry.get('data') as GameData;
     const size = this.registry.get('gridSize') as GridSize;
-    // ?seed= 가 있으면 시드 고정, 없으면 Math.random
-    const seed = parseSeed(new URLSearchParams(window.location.search).get('seed'));
-    this.state = new GameState(
-      data,
-      size,
-      seed === null ? Math.random : mulberry32(seed),
-      gameGeometry(data.balance.lane.laneCap),
-    );
+    // 저장 복원(하루 경계) 또는 새 일생 (?seed= 가 있으면 그 시드) → gating 지급 확인
+    this.session = new SaveSession(data, size);
+    this.state = this.session.boot();
 
     this.drawHud(data);
     this.drawDefenseLane();
@@ -95,24 +90,58 @@ export class GameScene extends Phaser.Scene {
       onSummon: (unit, x, y) => (unit.side === 'happy' ? this.laneView : this.abyssView).onSummon(unit, x, y),
       canInteract: () => this.state.phase === 'waves' && !this.dayUi.blocking,
     });
-    this.dayUi = new DayUi(this, this.state, {
+    this.dayUi = new DayUi(this, this.state, data, {
       onChange: () => this.onDebugChange(),
-      onRestart: () => this.scene.start('Boot'),
+      onRestart: () => this.restartLife(),
+      canOpenDay: () => this.session.canOpenDay,
+      recheck: () => this.session.checkGrant(this.state),
+      forgottenLog: () => this.session.gating.forgottenLog,
     });
+    // 지급 확인: 앱이 다시 보일 때 (§5.8-1)
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') this.session.checkGrant(this.state);
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => document.removeEventListener('visibilitychange', onVisible));
     if (isDebug()) {
       // 디버그 전용: 브라우저 콘솔에서 core 상태를 들여다보기 (?debug=1일 때만)
       (window as unknown as { __hauState?: GameState }).__hauState = this.state;
-      createDebugPanel(this, data, this.state, size, seed, {
+      createDebugPanel(this, data, this.state, this.session, size, {
         setSpeed: (s) => (this.speed = s),
         onChange: () => this.onDebugChange(),
         openDiary: () => this.dayUi.showDiaryList(),
+        previewEnding: (r) => this.dayUi.showResult(r, true),
+        reboot: () => this.scene.start('Boot'),
       });
     }
+    this.gridView.refresh();
     this.syncUi();
+  }
+
+  /** [처음부터]: 새 일생 (gating 유지) → 다시 부팅하면 새 시드로 만들고 dayStart 저장 */
+  private restartLife(): void {
+    this.session.newLife();
+    this.scene.start('Boot');
+  }
+
+  /**
+   * 하루 경계 저장 (§5.8-2): dayStart 진입 → game / diary 진입 → gating 소비 + game (한 번의 쓰기) / lifeEnd 진입 → game.
+   * 이벤트를 처리하는 시점에 경계 단계가 아니면(같은 프레임에 다음 단계로 넘어간 경우) 건너뛴다.
+   */
+  private persist(events: CoreEvent[]): void {
+    const boundary = this.state.phase === 'dayStart' || this.state.phase === 'diary' || this.state.phase === 'lifeEnd';
+    for (const e of events) {
+      if (e.type === 'dayEnd') {
+        if (boundary) this.session.endDay(this.state);
+      } else if (e.type === 'dayStart' || e.type === 'lifeEnd') {
+        if (boundary) this.session.saveGame(this.state);
+      }
+    }
   }
 
   update(_time: number, delta: number): void {
     const events = this.state.tick((Math.min(delta, MAX_FRAME_MS) / 1000) * this.speed);
+    this.persist(events);
     this.laneView.handle(events);
     this.abyssView.handle(events);
     // 층 돌파 귀환 조각은 core에서 이미 그리드에 들어가 있다

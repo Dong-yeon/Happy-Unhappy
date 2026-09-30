@@ -1,8 +1,15 @@
-// 하루 구조 UI (§5.7): 이벤트 카드·이정표 모달, 역류 준비 경고 띠, 그림일기 패널, 일기장 목록, 일생 끝 화면.
-// 도형 + 텍스트만. 상태는 core(GameState)에서 읽고, 버튼은 core 메서드만 호출한다.
+// 하루 구조 UI (§5.7, §5.8): 이벤트 카드·이정표 모달, "내일 또 만나요", 역류 준비 경고 띠, 그림일기 패널,
+// 일기장 목록(+ 기억나지 않는 날), 결과 화면.
+// 도형 + 텍스트만. 상태는 core(GameState)에서 읽고, 버튼은 core 메서드·hooks만 호출한다.
 import Phaser from 'phaser';
+import type { EndingResult } from '../core/ending';
 import type { GameState } from '../core/game';
+import type { ForgottenEntry } from '../core/gating';
+import type { GameData } from '../data/types';
+import { isDebug } from '../debug/gridPreset';
+import { minutesUntilMidnight } from '../platform/clock';
 import { REGION, VIEW_H, VIEW_W } from './layout';
+import { mergeDiary } from './diaryList';
 import { Button, COLOR, text } from './ui';
 
 const OVERLAY_DEPTH = 60;
@@ -11,9 +18,27 @@ const PANEL_W = 300;
 export interface DayUiHooks {
   /** core 상태가 바뀐 뒤 (그리드·HUD 갱신) */
   onChange(): void;
-  /** [처음부터] */
+  /** [처음부터] (두 번 탭 확인 뒤) */
   onRestart(): void;
+  /** 날을 시작할 수 있는지 (gating: 열 수 있는 날 ≥ 1 또는 디버그 우회) */
+  canOpenDay(): boolean;
+  /** "내일 또 만나요"의 [다시 확인]: gating 지급 확인 */
+  recheck(): void;
+  /** 이번 일생의 기억나지 않는 날 (일기장 병합) */
+  forgottenLog(): readonly ForgottenEntry[];
 }
+
+const BREAKDOWN_LABELS: Record<keyof EndingResult['breakdown'], string> = {
+  upTier: '위로 보낸 단계',
+  defeat: '막아낸 걱정',
+  joy: '얻은 기쁨',
+  downTier: '아래로 보낸 단계',
+  layer: '층 돌파',
+  purified: '정화한 그림자',
+};
+
+/** [처음부터] 두 번 탭: 첫 탭 후 이 시간 안에 다시 눌러야 한다 */
+const RESTART_CONFIRM_MS = 3000;
 
 /** 전체 화면을 덮는 반투명 막 + 가운데 패널. 막은 뒤쪽 입력을 막는다 */
 class Modal {
@@ -43,7 +68,7 @@ class Modal {
     return t;
   }
 
-  button(x: number, y: number, w: number, label: string, onClick: () => void): Button {
+  button(x: number, y: number, w: number, label: string, onClick: (btn: Button) => void): Button {
     const b = new Button(this.scene, x, this.top + y, w, 30, label, onClick, '12px');
     b.container.setDepth(OVERLAY_DEPTH + 2);
     this.buttons.push(b);
@@ -62,10 +87,14 @@ export class DayUi {
   private shownFor = '';
   private readonly prepBand: Phaser.GameObjects.Container;
   private readonly prepText: Phaser.GameObjects.Text;
+  /** "내일 또 만나요"의 남은 시간 텍스트 (떠 있을 때만) */
+  private waitText: Phaser.GameObjects.Text | null = null;
+  private waitCheckedAt = 0;
 
   constructor(
     private readonly scene: Phaser.Scene,
     private readonly state: GameState,
+    private readonly data: GameData,
     private readonly hooks: DayUiHooks,
   ) {
     // 역류 준비 시간 경고 띠: 방어 레인 위쪽
@@ -83,22 +112,67 @@ export class DayUi {
   /** 매 프레임: 단계에 맞는 모달을 띄우고 경고 띠를 갱신 */
   sync(): void {
     const s = this.state;
-    const key = `${s.phase}:${s.day}:${s.today.id}`;
+    const key = this.phaseKey();
     if (key !== this.shownFor) {
       this.shownFor = key;
       this.closeModal();
-      if (s.phase === 'dayStart') this.showEventCard();
-      else if (s.phase === 'diary') this.showDiaryPanel();
-      else if (s.phase === 'lifeEnd') this.showLifeEnd();
+      if (s.phase === 'dayStart') {
+        if (this.hooks.canOpenDay()) this.showEventCard();
+        else this.showSeeYouTomorrow();
+      } else if (s.phase === 'diary') this.showDiaryPanel();
+      else if (s.phase === 'lifeEnd') this.showResult(s.ending, false);
+    }
+    // 다음 지급까지 남은 시간: 1초마다 확인 (표시는 분 단위라 1분마다 바뀐다)
+    if (this.waitText && this.scene.time.now - this.waitCheckedAt >= 1000) {
+      this.waitCheckedAt = this.scene.time.now;
+      const t = this.waitLabel();
+      if (this.waitText.text !== t) this.waitText.setText(t);
     }
     const prep = s.phase === 'waves' && s.wave.inBossPrep;
     this.prepBand.setVisible(prep);
     if (prep) this.prepText.setText(`⚠ 역류가 다가온다 · ${Math.ceil(s.wave.timer)}초`);
   }
 
+  /** 단계별 모달을 다시 띄울지 판단하는 키. dayStart는 날을 시작할 수 있는지도 포함 */
+  private phaseKey(): string {
+    const s = this.state;
+    const open = s.phase === 'dayStart' ? `:${this.hooks.canOpenDay()}` : '';
+    return `${s.phase}:${s.day}:${s.today.id}${open}`;
+  }
+
   private closeModal(): void {
     this.modal?.destroy();
     this.modal = null;
+    this.waitText = null;
+  }
+
+  private waitLabel(): string {
+    const m = minutesUntilMidnight();
+    const h = Math.floor(m / 60);
+    return `다음 날이 열리기까지 ${h > 0 ? `${h}시간 ` : ''}${m % 60}분`;
+  }
+
+  /** 열 수 있는 날이 0: 마지막 그림일기 한 줄 + "내일 또 만나요" + 남은 시간 + [일기장] [다시 확인] */
+  private showSeeYouTomorrow(): void {
+    const s = this.state;
+    const m = new Modal(this.scene, 230);
+    const last = s.diary[s.diary.length - 1];
+    let y = 20;
+    if (last) {
+      m.text(y, `${last.day}일째 · ${last.line}`, { fontSize: '11px', color: '#8a8f9e', lineSpacing: 3 });
+      y += 52;
+    } else {
+      y += 20;
+    }
+    m.text(y, '내일 또 만나요', { fontSize: '20px', color: '#f2c94c', fontStyle: 'bold' });
+    this.waitText = m.text(y + 40, this.waitLabel(), { fontSize: '11px', color: '#9fb4e0' });
+    this.waitCheckedAt = this.scene.time.now;
+    m.button(VIEW_W / 2 - 64, 190, 110, '일기장', () => this.showDiaryList());
+    m.button(VIEW_W / 2 + 64, 190, 110, '다시 확인', () => {
+      this.hooks.recheck();
+      this.hooks.onChange();
+    });
+    this.modal = m;
   }
 
   /** 이벤트 카드: 제목 + 본문 + [확인]. 이정표는 두 선택 버튼 */
@@ -115,7 +189,7 @@ export class DayUi {
     const confirm = (choice?: string) => {
       if (this.state.confirmDay(choice).ok) {
         this.closeModal();
-        this.shownFor = `${this.state.phase}:${this.state.day}:${this.state.today.id}`;
+        this.shownFor = this.phaseKey();
         this.hooks.onChange();
       }
     };
@@ -152,19 +226,58 @@ export class DayUi {
     this.modal = m;
   }
 
-  /** 14일 뒤: "일생 끝" (결말 판정은 M6) */
-  private showLifeEnd(): void {
-    const s = this.state;
-    const m = new Modal(this.scene, 220);
-    m.text(22, '일생 끝', { fontSize: '20px', color: '#f2c94c', fontStyle: 'bold' });
-    m.text(60, '(결말 판정은 M6)', { fontSize: '11px', color: '#8a8f9e' });
-    m.text(
-      92,
-      `${s.lifeLengthDays}일 · 막아낸 걱정 ${s.stats.worriesDefeated} · 층 돌파 ${s.stats.layersCleared} · 역류 ${s.stats.backflows}`,
-      { fontSize: '11px' },
-    );
-    m.button(VIEW_W / 2 - 64, 168, 110, '일기장', () => this.showDiaryList());
-    m.button(VIEW_W / 2 + 64, 168, 110, '처음부터', () => this.hooks.onRestart());
+  /**
+   * 결과 화면 (§5.8-3): 결말 이름, 한 줄 설명, 엔딩 제목(+ 상하 반전 alpha 0.35 반사), 두 점수, [일기장], [처음부터].
+   * ?debug=1이면 항목별 기여. preview(디버그 결말 미리보기)면 [처음부터] 대신 [닫기]이고 게임 상태는 바꾸지 않는다.
+   */
+  showResult(result: EndingResult | null, preview: boolean): void {
+    this.closeModal();
+    const debug = isDebug();
+    const m = new Modal(this.scene, debug ? 330 : 300);
+    if (!result) {
+      m.text(40, '결말 없음', { fontSize: '16px', color: '#ff9e9e' });
+    } else {
+      const e = this.data.endings.endings[result.id];
+      if (preview) m.text(6, `(미리보기 · ${result.id})`, { fontSize: '9px', color: '#ff9e6b' });
+      m.text(22, e.name, { fontSize: '13px', color: '#9fb4e0' });
+      const title = m.text(46, e.title, { fontSize: '22px', color: '#f2c94c', fontStyle: 'bold' });
+      // 수면 반사: 같은 글자를 상하 반전·alpha 0.35로 한 번 더 (연출은 본 개발)
+      m.text(46 + title.height, e.title, { fontSize: '22px', color: '#f2c94c', fontStyle: 'bold' }).setFlipY(true).setAlpha(0.35);
+      m.text(46 + title.height * 2 + 12, e.desc, { fontSize: '12px', lineSpacing: 4 });
+      m.text(176, `Happy ${Math.round(result.happy)} · Unhappy ${Math.round(result.unhappy)}`, { fontSize: '13px' });
+      if (debug) {
+        const lines = (Object.keys(BREAKDOWN_LABELS) as (keyof typeof BREAKDOWN_LABELS)[]).map(
+          (k) => `${BREAKDOWN_LABELS[k]} ${result.breakdown[k].toFixed(1)}`,
+        );
+        m.text(202, `[기여] ${lines.slice(0, 3).join(' · ')}\n${lines.slice(3).join(' · ')}`, {
+          fontSize: '9px',
+          color: '#ff9e6b',
+          lineSpacing: 3,
+        });
+      }
+    }
+    const by = debug ? 290 : 260;
+    m.button(VIEW_W / 2 - 64, by, 110, '일기장', () => this.showDiaryList());
+    if (preview) {
+      m.button(VIEW_W / 2 + 64, by, 110, '닫기', () => {
+        this.closeModal();
+        this.shownFor = ''; // 단계 모달을 다시 띄운다
+      });
+    } else {
+      let armedAt = -Infinity;
+      m.button(VIEW_W / 2 + 64, by, 110, '처음부터', (b) => {
+        const now = this.scene.time.now;
+        if (now - armedAt <= RESTART_CONFIRM_MS) {
+          this.hooks.onRestart();
+          return;
+        }
+        armedAt = now;
+        b.setLabel('한 번 더 누르면 처음부터').setActive(true);
+        this.scene.time.delayedCall(RESTART_CONFIRM_MS, () => {
+          if (b.container.active) b.setLabel('처음부터').setActive(false);
+        });
+      });
+    }
     this.modal = m;
   }
 
@@ -184,12 +297,18 @@ export class DayUi {
 
     const list = scene.add.container(0, top).setDepth(OVERLAY_DEPTH + 11);
     let y = 0;
-    if (this.state.diary.length === 0) {
+    const rows = mergeDiary(this.state.diary, this.hooks.forgottenLog(), this.data.diary.forgottenDay);
+    if (rows.length === 0) {
       list.add(text(scene, x0, 0, '아직 쓴 일기가 없다.', { fontSize: '12px', color: '#8a8f9e' }));
     }
-    for (const d of this.state.diary) {
-      const head = text(scene, x0, y, `${d.day}일째 · ${d.eventTitle}`, { fontSize: '11px', color: '#9fb4e0' });
-      const body = text(scene, x0, y + 16, d.line, { fontSize: '12px', wordWrap: { width: VIEW_W - x0 * 2 }, lineSpacing: 3 });
+    for (const r of rows) {
+      const head = text(scene, x0, y, r.head, { fontSize: '11px', color: r.forgotten ? '#6d7282' : '#9fb4e0' });
+      const body = text(scene, x0, y + 16, r.line, {
+        fontSize: '12px',
+        wordWrap: { width: VIEW_W - x0 * 2 },
+        lineSpacing: 3,
+        color: r.forgotten ? '#8a8f9e' : '#e8e8e8',
+      });
       list.add([head, body]);
       y += 16 + body.height + 14;
     }

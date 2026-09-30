@@ -197,6 +197,20 @@ describe('validateGameData', () => {
     expectIssue(issues, 'endings.endings.hidden', /필수 키/);
   });
 
+  it('M6: endings.thresholds.{happy,unhappy}·balanceRatio (옛 threshold·balanceGap은 알 수 없는 키)', () => {
+    const issues = issuesAfter((d) => {
+      const e = d.endings as Record<string, unknown>;
+      e.threshold = 100;
+      e.balanceGap = 20;
+      delete (e.thresholds as Record<string, unknown>).unhappy;
+      e.balanceRatio = 1.5;
+    });
+    expectIssue(issues, 'endings.threshold', /알 수 없는 키/);
+    expectIssue(issues, 'endings.balanceGap', /알 수 없는 키/);
+    expectIssue(issues, 'endings.thresholds.unhappy', /필수 키/);
+    expectIssue(issues, 'endings.balanceRatio', /1 이하/);
+  });
+
   it('balance.version ≠ 2', () => {
     const issues = issuesAfter((d) => {
       (d.balance as Record<string, unknown>).version = 1;
