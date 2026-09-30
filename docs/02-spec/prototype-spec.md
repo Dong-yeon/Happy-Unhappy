@@ -1,8 +1,14 @@
-# Happy And Unhappy — 프로토타입 스펙 v0.5.1 (2026-09-30)
+# Happy And Unhappy — 프로토타입 스펙 v0.6 (2026-09-30)
 
 > Claude Code에서 프로토타입을 구현하기 위한 스펙이다.
 > 기획 배경: `docs/01-planning/worldview.md` / 결정 근거: `docs/03-decisions/decision-log.md` (D-010 ~ D-016)
 > **프로토타입은 버리는 코드다.** 목적은 재미 검증이며, 본 개발(Godot)로 넘기는 것은 코드가 아니라 이 규칙과 JSON 수치다.
+
+### v0.5.1 → v0.6 (D-023)
+- **M6 구현 세부 규칙 추가** (§5.8): gating 순수 함수·지급/소비 시점, 하루 경계 저장(dayStart·diary·lifeEnd), rng 상태 저장, 결과 화면, 디버그, 시뮬 결말 분포·`--saveRoundTrip`.
+- **결말 판정 보정** (§5.6, §6 `endings.json`, D-023): `shadowPurified`는 층 돌파분만 (보스 승리 감소는 `shadowCalmed`, 점수 없음). 임계값 `threshold` → `thresholds.happy`/`thresholds.unhappy`. 히든 균형 `balanceGap`(절대값) → `balanceRatio`(비율).
+- **하루 소비는 하루 끝** (§5.5, §5.8). 저장 시점에서 이정표 선택·`visibilitychange` 제거, `dayStartSnapshot` 폐지 (§7).
+- 마일스톤 M6을 **M6(구현) / M6.5(결말 분포 튜닝)** 로 분리 (§10). §8.2에 M6 목표 추가.
 
 ### v0.5 → v0.5.1 (D-022)
 - **하루 끝 방어 유닛 해산 폐지 → 살아남은 방어 유닛도 단계 그대로 그리드로 귀환** (§5.3, §5.7). M5 시뮬에서 "매일 해산 → 매일 재구매 → 기쁨 고갈 → 더 못 막음"의 경제 악순환 확인 (balanced 기쁨 4일차 0, 보스 등장 시 방어 0기 90%). 귀환 실험에서 balanced 가라앉음 269 → 0, 층 돌파 2 → 21, 목표 5/12 → 11/12.
@@ -510,6 +516,7 @@ M4 범위: **◐ 손거울 소환 + 심연 레인(같은 `Lane` 모듈의 `abyss
 ### 5.5 하루 진행 C안 (일일 제한 + 밀린 날 보관)
 - 실제 날짜(기기 로컬 날짜 `YYYY-MM-DD`)가 바뀔 때마다 열 수 있는 날 +`dailyLimit`, 최대 `storeCap`까지 보관
 - 첫 실행 시 `dailyLimit`만큼 지급
+- 하루를 **끝낼 때**(그림일기 단계 진입) 1 소비 (v0.6, §5.8)
 - 열 수 있는 날이 0이면 "내일 또 만나요" 화면 (디버그로 우회 가능)
 - 보관 한도를 넘어 버려진 날: 게임 안 날짜는 진행하지 않음. **"기억나지 않는 날"** 일기 항목만 추가 (벌칙 없음, 그림자 변화 없음). 단, 14일 일생 길이에는 포함하지 않음 (프로토타입에서는 카운트만 metrics에 기록)
 - **엣지 케이스**
@@ -526,19 +533,22 @@ happyScore   = sentUpTierSum      × wUpTier
 
 unhappyScore = sentDownTierSum    × wDownTier
              + layersCleared      × wLayer
-             + shadowPurified     × wPurified
+             + shadowPurified     × wPurified   // 층 돌파로 줄인 그림자만 (v0.6, D-023)
 ```
+- 역류 보스 승리로 줄어든 그림자는 `stats.shadowCalmed`에 따로 기록하고 **점수에 넣지 않는다.** (Unhappy를 외면해서 생긴 역류를 Happy가 막은 것이 Unhappy 점수가 되면 역설이 뒤집힌다. M5 시뮬: `alwaysHappy`의 unhappy 점수 60 전부가 보스 승리분)
 
 | 조건 (위에서부터 첫 번째 일치) | 결말 |
 |---|---|
-| happy ≥ T, unhappy ≥ T, \|happy − unhappy\| ≤ balanceGap, flag `face` | (히든) Happy와 Unhappy의 화해 |
-| happy ≥ T, unhappy ≥ T | 단단한 어른 |
-| happy ≥ T, unhappy < T | 웃는 가면의 어른 |
-| happy < T, unhappy ≥ T | 조용한 어른 |
-| 둘 다 < T | 비 오는 어른 |
+| happy ≥ Tʜ, unhappy ≥ Tᴜ, \|happy − unhappy\| ≤ balanceRatio × max(happy, unhappy), flag `face` | (히든) Happy와 Unhappy의 화해 |
+| happy ≥ Tʜ, unhappy ≥ Tᴜ | 단단한 어른 |
+| happy ≥ Tʜ, unhappy < Tᴜ | 웃는 가면의 어른 |
+| happy < Tʜ, unhappy ≥ Tᴜ | 조용한 어른 |
+| 둘 다 미달 | 비 오는 어른 |
+
+- Tʜ = `thresholds.happy`, Tᴜ = `thresholds.unhappy` (v0.6에서 분리. 두 점수의 규모가 달라 하나의 T로는 맞추기 어렵다)
 
 - 결과 화면: 결말 이름, 한 줄 설명, 엔딩 제목 텍스트, 두 점수, [일기장 보기], [처음부터]
-- **임계값은 임시.** 디버그로 5개 결말 모두 도달 가능한지 확인 후 조정 (M6)
+- **임계값·가중치는 임시.** M6에서 디버그로 5개 결말 도달을 확인하고, M6.5에서 시뮬 결말 분포(§8.2)로 조정
 
 ### 5.7 M5 구현 세부 규칙 (v0.5)
 
@@ -623,6 +633,128 @@ dayStart ──(이벤트 카드 닫기 / 이정표 선택)──▶ waves ─�
 - 결정성: 같은 시드·같은 입력이면 14일 결과 동일
 
 ---
+
+### 5.8 M6 구현 세부 규칙 (v0.6)
+
+M6 범위: **C안 gating(§5.5) + 저장/복원(§7) + 결말 판정(§5.6) + 시뮬 결말 분포 리포트.**
+결말 분포를 §8.2 목표에 맞추는 **난이도·가중치 조정은 M6.5**로 분리한다 (구현과 튜닝을 한 커밋에 섞지 않는다. 튜닝 전후를 `--compare`로 비교할 기준선이 필요).
+
+**모듈 배치**
+| 모듈 | 역할 | 의존 |
+|---|---|---|
+| `src/core/gating.ts` | 날짜 지급·보관·소비. 순수 함수. **날짜는 문자열 인자로만 받는다 (`Date.now()`·`new Date()` 호출 금지)** | 없음 |
+| `src/core/ending.ts` | 결말 판정. 순수 함수 | data 타입 |
+| `src/core/save.ts` | `GameState` ↔ `SaveGame` 직렬화, `SaveData` 파싱·검증 | core, data |
+| `src/platform/clock.ts` | 기기 로컬 날짜 `YYYY-MM-DD` (+ 디버그 날짜 오프셋) | 브라우저 |
+| `src/platform/storage.ts` | localStorage 읽기/쓰기. 모든 접근 try/catch | 브라우저 |
+| `src/scenes/` | "내일 또 만나요" 화면, 결과 화면, 일기장 병합 표시 | 위 전부 |
+- `GameState`는 gating을 모른다. gating은 앱(씬) 층의 메타 상태다. **시뮬은 gating·storage를 쓰지 않는다** (날짜 없이 14일 연속).
+
+#### 1. gating (C안)
+```ts
+interface ForgottenEntry { date: string; count: number; atDay: number } // atDay: 지급 시점의 게임 일차
+interface GatingState {
+  openableDays: number;
+  lastGrantDate: string | null;   // null = 첫 실행 전
+  forgottenDays: number;          // 누적 (metrics용, 새 일생에서도 유지)
+  forgottenLog: ForgottenEntry[]; // 이번 일생의 "기억나지 않는 날" (새 일생에서 비움)
+}
+function daysBetween(a: string, b: string): number;          // Date.UTC(y, m-1, d) 차 / 86_400_000. 시간대·DST 영향 없음
+function grant(g: GatingState, today: string, atDay: number, cfg: { dailyLimit: number; storeCap: number }):
+  { next: GatingState; granted: number; forgotten: number };
+function consume(g: GatingState, bypass: boolean): GatingState; // openableDays − 1. bypass면 0에서 멈춤, 아니면 0에서 호출 시 예외
+```
+- 날짜 형식: `/^\d{4}-\d{2}-\d{2}$/` + 실제 존재하는 날짜(2026-02-30 불가). 어기면 예외. (저장값이 깨진 경우는 save 파싱에서 초기화로 처리)
+- **지급 규칙**
+  | 상황 | 처리 |
+  |---|---|
+  | 첫 실행 (`lastGrantDate === null`) | openable = min(dailyLimit, storeCap), last = today. forgotten 없음 |
+  | today == last | 변화 없음 |
+  | today > last (n = daysBetween) | raw = openable + n × dailyLimit → openable = min(raw, storeCap), forgotten = raw − openable, last = today |
+  | today < last (날짜 되돌림) | 변화 없음, last 유지 (되돌렸다 다시 앞으로 가도 이중 지급 없음) |
+- forgotten > 0이면 `forgottenLog`에 **1항목** 추가 (한 번 지급에 1개. 오래 미접속해도 항목이 폭주하지 않게), `forgottenDays += forgotten`. 게임 일차·기쁨·그림자 변화 없음, 14일에 포함 안 함.
+- **지급 확인 시점:** 앱 부팅, `visibilitychange` → visible, "내일 또 만나요" 화면의 [다시 확인]. 확인할 때마다 gating만 즉시 저장.
+- **소비 시점: 하루 끝 (`endDay` → `diary` 단계 진입) 시 1.** 하루 시작이 아니라 끝인 이유: 판 도중 종료하면 그날 시작으로 복원되므로(§7) 끝낸 날만 센다. 소비와 diary 단계 저장은 **같은 한 번의 쓰기**로 한다.
+- **날 시작 조건:** `dayStart` 단계에서 openable ≥ 1이면 이벤트 카드, 0이면 "내일 또 만나요" 화면.
+  - 화면: 마지막 그림일기 한 줄(없으면 생략), "내일 또 만나요", 다음 지급까지 남은 시간(기기 로컬 자정까지, 분 단위, 1분마다 갱신), [일기장], [다시 확인]
+  - 1일차(첫 실행)는 첫 지급이 있으므로 항상 시작 가능.
+- **일기장 병합:** 일기장은 `GameState.diary`와 `forgottenLog`를 합쳐 일차 순으로 보여준다. forgotten 항목은 `atDay`번째 날 **앞에** "기억나지 않는 날. (N일)"로 표시 (`diary.json`의 `forgottenDay` 문장 사용).
+- 한 판 도중 날짜가 바뀌어도 진행 중인 날에는 영향 없음 (지급만 반영, §5.5).
+- **알려진 한계 (프로토타입 허용):** 기기 날짜를 앞으로 돌리는 치트는 막지 않는다 (서버 시간 없음). 되돌림만 무지급 처리.
+
+#### 2. 저장/복원
+- **원칙: 하루 경계에서만 게임을 저장한다.** 저장 가능한 단계는 `dayStart`·`diary`·`lifeEnd` 세 가지. 웨이브 진행 중 상태(레인 유닛·걱정·웨이브 타이머)는 저장하지 않는다. 판 도중 종료 → 마지막 경계(그날 `dayStart`)로 복원. 별도 `dayStartSnapshot`은 두지 않는다 (경계 저장 자체가 스냅샷).
+- **저장 시점**
+  | 시점 | 내용 |
+  |---|---|
+  | `dayStart` 진입 (새 일생 1일차, `nextDay`) | game |
+  | `diary` 진입 (`endDay`) | game + gating 소비 (한 번의 쓰기) |
+  | `lifeEnd` 진입 | game (결말 포함) |
+  | gating 지급 확인 | gating만 |
+  - `visibilitychange`(hidden) 저장은 하지 않는다 (경계 저장만으로 최신. §7의 기존 저장 시점 목록을 대체).
+  - 디버그 조작(기쁨 +100 등)은 다음 경계에서 함께 저장된다.
+- **이정표 선택은 저장 시점이 아니다.** 선택은 `confirmDay`에서 적용되고 곧바로 웨이브가 시작되므로, 도중 종료 시 그날 시작으로 돌아가 다시 고른다.
+- **난수:** 복원 후에도 같은 난수열이 이어지도록 rng 상태를 저장한다.
+  - `mulberry32`가 `SeededRng`(`Rng` + `getState(): number` + `setState(n: number)`)를 반환하도록 확장. 기존 호출부는 `Rng`로 그대로 사용 가능.
+  - `?seed=`가 없으면 **새 일생 시작 시** `Math.random()`으로 시드를 한 번 뽑아 `SeededRng`를 만든다 (현재의 `Math.random` 직접 사용 제거). 시드는 저장에 기록(디버그 표시·재현용).
+- **직렬화 API**
+  ```ts
+  function serializeGame(s: GameState): SaveGame;  // phase가 dayStart | diary | lifeEnd가 아니면 예외
+  GameState.fromSave(data: GameData, save: SaveGame, rng: SeededRng, geometry: GameGeometry): GameState;
+  function parseSave(raw: string | null, data: GameData, size: GridSize): { ok: true; save: SaveData } | { ok: false; reason: string };
+  ```
+- **`SaveGame`에 넣을 필드 (현재 코드 기준 확인한 목록. 하루를 넘어 유지되는 필드가 더 있으면 추가하고 커밋 메시지에 보고):**
+  `seed`, `rngState`, `day`, `phase`, `todayId`(이벤트 id, 복원 시 카드 재구성 — rng로 다시 뽑지 않는다), `playTime`, `tickCount`, `nextPieceId`, `nextUnitId`, `joy`, `shadow`, `pendingBackflow`, `carryBackflow`, `grid`, `returnQueue`, `lostReturns`, 심연 벽 전체 상태(층, 남은 HP, 보스 패배로 더해진 HP 포함), `wave.day`, `stats`, `heroFirstPurify`, `diary`, `flags`, `dailyUsed`, `lastDayStats`(diary 단계 표시용), `bossLog`, `summonLog`, `ending`(lifeEnd일 때)
+  - 저장하지 않음: `acc`, `pending`, `forcedNext`(디버그), `faceBonusToday`·`chainWeightToday`(confirmDay에서 설정되므로 경계에서는 기본값), 레인 유닛·걱정(경계에서 항상 비어 있음 — 비어 있지 않으면 `serializeGame` 예외)
+- **복원 후 화면**
+  | 저장 phase | 화면 |
+  |---|---|
+  | `dayStart` | 이벤트 카드 (openable 0이면 "내일 또 만나요") |
+  | `diary` | 그날 그림일기 패널 (`lastDayStats`) |
+  | `lifeEnd` | 결과 화면 |
+- **초기화 규칙**
+  | 상황 | 처리 |
+  |---|---|
+  | 키 없음 | 새 일생 + 첫 실행 gating |
+  | JSON 파싱 실패 / `version !== 2` / 스키마 불일치 | 키 삭제 + `console.warn(원인)` → 새 일생 + 첫 실행 gating (마이그레이션 없음) |
+  | 스키마: 필드 누락·타입 불일치·**알 수 없는 키**, grid 길이 ≠ cols×rows, 조각의 chain이 `chains.json`에 없음, tier 범위 밖, `todayId`가 events에 없음, 날짜 형식 오류 | 위와 같음 |
+  | 저장된 `gridSize` ≠ 현재 프리셋 (디버그 프리셋 전환) | **game만 초기화, gating 유지** |
+  | localStorage 예외 (용량·사생활 보호 모드) | `console.warn`, 저장 없이 계속 진행. 디버그 패널에 "저장 실패" 표시 |
+- **알려진 한계:** 판 도중 종료 → 그날 처음부터 다시 할 수 있다 (나쁜 하루 되감기). 따뜻한 톤상 허용. 복원 횟수는 M7 metrics(`midDayRestores`)로 본다.
+
+#### 3. 결말 판정
+```ts
+interface EndingResult { id: 'hidden' | 'solid' | 'mask' | 'quiet' | 'rainy'; happy: number; unhappy: number;
+                         breakdown: Record<string, number> } // 항목별 기여 (가중치 곱한 값)
+function judgeEnding(stats: GameStats, flags: string[], cfg: EndingsConfig): EndingResult;
+function endingFixtures(cfg: EndingsConfig): Record<EndingResult['id'], { stats: GameStats; flags: string[] }>; // 테스트·디버그용
+```
+- 판정 시점: 14일째 `nextDay()` → `lifeEnd` 진입 시 1회. 결과를 `GameState.ending`에 두고 저장.
+- 공식은 §5.6 (v0.6 수정: `shadowPurified`는 층 돌파분만, 임계값 분리, 히든 균형은 비율).
+- **결과 화면:** 결말 이름, 한 줄 설명(`desc`), 엔딩 제목 텍스트(`title`. 수면 반사 로고 연출은 본 개발 — 프로토타입은 제목 아래에 같은 글자를 상하 반전·alpha 0.35로 한 번 더 그리는 정도), Happy·Unhappy 점수, [일기장], [처음부터]
+  - `?debug=1`이면 점수 항목별 기여(`breakdown`)도 표시.
+  - [처음부터]: 두 번 탭 확인("한 번 더 누르면 처음부터"). 새 시드로 새 `GameState`, **gating의 openable·lastGrantDate·forgottenDays는 유지**(새 일생으로 열 수 있는 날을 되돌릴 수 없게), `forgottenLog`는 비움. 즉시 dayStart 저장.
+- **디버그 (하루 탭 또는 새 "결말" 탭)**
+  - 즉시 결말 판정: 현재 stats·flags로 판정 → `lifeEnd`로 이동 (저장됨)
+  - 결말 미리보기 5종: `endingFixtures`의 stats로 결과 화면만 띄움 (게임 상태·저장은 바꾸지 않음) → **"5개 결말 디버그로 도달"** 완료 조건
+  - gating: 우회 ON/OFF, 열 수 있는 날 +1, 날짜 오프셋 ±1일(`clock.ts`에 오프셋 적용 후 지급 확인 실행, 오프셋은 `hau_debug_date_offset`에 저장), gating 상태 표시(openable / last / forgotten)
+  - 저장: 저장 초기화(게임만 / 전부), 저장 JSON 복사, 현재 시드 표시
+
+#### 4. 시뮬레이터 (§8.1 추가분)
+- `--until life` 리포트에 정책별 **결말 분포**(5종 %) + Happy·Unhappy 점수 p10/50/90 + **항목별 평균 기여**(`breakdown` 평균. 어떤 항목이 점수를 지배하는지 보기 위함).
+- `--sweep` 표에 결말 열 추가: solid%, hidden%, mask% (정책별).
+- **`--saveRoundTrip`**: 경계(dayStart·diary)마다 `serializeGame` → `JSON.stringify` → `JSON.parse` → `GameState.fromSave`로 상태를 갈아끼우고 계속 진행. **결과가 옵션을 끈 실행과 완전히 같아야 한다** (저장 누락 필드 검출용). 봇의 rng는 게임 rng와 별개이므로 봇 쪽은 그대로 유지.
+- §8.2 M6 목표 판정 출력 (`checkM6Goals`). **M6에서는 판정 결과를 보고만 하고 통과를 요구하지 않는다** (통과는 M6.5 완료 조건).
+
+#### 5. 필수 테스트 (추가)
+- gating: 첫 실행 / 같은 날 재실행 / 다음 날 / 3일 뒤(storeCap 자름 + forgotten 수) / 1년 뒤 / 날짜 되돌림 후 다시 원래 날짜(이중 지급 없음) / 월말·윤년 경계(2028-02-28 → 2028-03-01 = 2일) / 잘못된 날짜 문자열 예외 / consume 0에서 예외·bypass 시 0 유지
+- save: 경계 3종 round-trip(`serialize → stringify → parse → fromSave → serialize` 동일) / 웨이브 중 serialize 예외 / 파싱 실패·version 불일치·알 수 없는 키·grid 길이 불일치·없는 chain → 초기화 사유 반환 / 프리셋 불일치 → game만 초기화
+- **결정성:** 같은 시드·같은 입력으로 (a) 끊김 없이 14일 (b) 매 경계 round-trip 하며 14일 → 최종 stats·diary·ending 동일 (정책 balanced·alwaysHappy, 시드 3개)
+- ending: fixture 5종이 각각 해당 결말 / 경계값(= 임계값, = 균형 비율) / 히든 조건에서 `face` 없으면 solid / 보스 승리 그림자 감소가 `shadowPurified`에 들어가지 않음
+- rng: `getState` → `setState` 후 같은 수열
+
+#### 6. M6에서 하지 않는 것
+- 결말 분포 튜닝 (M6.5), metrics 저장 `hau_metrics_v2` (M7), 클라우드 저장, 날짜 치트 방지(되돌림 무지급 외), 결말 연출(수면 반사 로고 애니메이션)
 
 ## 6. 데이터 파일 (JSON)
 
@@ -795,8 +927,8 @@ dayStart ──(이벤트 카드 닫기 / 이정표 선택)──▶ waves ─�
     "wUpTier": 3, "wDefeat": 0.5, "wJoy": 0.05,
     "wDownTier": 3, "wLayer": 10, "wPurified": 0.3
   },
-  "threshold": 100,
-  "balanceGap": 20,
+  "thresholds": { "happy": 100, "unhappy": 100 },
+  "balanceRatio": 0.15,
   "endings": {
     "hidden": { "name": "Happy와 Unhappy의 화해", "title": "(Un)Happy",         "desc": "불행 속에도 행복이 들어 있었어." },
     "solid":  { "name": "단단한 어른",            "title": "Happy And Unhappy", "desc": "슬픔을 안고도 웃을 수 있는 어른." },
@@ -815,45 +947,53 @@ dayStart ──(이벤트 카드 닫기 / 이정표 선택)──▶ waves ─�
 
 ## 7. 저장 데이터
 
+키 `hau_save_v2` (JSON). 규칙 상세는 §5.8-2.
+
 ```ts
 interface Piece { id: number; chain: string | 'wildcard'; tier: number; bornAt: number; } // bornAt: 누적 게임 시간(초)
 
 interface SaveData {
   version: 2;
+  savedAt: string;                  // ISO 시각 (디버그 표시용)
+  gridSize: { cols: number; rows: number };
+  gating: GatingState;              // §5.8-1 (openableDays, lastGrantDate, forgottenDays, forgottenLog)
+  game: SaveGame | null;
+}
+
+interface SaveGame {
+  seed: number;
+  rngState: number;
+  day: number;                      // 1 ~ lifeLengthDays
+  phase: 'dayStart' | 'diary' | 'lifeEnd';   // 하루 경계만 저장 (웨이브 중 상태는 저장하지 않음)
+  todayId: string;                  // 오늘 이벤트 id (복원 시 재추첨하지 않음)
   playTime: number;                 // 누적 게임 시간(초, 배속 반영). Piece.bornAt 기준
+  tickCount: number;
   nextPieceId: number;
-  life: {
-    day: number;                    // 1 ~ lifeLengthDays
-    phase: 'dayStart' | 'wave' | 'dayEnd' | 'ended';
-    flags: string[];                // "avoid" | "face"
-    lastDailyEventIds: { id: string; day: number }[];
-  };
-  gating: {
-    openableDays: number;
-    lastGrantDate: string;          // YYYY-MM-DD (기기 로컬)
-    forgottenDays: number;
-  };
-  grid: (Piece | null)[];           // 길이 = gridCols × gridRows
-  returnQueue: Piece[];
+  nextUnitId: number;
   joy: number;
   shadow: number;
-  abyss: { layer: number; layerHpLeft: number };
-  diary: { day: number; eventTitle: string; line: string }[];
+  pendingBackflow: boolean;
+  carryBackflow: boolean;
+  grid: (Piece | null)[];           // 길이 = gridCols × gridRows
+  returnQueue: Piece[];
+  lostReturns: number;
+  abyss: { layer: number; hp: number; extraHp: number };  // 실제 필드명은 코드의 벽 상태에 맞춘다
+  waveDay: number;
+  stats: GameStats;                 // sentUpTierSum, sentDownTierSum, worriesDefeated, totalJoyEarned, layersCleared,
+                                    // shadowPurified, shadowCalmed(v0.6), sunkCount, backflows, bossWins, bossLosses, stallSeconds, abyssDeaths
   heroFirstPurify: string[];        // chain id
-  stats: {
-    sentUpTierSum: number;
-    sentDownTierSum: number;
-    worriesDefeated: number;
-    totalJoyEarned: number;
-    layersCleared: number;
-    shadowPurified: number;
-  };
+  diary: DiaryEntry[];
+  flags: string[];                  // "avoid" | "face"
+  dailyUsed: { id: string; day: number }[];
+  lastDayStats: DayStats | null;
+  bossLog: BossRecord[];
+  summonLog: SummonRecord[];
+  ending: EndingResult | null;      // lifeEnd일 때만
 }
 ```
-- **웨이브 진행 중 상태(레인 유닛·걱정)는 저장하지 않는다.** 판 도중 앱이 종료되면 그날을 하루 시작부터 다시 (그리드·기쁨은 하루 시작 시점 스냅샷으로 복원).
-  - 구현: 하루 시작 시 `dayStartSnapshot`을 따로 저장.
-- 저장 시점: 하루 시작, 하루 끝, 이정표 선택, `visibilitychange`(hidden)
-- 파싱 실패 / version 불일치 → 저장 초기화 + 콘솔 경고 (마이그레이션 안 함)
+- 저장 시점: `dayStart` 진입, `diary` 진입(+ gating 소비, 한 번의 쓰기), `lifeEnd` 진입, gating 지급 확인(gating만)
+- 판 도중 종료 → 그날 `dayStart`로 복원 (별도 스냅샷 없음)
+- 파싱 실패 / version 불일치 / 스키마 불일치 → 저장 초기화 + 콘솔 경고 (마이그레이션 안 함). 그리드 프리셋 불일치 → game만 초기화
 
 ---
 
@@ -863,9 +1003,9 @@ interface SaveData {
 - 시간 배속 ×1 / ×3 / ×10
 - 그리드 프리셋 전환 (4×4 / 5×4 / 6×4) → 저장 초기화 후 적용
 - 기쁨 +100, 그림자 설정, 조각 지급(체인·단계 선택), 와일드카드 지급
-- 하루 건너뛰기, 특정 일차로 이동, 즉시 결말 판정
-- 열 수 있는 날 +1, 날짜 경과 시뮬레이션(N일)
-- 저장 초기화, metrics JSON 복사
+- 하루 건너뛰기, 특정 일차로 이동, 즉시 결말 판정, 결말 미리보기 5종 (M6)
+- gating 우회, 열 수 있는 날 +1, 날짜 오프셋 ±1일, gating 상태 표시 (M6)
+- 저장 초기화(게임만 / 전부), 저장 JSON 복사, 시드 표시 (M6), metrics JSON 복사 (M7)
 
 ### metrics (`hau_metrics_v2`)
 | 분류 | 항목 |
@@ -873,7 +1013,7 @@ interface SaveData {
 | 선택 (H1, H2) | Happy/Unhappy 소환 횟수·비율, 소환 시 단계 분포, 조각 생성 → 소환까지 보유 시간, **소환 시 조각의 칸 위치(col, row)** |
 | 조작 | 드롭 실패 횟수(무효 영역·정원 초과), 드래그 거리 |
 | 루프 (H3) | 층 돌파 횟수, 돌파 후 다음 아래 소환까지 시간, 심연 유닛 사망 수 |
-| 세션 (H4) | 실제 날짜별 세션 수, 판 시간, 하루에 연 날 수, 보관 사용 수, 버려진 날 수 |
+| 세션 (H4) | 실제 날짜별 세션 수, 판 시간, 하루에 연 날 수, 보관 사용 수, 버려진 날 수, 판 도중 종료 후 복원 수(`midDayRestores`) |
 | 수집 (H5) | 체인별 3단계 도달 횟수, 영웅 최초 소환 일차 |
 | 그리드 (H6, D-012) | 그리드 가득 참 시간 비율, 놓아주기 횟수·놓아준 단계, 귀환 대기열 소실 수 |
 | 그림자 | Unhappy 멈춤 누적 시간, 역류 횟수, 보스 처치/실패 |
@@ -910,6 +1050,7 @@ interface SaveData {
 - 정책별 × 시드 N개: 도달 웨이브/일차, 가라앉은 수, 역류 횟수, 기쁨 곡선(웨이브별), 그리드 가득 참 비율, 위/아래 소환 비율, 소환 단계 분포, (M6~) 결말 분포
 - 요약: 평균·중앙값·10/90 백분위. 정책 간 비교 표.
 - `--compare a.json b.json`: 수치 변경 전후 비교 (밸런스 조정 회귀 확인)
+- (M6~) 결말 분포·점수 백분위·항목별 기여, `--saveRoundTrip` (저장 누락 필드 검출). 상세 §5.8-4
 
 **운영**
 - 밸런스 수치(JSON)를 바꾸면 시뮬레이션을 돌려 §8.2 목표를 확인하고, 결과 요약을 PR/커밋 메시지에 남긴다.
@@ -962,6 +1103,18 @@ interface SaveData {
   | 1~2일차 (`balanced`) | 가라앉음 0~2마리 (초반은 쉽게, D-020) |
   | 하루 길이 | 측정값 보고 (목표 3~5분은 수치 조정 후 판정) |
 
+- **M6 목표** (`--until life`, 시드 200) — M6에서는 **판정 출력만**, 통과는 M6.5 완료 조건
+  | 대상 | 목표 |
+  |---|---|
+  | `balanced` | 단단한 어른 **30~50%**, 히든 **5~15%** |
+  | `alwaysHappy` | 웃는 가면 **≥ 80%**, 단단한 어른·히든 **0%** |
+  | `alwaysUnhappy` | 단단한 어른·히든 **0%** |
+  | `random` | 단단한 어른 + 히든 **< 5%** |
+  | `hoarder` | 결말 점수(happy + unhappy 중앙값)가 `balanced`보다 낮음 |
+  | `--saveRoundTrip` | 끈 실행과 결과 완전 일치 (**M6 완료 조건**) |
+  | 기존 M5 목표 | 회귀 없음 (1~2일차 가라앉음 0~2, alwaysHappy 역류 ≥ 3) |
+  - 참고 (M6 직전 측정, 현재 가중치·T=100, 시드 100): happy 중앙값 balanced 741 / alwaysHappy 866 / hoarder 484 / random 12 / alwaysUnhappy 0, unhappy 중앙값 balanced 969(그중 `sentDownTierSum` 기여 732) / alwaysHappy 60(전부 보스 승리분 → D-023으로 0) / alwaysUnhappy 80. → **점수가 "보낸 양"에 지배된다.** M6.5에서 `wUpTier`·`wDownTier` 대비 결과 항목(`wDefeat`·`wLayer`) 비중을 재검토한다.
+
 ## 9. 폴더 구조
 
 ```
@@ -981,6 +1134,7 @@ Happy-Unhappy/
 │  │   ├─ ending.ts    # 결말 판정
 │  │   ├─ save.ts
 │  │   └─ metrics.ts
+│  ├─ platform/        # clock.ts(로컬 날짜) · storage.ts(localStorage) — 브라우저 의존은 여기만
 │  ├─ scenes/          # 표시·입력만
 │  └─ debug/
 ├─ sim/               # 자동 플레이 시뮬레이터 (Node, Phaser 없음, 번들 제외)
@@ -991,7 +1145,7 @@ Happy-Unhappy/
 └─ package.json
 ```
 - core는 `tick(dt)` 기반 순수 함수/클래스. 배속은 dt 배율로만 처리.
-- **필수 테스트:** 머지 규칙(와일드카드 포함), 레인 전투의 방향 대칭성, 층 돌파 시 단계 +1 귀환과 3단계 → 와일드카드, 귀환 대기열 상한, gating 날짜 계산(되돌림·장기 미접속), 결말 판정 5종, 저장 파싱 실패 처리.
+- **필수 테스트:** 머지 규칙(와일드카드 포함), 레인 전투의 방향 대칭성, 층 돌파 시 단계 +1 귀환과 3단계 → 와일드카드, 귀환 대기열 상한, gating 날짜 계산(되돌림·장기 미접속), 결말 판정 5종, 저장 파싱 실패 처리, 저장 round-trip 결정성 (§5.8-5).
 
 ---
 
@@ -1005,7 +1159,8 @@ Happy-Unhappy/
 | M3.5 | 자동 플레이 시뮬레이터 하네스 (§8.1): `idle`·`random`·`alwaysHappy`·`hoarder`·`balanced`(창문만) + 리포트 | 시드 200개 리포트 생성, 같은 시드 재현, §8.2의 M3 부분 목표 확인 |
 | M4 | 심연 레인 + 층 돌파 귀환 + Unhappy 멈춤 + 그림자·역류 (§4.3.2) | Unhappy에게 보내면 단계 +1로 돌아오고, 안 보내면 역류. `alwaysUnhappy` 추가, `balanced`를 위/아래 배분으로 확장, 시뮬 리포트 (§8.2 M4 부분 목표) |
 | M5 | 하루 구조: 3웨이브·이벤트·이정표·하루 끝·그림일기·하루 안의 역류 (§5.7) | 14일 연속 플레이 가능. 시뮬 `--until life`가 실제 하루 구조 사용, 보스 등장 진단·판 길이 리포트, §8.2 M5 부분 목표 판정 |
-| M6 | C안 gating + 결말 판정 + 저장/복원 | 5개 결말 디버그로 도달, 날짜 엣지 케이스 테스트 통과. **시뮬 결말 분포가 §8.2 목표에 들어옴** |
+| M6 | C안 gating + 결말 판정 + 저장/복원 (§5.8) | 5개 결말 디버그로 도달, 날짜 엣지 케이스·round-trip 테스트 통과, 새로고침 후 이어하기 동작, 시뮬 결말 분포 리포트 + `--saveRoundTrip` 일치 |
+| M6.5 | 결말 분포 튜닝 (난이도·가중치·임계값, `--sweep`) | **시뮬 결말 분포가 §8.2 M6 목표에 들어옴**, M5 목표 회귀 없음. 변경 수치와 근거를 결정 기록에 남김 |
 | M7 | metrics + 디버그 패널 완성 | metrics JSON 복사 가능 |
 | — | 실제 플레이 (그리드 3종 각각 1회 이상) → 판정 | 1장 기준 평가 |
 
@@ -1015,5 +1170,5 @@ Happy-Unhappy/
 - §8.2 수치 목표 자체 (사람 플레이와 비교해 조정)
 - 그리드 크기 (D-012)
 - `dailyLimit`, `storeCap` (D-015)
-- 결말 임계값·가중치
+- 결말 임계값·가중치 (M6.5)
 - 레인 정원, 단계별 능력치, 심연 층 HP 곡선
