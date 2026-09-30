@@ -1,8 +1,13 @@
-# Happy And Unhappy — 프로토타입 스펙 v0.4.4 (2026-09-30)
+# Happy And Unhappy — 프로토타입 스펙 v0.5 (2026-09-30)
 
 > Claude Code에서 프로토타입을 구현하기 위한 스펙이다.
 > 기획 배경: `docs/01-planning/worldview.md` / 결정 근거: `docs/03-decisions/decision-log.md` (D-010 ~ D-016)
 > **프로토타입은 버리는 코드다.** 목적은 재미 검증이며, 본 개발(Godot)로 넘기는 것은 코드가 아니라 이 규칙과 JSON 수치다.
+
+### v0.4.4 → v0.5
+- §5.7 M5 구현 세부 규칙 추가: 하루 상태 흐름, 일차 기준 웨이브, 이벤트 효과 적용 방식, 이정표 효과 구체화, **하루 안의 역류 + 다음 날로 넘어간 역류의 준비 시간(D-021)**, 하루 끝 처리 순서, 그림일기, 보스 등장 진단 기록, 판 길이 측정.
+- 시뮬: `--until life`가 실제 하루 구조를 사용 (`--dayMode m5` 근사는 비교용으로만 유지).
+- §8.2에 M5 부분 목표 추가.
 
 ### v0.4.3 → v0.4.4
 - 밸런스 A안 적용: `shadowAfterBossWin` 30→50, `shadowAfterBossLose` 60→40, `backflowBoss.joyReward` 40→0, `unhappyStallShadowPerSec` 0.3→0.15.
@@ -530,6 +535,87 @@ unhappyScore = sentDownTierSum    × wDownTier
 - 결과 화면: 결말 이름, 한 줄 설명, 엔딩 제목 텍스트, 두 점수, [일기장 보기], [처음부터]
 - **임계값은 임시.** 디버그로 5개 결말 모두 도달 가능한지 확인 후 조정 (M6)
 
+### 5.7 M5 구현 세부 규칙 (v0.5)
+
+M5 범위: **하루 = 한 판** (§5.1~5.4) + 14일 일생 + 이벤트·이정표·그림일기. **gating(C안)·저장·결말 판정은 M6.** M5에서는 하루가 끝나면 [다음 날] 버튼으로 바로 넘어가고, 14일째가 끝나면 "일생 끝 (결말 판정은 M6)" 화면.
+
+**하루 상태 흐름 (core `DayPhase`)**
+```
+dayStart ──(이벤트 카드 닫기 / 이정표 선택)──▶ waves ──(저녁 웨이브 종료)──▶ dayEnd ──▶ diary ──([다음 날])──▶ 다음 dayStart
+                                              │ 14일째 diary 후 → lifeEnd
+```
+- `dayStart`: 게임 시간 정지. 이벤트 카드(또는 이정표 모달) 표시. 효과는 카드를 닫는(선택하는) 순간 적용.
+- `waves`: 아침 → 낮 → 저녁 웨이브. 첫 웨이브 전 `wave.dayStartDelay`초, 웨이브 사이 `waveGap`초. 이 단계에서만 시간이 흐른다.
+- `dayEnd`: 하루 끝 처리(아래) 후 그림일기 생성. 게임 시간 정지.
+- `diary`: 그림일기 표시. [다음 날] / [일기장].
+- M3·M4 임시 무한 웨이브(`WaveRunner`의 무한 반복)는 M5에서 **하루 3웨이브 구조로 교체**한다. 시뮬의 `--until wave:N`은 호환용으로 남겨도 되지만 기본은 `--until life`.
+
+**웨이브 (일차 기준)**
+- 일차 d의 각 웨이브 걱정 수 = `round((countBase + countStep × (d-1)) × worryMultiplier)`, 최소 1
+- 걱정 HP = `hpBase × hpGrowthPerDay^(d-1) × worryMultiplier`
+- `worryMultiplier`: 그날 이벤트 효과 (없으면 1). 수와 HP 모두에 곱한다.
+
+**하루 시작 처리 (카드를 닫는 순간, 이 순서)**
+1. `spawnedToday = 0`
+2. 이벤트 효과 적용: `joy` 가감(0 미만 불가) → `freePieces` 지급(빈 칸 rng 배치, 칸 없으면 귀환 대기열 규칙) → `chainWeight`(그날 조각 생성 가중치에 곱함) → `worryMultiplier` 기록
+3. 이정표면 선택 효과 적용 (아래)
+4. 역류가 넘어와 있으면 아침 웨이브를 보스로 (아래 D-021)
+
+**이정표 선택 효과 (구체화)**
+| 선택 | 효과 |
+|---|---|
+| Happy가 맡는다 | `joy` +, `shadow` + (그림자 증가는 역류 판정 대상), flag `avoid` |
+| Unhappy가 맡는다 | `joy` −, **현재 층의 남은 HP × (1 − `faceLayerHpReduce`)** (선택 즉시 1회), flag `face`, **그날 첫 층 돌파 때 귀환 조각 +1** (귀환하는 첫 유닛과 같은 체인의 1단계. 유닛이 3단계뿐이면 와일드카드) |
+
+**역류의 시점 (D-021)**
+- 그림자가 최대치에 닿으면 역류 예약 (§4.3.2).
+- 그날 **남은 웨이브가 있으면: 다음 웨이브 칸을 보스 웨이브로 교체** (M4의 "끼워 넣기" 대신 교체. 하루는 항상 3웨이브).
+- **저녁 웨이브 도중/이후에 예약되면: 다음 날 아침 웨이브가 보스.** 이때 아침 웨이브 전에 **준비 시간 `wave.bossPrepSeconds`**(기본 10초)를 주고 "역류가 다가온다" 경고를 표시한다 (`dayStartDelay` 대신). 준비 시간 동안 조각 생성·머지·소환 가능.
+- 보스 HP = `backflowBoss.hp × backflowBoss.hpGrowthPerDay^(d-1)`.
+- 이유: 하루 끝에 방어 유닛이 해산되므로, 다음 날 첫 순간 보스가 오면 빈 방어선을 그대로 통과한다 (M4 시뮬에서 balanced의 보스 처치 0회의 유력한 원인).
+
+**하루 끝 처리 (저녁 웨이브의 마지막 걱정이 처치·가라앉음된 틱 이후, 이 순서)**
+1. 방어 레인 유닛 해산 (페널티 없음)
+2. 심연 레인 유닛 **단계 그대로** 귀환 (`enqueueReturn`)
+3. 그림일기 생성 (그날의 dayStats 기준)
+4. dayStats 초기화 (일생 stats는 누적 유지)
+- 그리드·그림자·심연 층·역류 예약은 다음 날로 이어진다.
+
+**dayStats (그림일기·metrics용)**
+- `sunk`, `defeated`, `layersCleared`, `backflow`(0/1), `bossWin`(0/1/null), `sentUp`, `sentDown`, `joyStart`, `joyEnd`, `realSeconds`(×1 기준 판 길이)
+
+**그림일기**
+- §5.4 규칙 그대로. 문장은 `diary.json` 템플릿. 같은 계열에서 직전 날 문장 회피는 rng로.
+- 이벤트 문장: 이벤트의 `diaryLine`, 평범한 하루는 `plainDay.diaryLines`에서 rng.
+- 일기장 화면: 목록(일차 · 이벤트명 · 문장). 스크롤만.
+
+**UI (도형 + 텍스트)**
+- HUD: `8살 · n일째 · 아침/낮/저녁` (보스 웨이브면 시간대 옆에 "역류")
+- 이벤트 카드 모달: 제목 + 본문 + [확인]. 이정표는 [Happy가 맡는다] / [Unhappy가 맡는다] 두 버튼.
+- 역류 준비 시간: 방어 레인 위 경고 띠 + 남은 초.
+- 하루 끝: 그림일기 패널 + [다음 날] [일기장].
+
+**보스 등장 진단 기록 (metrics·시뮬)**
+- 보스가 등장하는 틱에 기록: `{ day, slot: 'morning'|'noon'|'evening', prep: boolean, defenseUnits, defenseAvgTier, abyssUnits, gridPieces, joy, shadowBefore }`, 결과 `win` 추가.
+- 시뮬 리포트에 정책별 "보스 등장 시 방어 유닛 수 분포 / 처치율(슬롯별·준비 여부별)" 표.
+
+**판 길이**
+- dayStats.realSeconds로 하루 길이(×1)를 측정해 metrics·시뮬 리포트에 표시. 목표 3~5분 (§5.1). 현재 수치로는 약 1분으로 추정 → 이 값을 보고 `spawnInterval`·`countBase`·`worry.speed`·`dayStartDelay`로 조정 (M5에서는 측정·제안까지, 수치 변경은 시뮬 확인 후).
+
+**디버그 (M5 추가)**
+- 일차 이동, 하루 즉시 종료(저녁 끝으로), 특정 이벤트 강제, 이정표 즉시 열기, 일기장 보기.
+
+**테스트 (필수)**
+- 상태 흐름: dayStart에서 시간 정지 → 카드 닫으면 waves → 저녁 종료 후 dayEnd → diary → 다음 날 / 14일째 → lifeEnd
+- 일차 기준 수·HP 공식, worryMultiplier 적용
+- 하루 시작 처리 순서 (spawnedToday 리셋, freePieces 배치, chainWeight가 생성 확률에 반영)
+- 이정표 두 선택 효과 (face: 층 HP 감소 1회, 첫 층 돌파 +1 조각은 그날 한 번만)
+- 역류: 낮 도중 예약 → 저녁 웨이브가 보스 / 저녁 도중 예약 → 다음 날 아침 보스 + 준비 시간 / 하루 웨이브 수는 항상 3
+- 하루 끝 처리 순서 (해산 → 심연 귀환 → 일기)
+- 그림일기 규칙 우선순위, 직전 문장 회피
+- 캘린더: 7일째 이정표, 10일째 생일, 일상 이벤트 쿨다운
+- 결정성: 같은 시드·같은 입력이면 14일 결과 동일
+
 ---
 
 ## 6. 데이터 파일 (JSON)
@@ -562,6 +648,8 @@ unhappyScore = sentDownTierSum    × wDownTier
     "countStep": 1,
     "spawnInterval": 1.5,
     "waveGap": 3,
+    "dayStartDelay": 3,
+    "bossPrepSeconds": 10,
     "hpGrowthPerDay": 1.08
   },
   "abyss": {
@@ -859,6 +947,14 @@ interface SaveData {
   | `hoarder` | `balanced`보다 나쁨 |
   | ~~`balanced` 그리드 가득 참~~ | v0.4.4에서 제거 → M7 사람 플레이 metrics(그리드 가득 참 비율)로 확인 (봇이 조각을 쌓아두지 않아 판정에 부적합) |
   | 귀환 대기열 소실 | `balanced`에서 거의 없음 (있으면 그리드가 좁거나 `returnQueueCap` 부족) |
+- **M5 부분 목표** (`--until life`, 실제 하루 구조, 시드 200)
+  | 대상 | 목표 |
+  |---|---|
+  | `balanced` 보스 처치율 | **준비 시간이 있는 아침 보스 ≥ 50%** (0%면 D-021이 효과 없음 → 구조 재검토) |
+  | `balanced` 역류 | 0~2회 (중앙값) |
+  | `alwaysHappy` | 역류 반복 (3회 이상), 층 돌파 0 |
+  | 1~2일차 (`balanced`) | 가라앉음 0~2마리 (초반은 쉽게, D-020) |
+  | 하루 길이 | 측정값 보고 (목표 3~5분은 수치 조정 후 판정) |
 
 ## 9. 폴더 구조
 
@@ -902,7 +998,7 @@ Happy-Unhappy/
 | M3 | 레인 공용 전투 + 방어 레인 + Happy 거점 + 창문 포탈 소환 + 임시 웨이브 (§4.3.1) | 창문으로 소환한 유닛이 걱정을 막고, 유닛이 없으면 걱정이 가라앉음. 고정 틱 결정성 테스트 통과 |
 | M3.5 | 자동 플레이 시뮬레이터 하네스 (§8.1): `idle`·`random`·`alwaysHappy`·`hoarder`·`balanced`(창문만) + 리포트 | 시드 200개 리포트 생성, 같은 시드 재현, §8.2의 M3 부분 목표 확인 |
 | M4 | 심연 레인 + 층 돌파 귀환 + Unhappy 멈춤 + 그림자·역류 (§4.3.2) | Unhappy에게 보내면 단계 +1로 돌아오고, 안 보내면 역류. `alwaysUnhappy` 추가, `balanced`를 위/아래 배분으로 확장, 시뮬 리포트 (§8.2 M4 부분 목표) |
-| M5 | 하루 구조: 3웨이브·이벤트·이정표·하루 끝·그림일기 | 14일 연속 플레이 가능. 시뮬 `--until life` 지원 |
+| M5 | 하루 구조: 3웨이브·이벤트·이정표·하루 끝·그림일기·하루 안의 역류 (§5.7) | 14일 연속 플레이 가능. 시뮬 `--until life`가 실제 하루 구조 사용, 보스 등장 진단·판 길이 리포트, §8.2 M5 부분 목표 판정 |
 | M6 | C안 gating + 결말 판정 + 저장/복원 | 5개 결말 디버그로 도달, 날짜 엣지 케이스 테스트 통과. **시뮬 결말 분포가 §8.2 목표에 들어옴** |
 | M7 | metrics + 디버그 패널 완성 | metrics JSON 복사 가능 |
 | — | 실제 플레이 (그리드 3종 각각 1회 이상) → 판정 | 1장 기준 평가 |
