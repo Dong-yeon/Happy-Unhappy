@@ -46,7 +46,8 @@ describe('정책 기본 동작', () => {
     const bal = runOne(data, cfg, POLICIES.balanced, opt(3));
     expect(bal.sunk).toBeLessThan(idle.sunk);
     expect(bal.summons).toBeGreaterThan(0);
-    expect(bal.upRatio).toBe(1); // M3.5: 창문만
+    // M4: 위/아래 배분 (합 = 1)
+    expect(bal.upRatio! + bal.downRatio!).toBeCloseTo(1, 10);
   });
 
   it('hoarder는 최고 단계 조각만 보낸다', () => {
@@ -137,5 +138,35 @@ describe('--dayMode m5 (§8.1 v0.4.1)', () => {
     expect(a.firstSinkWave!).toBeLessThanOrEqual(WPD);
     expect(a.day1Sunk).toBe(a.day1Worries);
     expect(m5(5)).toEqual(m5(5));
+  });
+});
+
+describe('M4 정책', () => {
+  const m5 = (seed: number, policy: string) => runOne(data, cfg, POLICIES[policy], opt(seed, { dayMode: 'm5' }));
+
+  it('alwaysUnhappy는 손거울로만 보내고 층을 돌파한다', () => {
+    const r = m5(1, 'alwaysUnhappy');
+    expect(r.summons).toBeGreaterThan(0);
+    expect(r.downRatio).toBe(1);
+    expect(r.layersCleared).toBeGreaterThan(0);
+  });
+
+  it('alwaysHappy는 손거울을 쓰지 않아 층 돌파가 없다', () => {
+    const r = m5(1, 'alwaysHappy');
+    expect(r.downRatio).toBe(0);
+    expect(r.layersCleared).toBe(0);
+  });
+
+  it('balanced는 위·아래 모두 보낸다 (손거울은 abyssMinTier 이상만)', () => {
+    const r = m5(2, 'balanced');
+    expect(r.upRatio).toBeGreaterThan(0);
+    expect(r.downRatio).toBeGreaterThan(0);
+  });
+
+  it('리포트 곡선에 그림자가 들어간다', () => {
+    const r = m5(3, 'idle');
+    expect(r.shadowByWave).toHaveLength(r.reachedWave);
+    expect(r.maxShadow).toBe(data.balance.shadow.shadowMax); // 방치하면 역류까지 간다
+    expect(r.backflows).toBeGreaterThan(0);
   });
 });

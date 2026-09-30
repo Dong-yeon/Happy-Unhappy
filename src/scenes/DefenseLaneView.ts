@@ -8,6 +8,8 @@ import { DEFENSE_UNIT_Y, PORTAL, REGION } from './layout';
 import { text } from './ui';
 
 const WORRY_R = 8;
+const BOSS_R = 13;
+const BOSS_COLOR = 0xc0506a;
 /** 걱정은 방어선 위에 발을 딛도록 중심을 이만큼 올려 그린다 */
 const WORRY_DRAW_OFFSET_Y = -9;
 const UNIT_SIZE = 16;
@@ -17,11 +19,18 @@ const HP_BAR_W = 16;
 
 const SUMMON_MS = 250; // 조각 → 창문 → 슬롯
 const JOY_DOT_MS = 400; // 처치 지점 → 창문 → HUD 기쁨
-const SINK_MS = 400; // 거울 쪽으로 흘러가며 사라짐
+const SINK_MS = 400; // 거울 쪽으로 흘러감 → 그림자 벽에 흡수 (각 구간)
 
 interface HpView {
   container: Phaser.GameObjects.Container;
   bar: Phaser.GameObjects.Rectangle;
+}
+
+/** 가라앉음 흐름의 도착점 (심연 레인의 그림자 벽) */
+export interface SinkTarget {
+  point(): { x: number; y: number };
+  /** 벽에 흡수된 순간 (벽이 잠깐 부풀어 오름) */
+  onAbsorb(): void;
 }
 
 export class DefenseLaneView {
@@ -34,6 +43,7 @@ export class DefenseLaneView {
     private readonly state: GameState,
     chains: Chain[],
     private readonly joyTarget: { x: number; y: number },
+    private readonly sinkTarget: SinkTarget,
   ) {
     for (const c of chains) this.chainColor.set(c.archetypeId, parseInt(c.color.slice(1), 16));
   }
@@ -98,9 +108,11 @@ export class DefenseLaneView {
   }
 
   private makeWorry(w: Worry): HpView {
-    const body = this.scene.add.circle(0, 0, WORRY_R, WORRY_COLOR).setStrokeStyle(1, 0x3b2d4a);
-    const face = text(this.scene, 0, 0, '~', { fontSize: '9px', color: '#2a1f35' }).setOrigin(0.5);
-    const { bg, bar } = this.hpBar(-WORRY_R - 4);
+    // 역류 보스: 크고 붉게
+    const r = w.boss ? BOSS_R : WORRY_R;
+    const body = this.scene.add.circle(0, 0, r, w.boss ? BOSS_COLOR : WORRY_COLOR).setStrokeStyle(w.boss ? 2 : 1, 0x3b2d4a);
+    const face = text(this.scene, 0, 0, w.boss ? '!' : '~', { fontSize: w.boss ? '13px' : '9px', color: '#2a1f35', fontStyle: 'bold' }).setOrigin(0.5);
+    const { bg, bar } = this.hpBar(-r - 4);
     const container = this.scene.add.container(w.x, w.y, [body, face, bg, bar]).setDepth(4);
     const v = { container, bar };
     this.worries.set(w.id, v);
@@ -155,18 +167,20 @@ export class DefenseLaneView {
     });
   }
 
-  /** 가라앉음: 거울 쪽으로 흘러가며 사라짐 (거울 → 심연 흐름의 앞부분, 그림자 벽 흡수는 M4) */
+  /** 가라앉음: 방어선 → 거울 → 오른쪽 레인의 그림자 벽에 흡수 (§4.2.1) */
   private sinkAway(c: Phaser.GameObjects.Container): void {
     c.setDepth(4);
-    this.scene.tweens.add({
+    const wall = this.sinkTarget.point();
+    this.scene.tweens.chain({
       targets: c,
-      x: REGION.mirror.x + REGION.mirror.w / 2,
-      y: c.y + 14,
-      alpha: 0,
-      scale: 0.5,
-      duration: SINK_MS,
-      ease: 'Sine.easeIn',
-      onComplete: () => c.destroy(),
+      tweens: [
+        { x: REGION.mirror.x + REGION.mirror.w / 2, y: c.y + 14, scale: 0.6, alpha: 0.7, duration: SINK_MS, ease: 'Sine.easeIn' },
+        { x: wall.x, y: wall.y, scale: 0.4, alpha: 0.4, duration: SINK_MS, ease: 'Sine.easeInOut' },
+      ],
+      onComplete: () => {
+        c.destroy();
+        this.sinkTarget.onAbsorb();
+      },
     });
   }
 }

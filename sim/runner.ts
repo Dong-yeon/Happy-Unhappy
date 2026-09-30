@@ -4,7 +4,7 @@ import { GameState } from '../src/core/game';
 import { FIXED_DT } from '../src/core/lane';
 import { mulberry32 } from '../src/core/rng';
 import type { GameData } from '../src/data/types';
-import { defenseGeometry } from '../src/scenes/layout';
+import { gameGeometry } from '../src/scenes/layout';
 import type { Action, Policy, SimConfig } from './types';
 
 export interface RunOptions {
@@ -38,6 +38,8 @@ export interface RunResult {
   sunkByWave: number[];
   /** 각 웨이브가 끝났을 때의 기쁨 */
   joyByWave: number[];
+  /** 각 웨이브가 끝났을 때의 그림자 */
+  shadowByWave: number[];
   finalJoy: number;
   kills: number;
   /** 그리드 가득 참 상태였던 틱 비율 */
@@ -46,8 +48,23 @@ export interface RunResult {
   /** 단계별 소환 수 (key = 단계) */
   summonTiers: Record<string, number>;
   meanSummonTier: number | null;
-  /** Happy(창문) 소환 비율. M3는 항상 1 */
+  /** Happy(창문) 소환 비율 */
   upRatio: number | null;
+  /** Unhappy(손거울) 소환 비율 */
+  downRatio: number | null;
+  /** 층 돌파 수 */
+  layersCleared: number;
+  /** 역류(보스 웨이브) 수 */
+  backflows: number;
+  bossWins: number;
+  bossLosses: number;
+  /** 귀환 대기열 상한 초과로 소실된 조각 */
+  lostReturns: number;
+  /** 심연 유닛 사망 */
+  abyssDeaths: number;
+  /** Unhappy 멈춤 누적(초) */
+  stallSeconds: number;
+  maxShadow: number;
   spawns: number;
   merges: number;
   releases: number;
@@ -72,7 +89,7 @@ function botSeed(seed: number): number {
 }
 
 export function runOne(data: GameData, cfg: SimConfig, policy: Policy, opt: RunOptions): RunResult {
-  const state = new GameState(data, opt.grid, mulberry32(opt.seed), defenseGeometry(data.balance.lane.laneCap));
+  const state = new GameState(data, opt.grid, mulberry32(opt.seed), gameGeometry(data.balance.lane.laneCap));
   const botRng = mulberry32(botSeed(opt.seed));
   const m5 = opt.dayMode === 'm5';
   const wpd = data.balance.wave.wavesPerDay;
@@ -87,6 +104,8 @@ export function runOne(data: GameData, cfg: SimConfig, policy: Policy, opt: RunO
 
   const sunkByWave: number[] = [];
   const joyByWave: number[] = [];
+  const shadowByWave: number[] = [];
+  let maxShadow = state.shadow;
   let firstSinkWave: number | null = null;
   let kills = 0;
   let fullTicks = 0;
@@ -147,7 +166,10 @@ export function runOne(data: GameData, cfg: SimConfig, policy: Policy, opt: RunO
     if (w.n !== lastWave) {
       // 웨이브 전환: 끝난 웨이브의 기쁨 기록, 하루 리셋 근사
       for (let k = lastWave; k < w.n; k++) {
-        if (k >= 1) joyByWave[k - 1] = state.joy;
+        if (k >= 1) {
+          joyByWave[k - 1] = state.joy;
+          shadowByWave[k - 1] = state.shadow;
+        }
         sunkByWave[k] ??= 0;
       }
       lastWave = w.n;
@@ -166,28 +188,35 @@ export function runOne(data: GameData, cfg: SimConfig, policy: Policy, opt: RunO
       state.defense.units.length = 0;
     }
     for (const e of events) {
-      if (e.type === 'spawnWorry' && w.n <= wpd) day1Worries += 1;
+      // 1일차 일반 걱정만 센다 (역류 보스는 가라앉음 집계에서도 빠지므로)
+      if (e.type === 'spawnWorry' && !e.boss && w.n <= wpd) day1Worries += 1;
       if (e.type === 'worryDie') kills += 1;
-      else if (e.type === 'sink') {
+      // 역류 보스 가라앉음은 일반 가라앉음에 넣지 않는다 (core stats.sunkCount와 같은 기준)
+      else if (e.type === 'sink' && !e.boss) {
         const idx = Math.max(0, w.n - 1);
         sunkByWave[idx] = (sunkByWave[idx] ?? 0) + 1;
         if (firstSinkWave === null) firstSinkWave = w.n;
       }
     }
 
-    if (w.n > untilWave || (w.n === untilWave && w.phase === 'gap')) break;
+    if (state.shadow > maxShadow) maxShadow = state.shadow;
+    // 역류 보스가 끼어 있으면 끝날 때까지 (보스 웨이브는 번호를 올리지 않음)
+    if (w.n > untilWave || (w.n === untilWave && w.phase === 'gap' && !w.bossPending)) break;
   }
 
   const reachedWave = Math.min(state.wave.n, untilWave);
   joyByWave[reachedWave - 1] ??= state.joy;
+  shadowByWave[reachedWave - 1] ??= state.shadow;
   for (let k = 0; k < reachedWave; k++) sunkByWave[k] ??= 0;
   sunkByWave.length = reachedWave;
   joyByWave.length = reachedWave;
+  shadowByWave.length = reachedWave;
 
   const summonTiers: Record<string, number> = {};
   for (const r of state.summonLog) summonTiers[r.tier] = (summonTiers[r.tier] ?? 0) + 1;
   const summons = state.summonLog.length;
   const up = state.summonLog.filter((r) => r.side === 'happy').length;
+  const st = state.stats;
 
   return {
     seed: opt.seed,
@@ -196,6 +225,7 @@ export function runOne(data: GameData, cfg: SimConfig, policy: Policy, opt: RunO
     sunk: state.stats.sunkCount,
     sunkByWave,
     joyByWave,
+    shadowByWave,
     finalJoy: state.joy,
     kills,
     gridFullRatio: ticks === 0 ? 0 : fullTicks / ticks,
@@ -203,6 +233,15 @@ export function runOne(data: GameData, cfg: SimConfig, policy: Policy, opt: RunO
     summonTiers,
     meanSummonTier: summons === 0 ? null : state.summonLog.reduce((s, r) => s + r.tier, 0) / summons,
     upRatio: summons === 0 ? null : up / summons,
+    downRatio: summons === 0 ? null : (summons - up) / summons,
+    layersCleared: st.layersCleared,
+    backflows: st.backflows,
+    bossWins: st.bossWins,
+    bossLosses: st.bossLosses,
+    lostReturns: state.lostReturns,
+    abyssDeaths: st.abyssDeaths,
+    stallSeconds: st.stallSeconds,
+    maxShadow,
     ...counts,
     playTime: state.playTime,
     dayStartJoy,

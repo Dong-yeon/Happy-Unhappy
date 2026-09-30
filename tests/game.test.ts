@@ -4,14 +4,14 @@ import type { GameData } from '../src/data/types';
 import { GameState } from '../src/core/game';
 import { WILDCARD, emptyIndices } from '../src/core/grid';
 import { mulberry32, parseSeed } from '../src/core/rng';
-import { RELEASE_ZONE, defenseGeometry, dropTarget } from '../src/scenes/layout';
+import { RELEASE_ZONE, dropTarget, gameGeometry } from '../src/scenes/layout';
 
 const data = structuredClone(rawGameData) as unknown as GameData;
 const { spawnCostBase, spawnCostStep, releaseRefund, returnQueueCap } = data.balance.grid;
 const DOG = 'companion_animal';
 
 function game(seed = 1, cols = 4, rows = 4): GameState {
-  return new GameState(data, { cols, rows }, mulberry32(seed), defenseGeometry(data.balance.lane.laneCap));
+  return new GameState(data, { cols, rows }, mulberry32(seed), gameGeometry(data.balance.lane.laneCap));
 }
 
 describe('GameState — 조각 생성', () => {

@@ -40,6 +40,13 @@ export class WaveRunner {
    * 시뮬레이터 --dayMode m5는 일차(⌈n / wavesPerDay⌉)로 바꿔 끼운다. M5에서 하루 구조로 교체.
    */
   hpLevel: (n: number) => number = (n) => n;
+  /**
+   * 역류 보스 웨이브 (§4.3.2). bossPending이면 다음 웨이브 시작 때 보스 웨이브를 끼워 넣는다.
+   * 보스 웨이브는 일반 웨이브 번호 n을 올리지 않는다 (보스 뒤에 원래 다음 웨이브가 이어짐).
+   */
+  bossPending = false;
+  /** 지금 진행 중인 웨이브가 보스 웨이브인지 */
+  isBoss = false;
 
   constructor(
     private readonly cfg: WaveConfig,
@@ -49,7 +56,12 @@ export class WaveRunner {
   }
 
   get count(): number {
-    return waveCount(this.cfg, this.n);
+    return this.isBoss ? 1 : waveCount(this.cfg, this.n);
+  }
+
+  /** 웨이브가 진행 중 (걱정이 나오는 중이거나 남아 있음). Unhappy 멈춤 판정에 쓴다 */
+  get active(): boolean {
+    return this.phase === 'spawning' || this.phase === 'clearing';
   }
 
   get hp(): number {
@@ -59,6 +71,16 @@ export class WaveRunner {
   /** 다음 웨이브 즉시 시작 (디버그 "다음 웨이브" 포함). 첫 걱정은 이번 틱에 나온다 */
   startNext(): void {
     this.n += 1;
+    this.isBoss = false;
+    this.phase = 'spawning';
+    this.spawned = 0;
+    this.timer = 0;
+  }
+
+  /** 보스 웨이브 시작 (웨이브 번호 유지) */
+  private startBoss(): void {
+    this.bossPending = false;
+    this.isBoss = true;
     this.phase = 'spawning';
     this.spawned = 0;
     this.timer = 0;
@@ -73,7 +95,8 @@ export class WaveRunner {
     if (this.phase === 'waiting' || this.phase === 'gap') {
       this.timer -= dt;
       if (this.timer > EPS) return 0;
-      this.startNext();
+      if (this.bossPending) this.startBoss();
+      else this.startNext();
     }
     if (this.phase === 'clearing') {
       if (fieldEmpty) {

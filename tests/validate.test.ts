@@ -37,6 +37,30 @@ describe('validateGameData', () => {
     expectIssue(issues, 'balance.lane.defenseLineY', /알 수 없는 키/);
   });
 
+  it('M4: abyss.counterRange 필수, weatherThresholds는 오름차순 세 값', () => {
+    expectIssue(
+      issuesAfter((d) => {
+        delete (d.balance.abyss as Partial<Raw['balance']['abyss']>).counterRange;
+      }),
+      'balance.abyss.counterRange',
+      /필수 키/,
+    );
+    expectIssue(
+      issuesAfter((d) => {
+        (d.balance.shadow as Record<string, unknown>).weatherThresholds = [50, 25, 75];
+      }),
+      'balance.shadow.weatherThresholds',
+      /오름차순/,
+    );
+    expectIssue(
+      issuesAfter((d) => {
+        (d.balance.shadow as Record<string, unknown>).weatherThresholds = [25, 50];
+      }),
+      'balance.shadow.weatherThresholds',
+      /세 값/,
+    );
+  });
+
   it('필수 키 없음', () => {
     const issues = issuesAfter((d) => {
       delete (d.balance.lane as Partial<Raw['balance']['lane']>).abyssAdvanceSpeed;

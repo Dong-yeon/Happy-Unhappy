@@ -16,12 +16,12 @@ export interface PolicyReport {
   policy: string;
   createdAt: string;
   options: { seeds: number; grid: string; untilWave: number; dayReset: number | null; dayMode: 'm5' | null; wavesPerDay: number };
-  sim: Omit<SimConfig, 'm3Goals'>;
+  sim: Omit<SimConfig, 'm3Goals' | 'm4Goals'>;
   summary: Record<string, Summary>;
   /** 첫 가라앉음이 없었던 시드 비율 */
   neverSankRatio: number;
   /** 웨이브별 곡선: 기쁨(중앙값·10/90), 가라앉음(평균) */
-  curves: { wave: number; joyMedian: number; joyP10: number; joyP90: number; sunkMean: number }[];
+  curves: { wave: number; joyMedian: number; joyP10: number; joyP90: number; sunkMean: number; shadowMedian: number; shadowP90: number }[];
   /** 소환 단계 분포 (전 시드 합산 비율) */
   tierShare: Record<string, number>;
   runs: RunResult[];
@@ -66,6 +66,14 @@ export const METRICS: { key: string; label: string; get: (r: RunResult) => numbe
   { key: 'summons', label: '소환 수', get: (r) => r.summons },
   { key: 'meanSummonTier', label: '소환 평균 단계', get: (r) => r.meanSummonTier },
   { key: 'upRatio', label: '창문(Happy) 비율', get: (r) => r.upRatio },
+  { key: 'downRatio', label: '손거울(Unhappy) 비율', get: (r) => r.downRatio },
+  { key: 'layersCleared', label: '층 돌파', get: (r) => r.layersCleared },
+  { key: 'backflows', label: '역류', get: (r) => r.backflows },
+  { key: 'bossWins', label: '역류 보스 처치', get: (r) => r.bossWins },
+  { key: 'maxShadow', label: '최대 그림자', get: (r) => r.maxShadow },
+  { key: 'stallSeconds', label: 'Unhappy 멈춤(초)', get: (r) => r.stallSeconds },
+  { key: 'abyssDeaths', label: '심연 유닛 사망', get: (r) => r.abyssDeaths },
+  { key: 'lostReturns', label: '귀환 소실', get: (r) => r.lostReturns },
   { key: 'releases', label: '놓아주기 수', get: (r) => r.releases },
   { key: 'dayJoyDelta', label: '하루 끝−시작 기쁨', get: (r) => dayJoyDeltaMedian(r) },
   { key: 'day1Sunk', label: '1일차 가라앉음', get: (r) => r.day1Sunk },
@@ -86,7 +94,16 @@ export function buildReport(
   for (let k = 0; k < maxWave; k++) {
     const joy = summarize(runs.map((r) => r.joyByWave[k] ?? null));
     const sunk = summarize(runs.map((r) => r.sunkByWave[k] ?? null));
-    curves.push({ wave: k + 1, joyMedian: joy.median, joyP10: joy.p10, joyP90: joy.p90, sunkMean: sunk.mean });
+    const sh = summarize(runs.map((r) => r.shadowByWave[k] ?? null));
+    curves.push({
+      wave: k + 1,
+      joyMedian: joy.median,
+      joyP10: joy.p10,
+      joyP90: joy.p90,
+      sunkMean: sunk.mean,
+      shadowMedian: sh.median,
+      shadowP90: sh.p90,
+    });
   }
 
   const tierCount: Record<string, number> = {};
@@ -100,7 +117,7 @@ export function buildReport(
   const tierShare: Record<string, number> = {};
   for (const [t, c] of Object.entries(tierCount)) tierShare[t] = total === 0 ? 0 : c / total;
 
-  const { m3Goals: _goals, ...sim } = cfg;
+  const { m3Goals: _m3, m4Goals: _m4, ...sim } = cfg;
   return {
     version: 1,
     policy,
@@ -157,23 +174,26 @@ export function formatReport(r: PolicyReport): string {
       .sort(([a], [b]) => Number(a) - Number(b))
       .map(([t, s]) => `${t}단계 ${fmt(s * 100, 1)}%`)
       .join(' / ') || '—'}`,
-    '웨이브별 (기쁨 중앙값 [p10~p90] / 가라앉음 평균):',
+    '웨이브별 (기쁨 중앙값 [p10~p90] / 가라앉음 평균 / 그림자 중앙값 [p90]):',
     curveLine(r),
   ];
   return lines.join('\n');
 }
 
 function curveLine(r: PolicyReport): string {
-  const pickWaves = new Set([1, 2, 3, 5, 8, 10, 12, 15, 20, 25, 30, r.curves.length]);
+  const pickWaves = new Set([1, 2, 3, 6, 9, 12, 15, 21, 27, 30, 36, 42, r.curves.length]);
   return r.curves
     .filter((c) => pickWaves.has(c.wave))
-    .map((c) => `  w${c.wave}: 기쁨 ${fmt(c.joyMedian, 0)} [${fmt(c.joyP10, 0)}~${fmt(c.joyP90, 0)}] / 가라앉음 ${fmt(c.sunkMean)}`)
+    .map(
+      (c) =>
+        `  w${c.wave}: 기쁨 ${fmt(c.joyMedian, 0)} [${fmt(c.joyP10, 0)}~${fmt(c.joyP90, 0)}] / 가라앉음 ${fmt(c.sunkMean)} / 그림자 ${fmt(c.shadowMedian, 0)} [${fmt(c.shadowP90, 0)}]`,
+    )
     .join('\n');
 }
 
 /** 정책 간 비교 표 (중앙값 중심) */
 export function formatComparison(reports: PolicyReport[]): string {
-  const keys = ['firstSinkWave', 'sunk', 'kills', 'finalJoy', 'gridFullRatio', 'meanSummonTier', 'releases'];
+  const keys = ['firstSinkWave', 'sunk', 'layersCleared', 'backflows', 'downRatio', 'finalJoy', 'gridFullRatio', 'meanSummonTier', 'lostReturns'];
   const header = ['정책', ...keys.map((k) => METRICS.find((m) => m.key === k)!.label + ' (중앙값)'), '무가라앉음%'];
   const rows = reports.map((r) => [
     r.policy,
@@ -287,9 +307,98 @@ function tierLine(r: PolicyReport): string {
   );
 }
 
-export function formatGoals(checks: GoalCheck[]): string {
+/**
+ * §8.2 M4 부분 목표 (--dayMode m5, 14일 = 42웨이브). 수치 기준은 sim.json m4Goals.
+ */
+export function checkM4Goals(reports: PolicyReport[], goals: SimConfig['m4Goals']): GoalCheck[] {
+  const out: GoalCheck[] = [];
+  const get = (name: string) => reports.find((r) => r.policy === name);
+  if (!reports.every((r) => r.options.dayMode === 'm5')) {
+    out.push({ label: '판정 기준', pass: null, detail: 'M4 목표는 --dayMode m5 기준입니다. 이번 실행은 참고용으로만 보세요.' });
+  }
+
+  const hap = get('alwaysHappy');
+  if (hap) {
+    const maxLayers = Math.max(...hap.runs.map((r) => r.layersCleared));
+    out.push({
+      label: `alwaysHappy: 역류 반복 (중앙값 ≥ ${goals.alwaysHappyBackflowsMin}회)`,
+      pass: hap.summary.backflows.median >= goals.alwaysHappyBackflowsMin,
+      detail: `역류 중앙값 ${fmt(hap.summary.backflows.median)} [p10 ${fmt(hap.summary.backflows.p10)} ~ p90 ${fmt(hap.summary.backflows.p90)}]`,
+    });
+    out.push({ label: 'alwaysHappy: 층 돌파 0', pass: maxLayers === 0, detail: `층 돌파 최대 ${maxLayers}` });
+  } else out.push({ label: 'alwaysHappy', pass: null, detail: '실행하지 않음' });
+
+  const unh = get('alwaysUnhappy');
+  if (unh) {
+    const share = unh.runs.map((r) => (r.day1Worries ? r.day1Sunk / r.day1Worries : 0)).sort((a, b) => a - b);
+    const med = quantile(share, 0.5);
+    out.push({
+      label: `alwaysUnhappy: 1일차부터 가라앉음 다수 (1일차 걱정의 ${fmt(goals.alwaysUnhappyDay1SunkShareMin * 100, 0)}% 이상, 중앙값)`,
+      pass: med >= goals.alwaysUnhappyDay1SunkShareMin,
+      detail: `1일차 가라앉은 비율 중앙값 ${fmt(med * 100, 1)}%, 전체 가라앉음 중앙값 ${fmt(unh.summary.sunk.median)}`,
+    });
+    out.push({
+      label: 'alwaysUnhappy: 층 돌파는 일어남',
+      pass: unh.summary.layersCleared.median >= 1,
+      detail: `층 돌파 중앙값 ${fmt(unh.summary.layersCleared.median)}`,
+    });
+  } else out.push({ label: 'alwaysUnhappy', pass: null, detail: '실행하지 않음' });
+
+  const bal = get('balanced');
+  if (bal) {
+    const days = bal.options.untilWave / bal.options.wavesPerDay;
+    const needLayers = days * goals.balancedLayersPerDayMin;
+    const [lo, hi] = goals.balancedDownRatio;
+    const down = bal.summary.downRatio.median;
+    const withFull = bal.runs.filter((r) => r.gridFullRatio > 0).length / Math.max(1, bal.runs.length);
+    out.push({
+      label: `balanced: 역류 0~${goals.balancedBackflowsMax}회 (중앙값)`,
+      pass: bal.summary.backflows.median <= goals.balancedBackflowsMax,
+      detail: `역류 중앙값 ${fmt(bal.summary.backflows.median)} [p10 ${fmt(bal.summary.backflows.p10)} ~ p90 ${fmt(bal.summary.backflows.p90)}]`,
+    });
+    out.push({
+      label: `balanced: 층 돌파 꾸준함 (${fmt(days, 0)}일에 ${fmt(needLayers, 0)}층 이상, 중앙값)`,
+      pass: bal.summary.layersCleared.median >= needLayers,
+      detail: `층 돌파 중앙값 ${fmt(bal.summary.layersCleared.median)} [p10 ${fmt(bal.summary.layersCleared.p10)} ~ p90 ${fmt(bal.summary.layersCleared.p90)}]`,
+    });
+    out.push({
+      label: `balanced: Unhappy에게 보낸 비율 ${fmt(lo * 100, 0)}~${fmt(hi * 100, 0)}% (중앙값)`,
+      pass: down >= lo && down <= hi,
+      detail: `손거울 비율 중앙값 ${fmt(down * 100, 1)}%`,
+    });
+    out.push({
+      label: `balanced 그리드: 가득 차는 순간이 있는 시드 ≥ ${fmt(goals.balancedGridFullRunShareMin * 100, 0)}%`,
+      pass: withFull >= goals.balancedGridFullRunShareMin,
+      detail: `가득 차는 순간이 있는 시드 ${fmt(withFull * 100, 1)}%, 가득 참 비율 평균 ${fmt(bal.summary.gridFullRatio.mean, 4)}`,
+    });
+    out.push({
+      label: `귀환 대기열 소실: balanced에서 거의 없음 (판당 평균 ≤ ${goals.balancedLostReturnsMeanMax})`,
+      pass: bal.summary.lostReturns.mean <= goals.balancedLostReturnsMeanMax,
+      detail: `소실 평균 ${fmt(bal.summary.lostReturns.mean)} / 최대 ${Math.max(...bal.runs.map((r) => r.lostReturns))}`,
+    });
+  } else out.push({ label: 'balanced', pass: null, detail: '실행하지 않음' });
+
+  const hoard = get('hoarder');
+  if (hoard && bal) {
+    const wiped =
+      hoard.runs.filter((r) => r.day1Worries > 0 && r.day1Sunk >= r.day1Worries).length / Math.max(1, hoard.runs.length);
+    out.push({
+      label: 'hoarder: balanced보다 나쁨',
+      pass: hoard.summary.sunk.median > bal.summary.sunk.median,
+      detail: `가라앉은 수 중앙값 hoarder ${fmt(hoard.summary.sunk.median)} vs balanced ${fmt(bal.summary.sunk.median)}`,
+    });
+    out.push({
+      label: 'hoarder: 1일차 전멸은 아님',
+      pass: wiped < 0.5,
+      detail: `1일차 걱정을 전부 가라앉힌 시드 ${fmt(wiped * 100, 1)}%`,
+    });
+  } else out.push({ label: 'hoarder', pass: null, detail: 'hoarder와 balanced를 함께 실행해야 비교 가능' });
+  return out;
+}
+
+export function formatGoals(checks: GoalCheck[], title = '§8.2 M3 부분 목표'): string {
   return [
-    '§8.2 M3 부분 목표',
+    title,
     ...checks.map((c) => `  [${c.pass === null ? ' - ' : c.pass ? 'OK ' : 'NG '}] ${c.label}\n        ${c.detail}`),
   ].join('\n');
 }

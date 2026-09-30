@@ -5,6 +5,7 @@ import type { GridSize } from '../core/grid';
 import { mulberry32, parseSeed } from '../core/rng';
 import { createDebugPanel } from '../debug/DebugPanel';
 import { isDebug } from '../debug/gridPreset';
+import { AbyssLaneView } from './AbyssLaneView';
 import { DefenseLaneView } from './DefenseLaneView';
 import { GridView, type DragHover } from './GridView';
 import { PortalView } from './PortalView';
@@ -18,7 +19,7 @@ import {
   SHADOW_WALL,
   VIEW_W,
   WORRY_SPAWN_Y,
-  defenseGeometry,
+  gameGeometry,
   gridLayout,
   type Rect,
 } from './layout';
@@ -28,7 +29,7 @@ import { Button, COLOR, setupCamera, text } from './ui';
 const MAX_FRAME_MS = 100;
 
 /**
- * M3: 그리드 + 방어 레인(☀ 창문 소환, 걱정, Happy). ◐ 손거울·심연 레인은 M4.
+ * M4: 그리드 + 방어 레인(☀ 창문) + 심연 레인(◐ 손거울, 그림자 벽, 층 돌파 귀환) + 그림자·역류·마음 날씨.
  * 게임 규칙은 core(GameState)에서, 이 씬은 표시·입력만.
  */
 export class GameScene extends Phaser.Scene {
@@ -38,6 +39,12 @@ export class GameScene extends Phaser.Scene {
   private spawnBtn!: Button;
   private releaseZone!: ReleaseZoneView;
   private laneView!: DefenseLaneView;
+  private abyssView!: AbyssLaneView;
+  private weatherText!: Phaser.GameObjects.Text;
+  private shadowFill!: Phaser.GameObjects.Rectangle;
+  private shadowFrame!: Phaser.GameObjects.Rectangle;
+  private shadowBarW = 0;
+  private shadowMax = 1;
   private portals!: Record<'happy' | 'unhappy', PortalView>;
   private phaseText!: Phaser.GameObjects.Text;
   /** 디버그 배속 (dt 배율) */
@@ -57,7 +64,7 @@ export class GameScene extends Phaser.Scene {
       data,
       size,
       seed === null ? Math.random : mulberry32(seed),
-      defenseGeometry(data.balance.lane.laneCap),
+      gameGeometry(data.balance.lane.laneCap),
     );
 
     this.drawHud(data);
@@ -67,11 +74,18 @@ export class GameScene extends Phaser.Scene {
     this.drawGrid(size);
     this.drawPortals();
     this.drawBottomBar(data);
-    this.laneView = new DefenseLaneView(this, this.state, data.chains, { x: this.joyText.x, y: this.joyText.y });
+    this.abyssView = new AbyssLaneView(this, this.state, data.chains);
+    this.laneView = new DefenseLaneView(
+      this,
+      this.state,
+      data.chains,
+      { x: this.joyText.x, y: this.joyText.y },
+      { point: () => this.abyssView.wallCenter, onAbsorb: () => this.abyssView.pulseWall() },
+    );
     this.gridView = new GridView(this, this.state, data.chains, {
       onChange: () => this.syncUi(),
       onHover: (hover) => this.onDragHover(hover),
-      onSummon: (unit, x, y) => this.laneView.onSummon(unit, x, y),
+      onSummon: (unit, x, y) => (unit.side === 'happy' ? this.laneView : this.abyssView).onSummon(unit, x, y),
     });
     if (isDebug()) {
       createDebugPanel(this, data, this.state, size, seed, {
@@ -85,7 +99,11 @@ export class GameScene extends Phaser.Scene {
   update(_time: number, delta: number): void {
     const events = this.state.tick((Math.min(delta, MAX_FRAME_MS) / 1000) * this.speed);
     this.laneView.handle(events);
+    this.abyssView.handle(events);
+    // 층 돌파 귀환 조각은 core에서 이미 그리드에 들어가 있다
+    if (events.some((e) => e.type === 'layerClear')) this.gridView.refresh();
     this.laneView.sync();
+    this.abyssView.sync();
     this.syncUi();
   }
 
@@ -107,9 +125,17 @@ export class GameScene extends Phaser.Scene {
     const joy = `기쁨 ${s.joy}`;
     if (this.joyText.text !== joy) this.joyText.setText(joy);
     const w = s.wave;
-    const phase = w.n === 0 ? '웨이브 준비' : `웨이브 ${w.n}${w.paused ? ' (정지)' : ''}`;
-    if (this.phaseText.text !== phase) this.phaseText.setText(phase);
+    const base = w.n === 0 ? '웨이브 준비' : `웨이브 ${w.n}`;
+    // HUD 칸이 좁아 역류 상태일 때는 웨이브 번호 대신 표시
+    const phase = s.bossActive ? '역류!' : s.pendingBackflow ? '역류 예약' : `${base}${w.paused ? ' (정지)' : ''}`;
+    if (this.phaseText.text !== phase) this.phaseText.setText(phase).setColor(s.shadowLocked ? '#ff9e9e' : '#e8e8e8');
+    const weather = `마음 날씨 ${s.weather}`;
+    if (this.weatherText.text !== weather) this.weatherText.setText(weather);
+    this.shadowFill.width = this.shadowBarW * (s.shadow / this.shadowMax);
+    this.shadowFill.setFillStyle(s.shadowLocked ? 0xd0607a : COLOR.unhappy);
+    this.shadowFrame.setStrokeStyle(1, s.shadowLocked ? 0xff9e9e : COLOR.cellLine);
     this.portals.happy.setClosed(s.defense.isFull);
+    this.portals.unhappy.setClosed(s.abyss.isFull);
     const block = s.spawnBlock;
     this.spawnBtn
       .setLabel(block === 'full' ? '칸 가득' : block === 'noJoy' ? `기쁨 부족 (${s.spawnCost})` : `조각 생성 (${s.spawnCost})`)
@@ -133,7 +159,7 @@ export class GameScene extends Phaser.Scene {
     text(this, 8, midY, `${data.days.age}살 · 1일째 ·`, { fontSize: '12px' }).setOrigin(0, 0.5);
     this.phaseText = text(this, 86, midY, '', { fontSize: '12px' }).setOrigin(0, 0.5);
     this.joyText = text(this, VIEW_W / 2 + 30, midY, `기쁨 ${data.balance.start.joy}`, { fontSize: '12px', color: '#f2c94c' }).setOrigin(0.5);
-    text(this, VIEW_W - 8, midY, '마음 날씨 —', { fontSize: '12px', color: '#9fb4e0' }).setOrigin(1, 0.5);
+    this.weatherText = text(this, VIEW_W - 8, midY, '', { fontSize: '12px', color: '#9fb4e0' }).setOrigin(1, 0.5);
   }
 
   /** 왼쪽 = 양. 걱정이 위에서 내려와 아래(거점)로 다가온다 */
@@ -151,14 +177,9 @@ export class GameScene extends Phaser.Scene {
   private drawAbyssLane(): void {
     const r = REGION.abyssLane;
     this.fill(r, COLOR.abyss);
-    this.fill(SHADOW_WALL, COLOR.wall);
-    text(this, SHADOW_WALL.x + SHADOW_WALL.w / 2, SHADOW_WALL.y + SHADOW_WALL.h / 2, '▓ 그림자 벽 (1층) ▓', {
-      fontSize: '9px',
-      color: '#8796c2',
-    }).setOrigin(0.5);
+    // 그림자 벽·Unhappy는 AbyssLaneView가 core 상태로 그린다
     text(this, r.x + r.w / 2, SHADOW_WALL.y + SHADOW_WALL.h + 6, '추억 ↑', { fontSize: '10px', color: '#8796c2' }).setOrigin(0.5, 0);
     text(this, r.x + r.w - 6, r.y + r.h / 2, '심연 레인\n(음)', { fontSize: '10px', color: '#5d6a91', align: 'right' }).setOrigin(1, 0.5);
-    this.character(PORTAL.unhappy.x, HOME_Y, COLOR.unhappy, 'Unhappy', '#9fb0e0');
   }
 
   /** 이름은 머리 위에 작게 (옆은 방어선 슬롯이 쓴다) */
@@ -206,14 +227,11 @@ export class GameScene extends Phaser.Scene {
     this.spawnBtn = new Button(this, 62, midY, 108, 34, '', () => this.onSpawn());
     // 놓아주기는 버튼이 아니라 드롭 영역 (D-019)
     this.releaseZone = new ReleaseZoneView(this);
-    const { shadowMax } = data.balance.shadow;
-    const shadow = data.balance.start.shadow;
+    this.shadowMax = data.balance.shadow.shadowMax;
     text(this, 210, midY, '그림자', { fontSize: '10px', color: '#9fb4e0' }).setOrigin(0, 0.5);
     const barX = 248;
-    const barW = VIEW_W - barX - 10;
-    this.add.rectangle(barX, midY, barW, 10, COLOR.wall).setOrigin(0, 0.5).setStrokeStyle(1, COLOR.cellLine);
-    if (shadow > 0) {
-      this.add.rectangle(barX, midY, (barW * Math.min(shadow, shadowMax)) / shadowMax, 10, COLOR.unhappy).setOrigin(0, 0.5);
-    }
+    this.shadowBarW = VIEW_W - barX - 10;
+    this.shadowFrame = this.add.rectangle(barX, midY, this.shadowBarW, 10, COLOR.wall).setOrigin(0, 0.5).setStrokeStyle(1, COLOR.cellLine);
+    this.shadowFill = this.add.rectangle(barX, midY, 0, 10, COLOR.unhappy).setOrigin(0, 0.5);
   }
 }

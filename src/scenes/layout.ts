@@ -8,7 +8,8 @@
 //584 ├ 하단 바 ──────────────────────┤
 //640 └──────────────────────────────┘
 
-import type { LaneGeometry } from '../core/lane';
+import type { GameGeometry } from '../core/game';
+import type { AbyssGeometry, LaneGeometry } from '../core/lane';
 
 export const VIEW_W = 360;
 export const VIEW_H = 640;
@@ -70,18 +71,27 @@ export const WORRY_X_MARGIN = 12;
 export const DEFENSE_UNIT_Y = HOME_Y;
 
 /**
- * 방어선 슬롯 x: 레인 폭을 (laneCap + 1)칸으로 균등 분할한 중심 중 Happy 자리(☀ 창문 포탈 위)에 가장 가까운 하나를 뺀다.
+ * 레인 슬롯 x: 레인 폭을 (laneCap + 1)칸으로 균등 분할한 중심 중 캐릭터 자리(포탈 위)에 가장 가까운 하나를 뺀다.
  */
-export function defenseSlotXs(laneCap: number): number[] {
-  const { x, w } = REGION.defenseLane;
-  const step = w / (laneCap + 1);
-  const xs = Array.from({ length: laneCap + 1 }, (_, i) => x + step * (i + 0.5));
-  let happyIdx = 0;
+function laneSlotXs(lane: Rect, avoidX: number, laneCap: number): number[] {
+  const step = lane.w / (laneCap + 1);
+  const xs = Array.from({ length: laneCap + 1 }, (_, i) => lane.x + step * (i + 0.5));
+  let idx = 0;
   xs.forEach((sx, i) => {
-    if (Math.abs(sx - PORTAL.happy.x) < Math.abs(xs[happyIdx] - PORTAL.happy.x)) happyIdx = i;
+    if (Math.abs(sx - avoidX) < Math.abs(xs[idx] - avoidX)) idx = i;
   });
-  xs.splice(happyIdx, 1);
+  xs.splice(idx, 1);
   return xs;
+}
+
+/** 방어선 슬롯 x (Happy 자리 = ☀ 창문 포탈 위 제외) */
+export function defenseSlotXs(laneCap: number): number[] {
+  return laneSlotXs(REGION.defenseLane, PORTAL.happy.x, laneCap);
+}
+
+/** 심연 출발선 슬롯 x (Unhappy 자리 = ◐ 손거울 포탈 위 제외). 방어선과 거울 대칭 */
+export function abyssSlotXs(laneCap: number): number[] {
+  return laneSlotXs(REGION.abyssLane, PORTAL.unhappy.x, laneCap);
 }
 
 /** core/lane.ts의 LaneGeometry (import type만 쓰므로 core 의존은 타입뿐) */
@@ -97,6 +107,22 @@ export function defenseGeometry(laneCap: number): LaneGeometry {
     slotXs: defenseSlotXs(laneCap),
     happyX: PORTAL.happy.x,
   };
+}
+
+/** core/lane.ts의 AbyssGeometry: 출발선 → 그림자 벽 아래 변 */
+export function abyssGeometry(laneCap: number): AbyssGeometry {
+  const r = REGION.abyssLane;
+  return {
+    startY: ABYSS_START_Y,
+    wallY: SHADOW_WALL.y + SHADOW_WALL.h,
+    centerX: r.x + r.w / 2,
+    slotXs: abyssSlotXs(laneCap),
+  };
+}
+
+/** GameState에 넘기는 두 레인 좌표 */
+export function gameGeometry(laneCap: number): GameGeometry {
+  return { defense: defenseGeometry(laneCap), abyss: abyssGeometry(laneCap) };
 }
 
 // ── 그리드 ──

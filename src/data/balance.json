@@ -29,6 +29,7 @@
     "layerHpGrowth": 1.2,
     "counterAtk": 4,
     "counterAtkInterval": 1.5,
+    "counterRange": 60,
     "abyssDeathShadow": 5,
     "layerClearShadowReduce": 15,
     "unhappyStallShadowPerSec": 0.3
@@ -38,7 +39,8 @@
     "sinkShadow": 4,
     "sinkLayerHp": 15,
     "shadowAfterBossWin": 30,
-    "shadowAfterBossLose": 60
+    "shadowAfterBossLose": 60,
+    "weatherThresholds": [25, 50, 75]
   },
   "days": {
     "lifeLengthDays": 14,

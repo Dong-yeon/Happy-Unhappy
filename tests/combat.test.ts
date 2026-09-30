@@ -6,16 +6,17 @@ import { GameState } from '../src/core/game';
 import { WILDCARD } from '../src/core/grid';
 import { FIXED_DT } from '../src/core/lane';
 import { mulberry32 } from '../src/core/rng';
-import { defenseGeometry } from '../src/scenes/layout';
+import { gameGeometry } from '../src/scenes/layout';
 
 const data = structuredClone(rawGameData) as unknown as GameData;
-const GEO = defenseGeometry(data.balance.lane.laneCap);
+const GEOS = gameGeometry(data.balance.lane.laneCap);
+const GEO = GEOS.defense;
 const DOG = 'companion_animal';
 const BLANKET = 'comfort_object';
 const CAP = data.balance.lane.laneCap;
 
 function game(seed = 1, cols = 4, rows = 4): GameState {
-  return new GameState(data, { cols, rows }, mulberry32(seed), GEO);
+  return new GameState(data, { cols, rows }, mulberry32(seed), GEOS);
 }
 
 describe('소환 (☀ 창문)', () => {
@@ -86,11 +87,18 @@ describe('소환 (☀ 창문)', () => {
     expect(g.grid.cells[w]?.chain).toBe(WILDCARD);
   });
 
-  it('◐ 손거울은 M4 전까지 unavailable, 빈 칸은 empty', () => {
+  it('◐ 손거울(M4): 심연 출발선의 빈 슬롯, sentDownTierSum, 기록 side unhappy / 빈 칸은 empty', () => {
     const g = game();
-    const i = g.debugGrant(DOG, 1)!;
-    expect(g.summon(i, 'unhappy')).toEqual({ ok: false, reason: 'unavailable' });
-    expect(g.grid.cells[i]).not.toBeNull();
+    const i = g.debugGrant(DOG, 2)!;
+    const r = g.summon(i, 'unhappy');
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(g.abyss.units).toEqual([r.unit]);
+    expect(g.defense.units).toEqual([]);
+    expect(r.unit).toMatchObject({ side: 'unhappy', y: GEOS.abyss.startY, arrived: false });
+    expect(GEOS.abyss.slotXs).toContain(r.unit.x);
+    expect(g.stats).toMatchObject({ sentDownTierSum: 2, sentUpTierSum: 0 });
+    expect(g.summonLog.at(-1)?.side).toBe('unhappy');
     const empty = g.grid.cells.findIndex((c) => c === null);
     expect(g.canSummon(empty, 'happy')).toBe('empty');
   });
@@ -140,7 +148,7 @@ describe('처치 → 기쁨, 가라앉음 기록', () => {
     expect(types).not.toContain('sink');
   });
 
-  it('유닛이 없으면 가라앉고 sunkCount만 증가 (그림자는 M4)', () => {
+  it('유닛이 없으면 가라앉고 sunkCount 증가', () => {
     const g = game();
     const types: string[] = [];
     for (let k = 0; k < 60 * 20; k++) types.push(...g.tick(FIXED_DT).map((e) => e.type));

@@ -14,6 +14,7 @@ import { POLICIES, POLICY_ALIASES } from './policies';
 import {
   buildReport,
   checkM3Goals,
+  checkM4Goals,
   formatComparison,
   formatCompare,
   formatGoals,
@@ -167,6 +168,8 @@ function main(): void {
     console.log();
   }
   console.log(formatGoals(checkM3Goals(reports, cfg.m3Goals)));
+  console.log();
+  console.log(formatGoals(checkM4Goals(reports, cfg.m4Goals), '§8.2 M4 부분 목표'));
 }
 
 main();

@@ -173,18 +173,33 @@ function checkBalance(c: Checker, v: unknown): { maxTier?: number; lifeLengthDay
   }
 
   const a = c.nums(b.abyss, `${p}.abyss`, [
-    'layerHpBase', 'layerHpGrowth', 'counterAtk', 'counterAtkInterval', 'abyssDeathShadow', 'layerClearShadowReduce',
-    'unhappyStallShadowPerSec',
+    'layerHpBase', 'layerHpGrowth', 'counterAtk', 'counterAtkInterval', 'counterRange', 'abyssDeathShadow',
+    'layerClearShadowReduce', 'unhappyStallShadowPerSec',
   ], { min: 0 });
   if (a) {
     c.num(a.layerHpBase, `${p}.abyss.layerHpBase`, { min: 1 });
     c.num(a.counterAtkInterval, `${p}.abyss.counterAtkInterval`, { min: 0.01 });
   }
 
-  const s = c.nums(b.shadow, `${p}.shadow`, ['shadowMax', 'sinkShadow', 'sinkLayerHp', 'shadowAfterBossWin', 'shadowAfterBossLose'], { min: 0 });
-  if (s && typeof s.shadowMax === 'number') {
-    c.num(s.shadowAfterBossWin, `${p}.shadow.shadowAfterBossWin`, { max: s.shadowMax });
-    c.num(s.shadowAfterBossLose, `${p}.shadow.shadowAfterBossLose`, { max: s.shadowMax });
+  const shadowKeys = ['shadowMax', 'sinkShadow', 'sinkLayerHp', 'shadowAfterBossWin', 'shadowAfterBossLose'];
+  const s = c.obj(b.shadow, `${p}.shadow`, [...shadowKeys, 'weatherThresholds']);
+  if (s) {
+    for (const k of shadowKeys) if (k in s) c.num(s[k], `${p}.shadow.${k}`, { min: 0 });
+    if (typeof s.shadowMax === 'number') {
+      c.num(s.shadowMax, `${p}.shadow.shadowMax`, { min: 1 });
+      c.num(s.shadowAfterBossWin, `${p}.shadow.shadowAfterBossWin`, { max: s.shadowMax });
+      c.num(s.shadowAfterBossLose, `${p}.shadow.shadowAfterBossLose`, { max: s.shadowMax });
+    }
+    const wt = c.arr(s.weatherThresholds, `${p}.shadow.weatherThresholds`);
+    if (wt) {
+      if (wt.length !== 3) c.fail(`${p}.shadow.weatherThresholds`, '[흐림, 비, 폭우] 세 값이어야 함');
+      const vals = wt.map((v, i) => c.num(v, `${p}.shadow.weatherThresholds[${i}]`, { min: 0 }));
+      for (let i = 1; i < vals.length; i++) {
+        const a = vals[i - 1];
+        const v = vals[i];
+        if (a !== undefined && v !== undefined && v <= a) c.fail(`${p}.shadow.weatherThresholds`, '오름차순이어야 함');
+      }
+    }
   }
 
   let lifeLengthDays: number | undefined;

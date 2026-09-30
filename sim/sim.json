@@ -7,7 +7,8 @@
   "balanced": {
     "dangerDistance": 140,
     "minUnits": 2,
-    "proactiveSummonTier": 2
+    "proactiveSummonTier": 2,
+    "abyssMinTier": 2
   },
   "m3Goals": {
     "idleSinkByDay": 1,
@@ -15,5 +16,17 @@
     "tier1ShareMax": 0.5,
     "gridFullRatioMin": 0,
     "gridFullRunShareMin": 0.5
+  },
+  "m4Goals": {
+    "alwaysHappyBackflowsMin": 3,
+    "alwaysUnhappyDay1SunkShareMin": 0.5,
+    "balancedBackflowsMax": 2,
+    "balancedLayersPerDayMin": 0.5,
+    "balancedDownRatio": [
+      0.3,
+      0.6
+    ],
+    "balancedGridFullRunShareMin": 0.5,
+    "balancedLostReturnsMeanMax": 1
   }
 }

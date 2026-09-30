@@ -1,6 +1,7 @@
 // 정책 공용: 상태를 읽기만 하는 판단 도우미. 판정은 core의 순수 함수(resolveDrop)를 그대로 쓴다.
 import type { GameState } from '../../src/core/game';
 import { isWildcard, resolveDrop } from '../../src/core/grid';
+import type { Side } from '../../src/core/lane';
 import { randInt, type Rng } from '../../src/core/rng';
 import type { Action } from '../types';
 
@@ -41,9 +42,17 @@ export function lowestReleaseCell(state: GameState): number | null {
   return best;
 }
 
+export function summonTo(state: GameState, cell: number | null, side: Side): Action | null {
+  if (cell === null || state.canSummon(cell, side) !== null) return null;
+  return { type: 'summon', cell, side };
+}
+
 export function summonHappy(state: GameState, cell: number | null): Action | null {
-  if (cell === null || state.canSummon(cell, 'happy') !== null) return null;
-  return { type: 'summon', cell, side: 'happy' };
+  return summonTo(state, cell, 'happy');
+}
+
+export function summonUnhappy(state: GameState, cell: number | null): Action | null {
+  return summonTo(state, cell, 'unhappy');
 }
 
 export function canSpawn(state: GameState): boolean {

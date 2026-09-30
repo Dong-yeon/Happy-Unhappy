@@ -1,4 +1,4 @@
-// ?debug=1 디버그 패널 (M1 그리드 프리셋 + M2 지급 + M3 웨이브·배속). M7에서 정식 디버그 패널로 흡수.
+// ?debug=1 디버그 패널 (M1 그리드 프리셋 + M2 지급 + M3 웨이브·배속 + M4 그림자·역류·심연). M7에서 정식 디버그 패널로 흡수.
 // 기본은 접힘: 포탈 받침 왼쪽 빈 자리의 [DBG] 토글만 보인다. 펼치면 방어 레인 위에 겹쳐 뜬다.
 // 심연 레인(오른쪽, M4)은 접었을 때도 펼쳤을 때도 가리지 않는다.
 import Phaser from 'phaser';
@@ -113,6 +113,35 @@ export function createDebugPanel(
     }, '10px').setActive(s === 1);
     speedBtns.push(b);
   });
+  y += 30;
+
+  // M4: 그림자·역류·심연
+  label(y - 8, '그림자 · 역류 · 심연');
+  y += 14;
+  const shadowMax = data.balance.shadow.shadowMax;
+  const nearMax = Math.round(shadowMax * 0.9);
+  btn(scene, x0 + 40, y, 80, 20, '그림자 0', () => {
+    state.debugSetShadow(0);
+    controls.onChange();
+  }, '10px');
+  btn(scene, x0 + 124, y, 80, 20, `그림자 ${nearMax}`, () => {
+    state.debugSetShadow(nearMax);
+    controls.onChange();
+  }, '10px');
+  y += 26;
+  btn(scene, x0 + 40, y, 80, 20, '역류 예약', () => {
+    state.debugScheduleBackflow();
+    controls.onChange();
+  }, '10px');
+  btn(scene, x0 + 124, y, 80, 20, '층 HP 0', () => {
+    state.debugBreakLayer();
+    controls.onChange();
+  }, '10px');
+  y += 26;
+  btn(scene, x0 + 40, y, 80, 20, '심연 전멸', () => {
+    state.debugKillAbyssUnits();
+    controls.onChange();
+  }, '10px');
   y += 18;
 
   // 배경은 내용 높이에 맞춘다 (방어 레인 안, 심연 레인에 닿지 않음)

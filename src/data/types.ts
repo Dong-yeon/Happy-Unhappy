@@ -35,6 +35,8 @@ export interface Balance {
     layerHpGrowth: number;
     counterAtk: number;
     counterAtkInterval: number;
+    /** 벽 반격 사거리 (벽 아래 변에서의 y 거리, px) */
+    counterRange: number;
     abyssDeathShadow: number;
     layerClearShadowReduce: number;
     unhappyStallShadowPerSec: number;
@@ -45,6 +47,8 @@ export interface Balance {
     sinkLayerHp: number;
     shadowAfterBossWin: number;
     shadowAfterBossLose: number;
+    /** 마음 날씨 경계: [흐림, 비, 폭우]가 시작되는 그림자 값 (그 미만은 맑음) */
+    weatherThresholds: [number, number, number];
   };
   days: { lifeLengthDays: number; dailyLimit: number; storeCap: number };
   diary: { diarySinkThreshold: number };
