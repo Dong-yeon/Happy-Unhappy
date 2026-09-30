@@ -72,6 +72,13 @@ describe('validateGameData', () => {
     expectIssue(issues, 'units.commonSpirit', /2단계/);
   });
 
+  it('spawnWeight 합이 0이면 오류', () => {
+    const issues = issuesAfter((d) => {
+      for (const c of d.chains) c.spawnWeight = 0;
+    });
+    expectIssue(issues, 'chains', /spawnWeight 합/);
+  });
+
   it('체인 id 중복', () => {
     const issues = issuesAfter((d) => {
       d.chains[1].archetypeId = d.chains[0].archetypeId;

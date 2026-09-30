@@ -1,7 +1,12 @@
 import Phaser from 'phaser';
 import type { GameData } from '../data/types';
-import { createGrid, toCell, type GridSize } from '../core/grid';
-import { isDebug, saveGridOverride } from '../debug/gridPreset';
+import { GameState } from '../core/game';
+import type { GridSize } from '../core/grid';
+import { mulberry32, parseSeed } from '../core/rng';
+import { createDebugPanel } from '../debug/DebugPanel';
+import { isDebug } from '../debug/gridPreset';
+import { GridView } from './GridView';
+import { ReleaseZoneView } from './ReleaseZoneView';
 import {
   DEFENSE_LINE_Y,
   HOME_Y,
@@ -14,13 +19,19 @@ import {
   gridLayout,
   type Rect,
 } from './layout';
-import { COLOR, button, setupCamera, text } from './ui';
+import { Button, COLOR, setupCamera, text } from './ui';
 
 /**
- * M1: 레이아웃 뼈대만 표시한다 (스펙 v0.3, D-017·D-018). 버튼·포탈·레인은 아직 동작하지 않음.
- * 게임 규칙은 core에서, 이 씬은 표시·입력만.
+ * M2: 그리드(생성·머지·와일드카드·놓아주기 영역). 포탈·레인은 M3.
+ * 게임 규칙은 core(GameState)에서, 이 씬은 표시·입력만.
  */
 export class GameScene extends Phaser.Scene {
+  private state!: GameState;
+  private gridView!: GridView;
+  private joyText!: Phaser.GameObjects.Text;
+  private spawnBtn!: Button;
+  private releaseZone!: ReleaseZoneView;
+
   constructor() {
     super('Game');
   }
@@ -29,6 +40,9 @@ export class GameScene extends Phaser.Scene {
     setupCamera(this);
     const data = this.registry.get('data') as GameData;
     const size = this.registry.get('gridSize') as GridSize;
+    // ?seed= 가 있으면 시드 고정, 없으면 Math.random
+    const seed = parseSeed(new URLSearchParams(window.location.search).get('seed'));
+    this.state = new GameState(data, size, seed === null ? Math.random : mulberry32(seed));
 
     this.drawHud(data);
     this.drawDefenseLane();
@@ -37,7 +51,39 @@ export class GameScene extends Phaser.Scene {
     this.drawGrid(size);
     this.drawPortals();
     this.drawBottomBar(data);
-    if (isDebug()) this.drawDebugPresets(data, size);
+    this.gridView = new GridView(this, this.state, data.chains, {
+      onChange: () => this.syncUi(),
+      onReleaseHover: (hover) => this.releaseZone.setHover(hover),
+    });
+    if (isDebug()) createDebugPanel(this, data, this.state, size, seed, () => this.onDebugChange());
+    this.syncUi();
+  }
+
+  update(_time: number, delta: number): void {
+    // 배속은 M7 디버그 패널에서 dt 배율로
+    this.state.tick(delta / 1000);
+    this.syncUi();
+  }
+
+  private onDebugChange(): void {
+    this.gridView.refresh();
+    this.syncUi();
+  }
+
+  /** core 상태 → HUD·버튼 */
+  private syncUi(): void {
+    const s = this.state;
+    const joy = `기쁨 ${s.joy}`;
+    if (this.joyText.text !== joy) this.joyText.setText(joy);
+    const block = s.spawnBlock;
+    this.spawnBtn
+      .setLabel(block === 'full' ? '칸 가득' : block === 'noJoy' ? `기쁨 부족 (${s.spawnCost})` : `조각 생성 (${s.spawnCost})`)
+      .setEnabled(block === null);
+  }
+
+  private onSpawn(): void {
+    if (this.state.spawn()) this.gridView.refresh();
+    this.syncUi();
   }
 
   private fill(r: Rect, color: number): Phaser.GameObjects.Rectangle {
@@ -50,7 +96,7 @@ export class GameScene extends Phaser.Scene {
     const midY = r.y + r.h / 2;
     // 일차·시간대·날씨는 M5/M4에서 core 상태로 연결
     text(this, 8, midY, `${data.days.age}살 · 1일째 · 아침`, { fontSize: '12px' }).setOrigin(0, 0.5);
-    text(this, VIEW_W / 2 + 30, midY, `기쁨 ${data.balance.start.joy}`, { fontSize: '12px', color: '#f2c94c' }).setOrigin(0.5);
+    this.joyText = text(this, VIEW_W / 2 + 30, midY, `기쁨 ${data.balance.start.joy}`, { fontSize: '12px', color: '#f2c94c' }).setOrigin(0.5);
     text(this, VIEW_W - 8, midY, '마음 날씨 —', { fontSize: '12px', color: '#9fb4e0' }).setOrigin(1, 0.5);
   }
 
@@ -112,24 +158,24 @@ export class GameScene extends Phaser.Scene {
   /** 그리드는 중립 색 (좌우를 양/음 색으로 칠하지 않음, D-018) */
   private drawGrid(size: GridSize): void {
     this.fill(REGION.grid, COLOR.grid);
-    const grid = createGrid(size);
     const l = gridLayout(size.cols, size.rows);
-    grid.cells.forEach((_, i) => {
-      const { col, row } = toCell(size, i);
+    for (let i = 0; i < size.cols * size.rows; i++) {
+      const col = i % size.cols;
+      const row = Math.floor(i / size.cols);
       this.add
         .rectangle(l.x + col * l.cellW + 1, l.y + row * l.cellH + 1, l.cellW - 2, l.cellH - 2, COLOR.cell)
         .setOrigin(0)
         .setStrokeStyle(1, COLOR.cellLine);
-    });
+    }
   }
 
   private drawBottomBar(data: GameData): void {
     const r = REGION.bottomBar;
     this.fill(r, COLOR.bar);
     const midY = r.y + r.h / 2;
-    // 동작은 M2에서 연결
-    button(this, 62, midY, 108, 34, `조각 생성 (${data.balance.grid.spawnCostBase})`);
-    button(this, 160, midY, 76, 34, '놓아주기');
+    this.spawnBtn = new Button(this, 62, midY, 108, 34, '', () => this.onSpawn());
+    // 놓아주기는 버튼이 아니라 드롭 영역 (D-019)
+    this.releaseZone = new ReleaseZoneView(this);
     const { shadowMax } = data.balance.shadow;
     const shadow = data.balance.start.shadow;
     text(this, 210, midY, '그림자', { fontSize: '10px', color: '#9fb4e0' }).setOrigin(0, 0.5);
@@ -139,23 +185,5 @@ export class GameScene extends Phaser.Scene {
     if (shadow > 0) {
       this.add.rectangle(barX, midY, (barW * Math.min(shadow, shadowMax)) / shadowMax, 10, COLOR.unhappy).setOrigin(0, 0.5);
     }
-  }
-
-  /** 디버그(?debug=1): 그리드 프리셋 전환. 저장(M6)이 생기면 저장 초기화를 함께 한다. */
-  private drawDebugPresets(data: GameData, current: GridSize): void {
-    const x = REGION.defenseLane.x + 8;
-    const top = REGION.defenseLane.y + 28;
-    text(this, x, top, 'DEBUG 그리드', { fontSize: '9px', color: '#ff9e6b' });
-    data.balance.grid.gridPresets.forEach(([cols, rows], i) => {
-      const active = cols === current.cols && rows === current.rows;
-      button(this, x + 20, top + 24 + i * 26, 40, 22, `${cols}×${rows}`, {
-        active,
-        onClick: () => {
-          if (active) return;
-          saveGridOverride({ cols, rows });
-          this.scene.start('Boot');
-        },
-      });
-    });
   }
 }

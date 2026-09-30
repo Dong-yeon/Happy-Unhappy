@@ -239,6 +239,11 @@ function checkChains(c: Checker, v: unknown, maxTier: number | undefined, world:
     return id;
   });
   c.unique(ids, 'chains', 'archetypeId');
+  const totalWeight = list.reduce<number>((s, e) => {
+    const w = (e as Obj | null)?.spawnWeight;
+    return s + (typeof w === 'number' && w > 0 ? w : 0);
+  }, 0);
+  if (list.length > 0 && totalWeight <= 0) c.fail('chains', 'spawnWeight 합이 0보다 커야 함 (조각 생성 불가)');
   return ids.filter((s): s is string => s !== undefined);
 }
 

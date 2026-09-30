@@ -18,6 +18,8 @@ export const COLOR = {
   line: 0xd8c690,
   button: 0x46506b,
   buttonOn: 0x7b8cc4,
+  buttonOff: 0x353a4a,
+  wildcard: 0xffffff,
   mirror: 0xb8c4d6,
   portalHappy: 0xf6d98a,
   portalUnhappy: 0x8ea3d6,
@@ -49,21 +51,48 @@ export function text(
     .setResolution(RENDER_SCALE);
 }
 
-export function button(
-  scene: Phaser.Scene,
-  x: number,
-  y: number,
-  w: number,
-  h: number,
-  label: string,
-  opts: { active?: boolean; enabled?: boolean; onClick?: () => void } = {},
-): Phaser.GameObjects.Container {
-  const { active = false, enabled = true, onClick } = opts;
-  const rect = scene.add.rectangle(0, 0, w, h, active ? COLOR.buttonOn : COLOR.button).setStrokeStyle(1, COLOR.cellLine);
-  const t = text(scene, 0, 0, label, { fontSize: '11px', color: enabled ? '#ffffff' : '#8a8f9e' }).setOrigin(0.5);
-  const c = scene.add.container(x, y, [rect, t]);
-  if (enabled && onClick) {
-    rect.setInteractive({ useHandCursor: true }).on('pointerup', onClick);
+/** 도형 + 텍스트 버튼. 라벨·활성·강조를 나중에 바꿀 수 있다. 비활성이면 탭을 무시한다. */
+export class Button {
+  readonly container: Phaser.GameObjects.Container;
+  private readonly rect: Phaser.GameObjects.Rectangle;
+  private readonly label: Phaser.GameObjects.Text;
+  enabled = true;
+  private active = false;
+
+  constructor(
+    scene: Phaser.Scene,
+    x: number,
+    y: number,
+    w: number,
+    h: number,
+    label: string,
+    onClick?: (btn: Button) => void,
+    fontSize = '11px',
+  ) {
+    this.rect = scene.add.rectangle(0, 0, w, h, COLOR.button).setStrokeStyle(1, COLOR.cellLine);
+    this.label = text(scene, 0, 0, label, { fontSize, color: '#ffffff' }).setOrigin(0.5);
+    this.container = scene.add.container(x, y, [this.rect, this.label]);
+    if (onClick) {
+      this.rect.setInteractive({ useHandCursor: true }).on('pointerup', () => {
+        if (this.enabled) onClick(this);
+      });
+    }
   }
-  return c;
+
+  setLabel(label: string): this {
+    if (this.label.text !== label) this.label.setText(label);
+    return this;
+  }
+
+  setEnabled(enabled: boolean): this {
+    this.enabled = enabled;
+    this.label.setColor(enabled ? '#ffffff' : '#8a8f9e');
+    this.rect.setFillStyle(this.active ? COLOR.buttonOn : enabled ? COLOR.button : COLOR.buttonOff);
+    return this;
+  }
+
+  setActive(active: boolean): this {
+    this.active = active;
+    return this.setEnabled(this.enabled);
+  }
 }

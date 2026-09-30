@@ -86,6 +86,26 @@ export function gridLayout(cols: number, rows: number): GridLayout {
   };
 }
 
+/** 좌표 → 그리드 칸 인덱스. 칸 밖이면 null */
+export function cellAt(cols: number, rows: number, x: number, y: number): number | null {
+  const l = gridLayout(cols, rows);
+  const col = Math.floor((x - l.x) / l.cellW);
+  const row = Math.floor((y - l.y) / l.cellH);
+  if (col < 0 || col >= cols || row < 0 || row >= rows) return null;
+  return row * cols + col;
+}
+
+/** 칸 중심 좌표 */
+export function cellCenter(cols: number, rows: number, index: number): { x: number; y: number } {
+  const l = gridLayout(cols, rows);
+  const col = index % cols;
+  const row = Math.floor(index / cols);
+  return { x: l.x + col * l.cellW + l.cellW / 2, y: l.y + row * l.cellH + l.cellH / 2 };
+}
+
+/** 드래그 시작 임계값 (논리 px). 미만 이동은 탭 */
+export const DRAG_THRESHOLD = 6;
+
 /** 그리드가 영역 안에 들어가는지 (폰에서 칸 최소 40×40) */
 export function gridFits(cols: number, rows: number): boolean {
   return cols * CELL_W <= REGION.grid.w && rows * CELL_H <= REGION.grid.h && CELL_W >= 40 && CELL_H >= 40;
@@ -95,12 +115,32 @@ export function inRect(r: Rect, x: number, y: number): boolean {
   return x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h;
 }
 
+// ── 놓아주기 영역 (v0.3.2, D-019): 하단 바의 [놓아주기] 자리 ──
+/** 표시 사각형 */
+export const RELEASE_ZONE: Rect = { x: 122, y: REGION.bottomBar.y + 11, w: 76, h: 34 };
+/** 판정은 표시보다 상하좌우 이만큼 넓게 */
+export const RELEASE_ZONE_PAD = 6;
+export const RELEASE_HIT: Rect = {
+  x: RELEASE_ZONE.x - RELEASE_ZONE_PAD,
+  y: RELEASE_ZONE.y - RELEASE_ZONE_PAD,
+  w: RELEASE_ZONE.w + RELEASE_ZONE_PAD * 2,
+  h: RELEASE_ZONE.h + RELEASE_ZONE_PAD * 2,
+};
+
+export type DropTarget =
+  | { kind: 'cell'; index: number }
+  | { kind: 'release' }
+  | { kind: 'summon'; portal: PortalId }
+  | { kind: 'none' };
+
 /**
- * 드롭 위치 → 보낼 대상 (스펙 §4.2 "판정은 넓게").
- * 우선순위: 그리드 안(무효, 머지·교환용) → 포탈 판정 원(가까운 쪽) → 해당 레인 전체 → 그 외 무효.
+ * 드롭 위치 → 대상 (스펙 §4.1.1, §4.2 "판정은 넓게").
+ * 우선순위: 그리드 칸 → 놓아주기 영역 → 포탈 판정 원(가까운 쪽) → 해당 레인 전체 → 무효.
  */
-export function dropTarget(x: number, y: number): PortalId | null {
-  if (inRect(REGION.grid, x, y)) return null;
+export function dropTarget(size: { cols: number; rows: number }, x: number, y: number): DropTarget {
+  const index = cellAt(size.cols, size.rows, x, y);
+  if (index !== null) return { kind: 'cell', index };
+  if (inRect(RELEASE_HIT, x, y)) return { kind: 'release' };
   let best: PortalId | null = null;
   let bestDist = PORTAL_HIT_RADIUS;
   for (const id of ['happy', 'unhappy'] as const) {
@@ -110,8 +150,8 @@ export function dropTarget(x: number, y: number): PortalId | null {
       bestDist = d;
     }
   }
-  if (best) return best;
-  if (inRect(REGION.defenseLane, x, y)) return 'happy';
-  if (inRect(REGION.abyssLane, x, y)) return 'unhappy';
-  return null;
+  if (best) return { kind: 'summon', portal: best };
+  if (inRect(REGION.defenseLane, x, y)) return { kind: 'summon', portal: 'happy' };
+  if (inRect(REGION.abyssLane, x, y)) return { kind: 'summon', portal: 'unhappy' };
+  return { kind: 'none' };
 }

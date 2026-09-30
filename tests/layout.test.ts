@@ -8,13 +8,19 @@ import {
   PORTAL_HIT_RADIUS,
   PORTAL_RADIUS,
   REGION,
+  RELEASE_HIT,
+  RELEASE_ZONE,
+  RELEASE_ZONE_PAD,
   SHADOW_WALL,
   VIEW_H,
   VIEW_W,
+  cellAt,
+  cellCenter,
   dropTarget,
   gridFits,
   gridLayout,
   inRect,
+  type DropTarget,
 } from '../src/scenes/layout';
 
 describe('레이아웃 영역 (v0.3)', () => {
@@ -86,27 +92,78 @@ describe('레인 기준선', () => {
   });
 });
 
-describe('dropTarget (판정은 넓게)', () => {
+const G54 = { cols: 5, rows: 4 };
+const NONE: DropTarget = { kind: 'none' };
+const RELEASE: DropTarget = { kind: 'release' };
+const HAPPY: DropTarget = { kind: 'summon', portal: 'happy' };
+const UNHAPPY: DropTarget = { kind: 'summon', portal: 'unhappy' };
+
+describe('dropTarget — 우선순위: 그리드 칸 → 놓아주기 영역 → 포탈 판정 원 → 레인 → 무효', () => {
+  it('그리드 칸', () => {
+    const c = cellCenter(G54.cols, G54.rows, 7);
+    expect(dropTarget(G54, c.x, c.y)).toEqual({ kind: 'cell', index: 7 });
+  });
+
+  it('그리드 칸이 포탈 판정 원보다 우선 (윗줄이 판정 원과 겹침)', () => {
+    const y = REGION.grid.y + 5;
+    expect(Math.hypot(0, y - PORTAL.happy.y)).toBeLessThanOrEqual(PORTAL_HIT_RADIUS);
+    expect(dropTarget(G54, PORTAL.happy.x, y).kind).toBe('cell');
+  });
+
+  it('그리드 영역이라도 칸이 아닌 여백은 무효 (4×4 좌우 여백)', () => {
+    const l = gridLayout(4, 4);
+    expect(dropTarget({ cols: 4, rows: 4 }, l.x - 4, l.y + 10)).toEqual(NONE);
+  });
+
+  it('놓아주기 영역: 표시 사각형 안', () => {
+    const cx = RELEASE_ZONE.x + RELEASE_ZONE.w / 2;
+    const cy = RELEASE_ZONE.y + RELEASE_ZONE.h / 2;
+    expect(dropTarget(G54, cx, cy)).toEqual(RELEASE);
+  });
+
+  it(`놓아주기 영역: 판정은 표시보다 상하좌우 ${RELEASE_ZONE_PAD}px 넓게`, () => {
+    const z = RELEASE_ZONE;
+    const p = RELEASE_ZONE_PAD;
+    const cx = z.x + z.w / 2;
+    const cy = z.y + z.h / 2;
+    // 경계 안쪽 (여유 끝)
+    expect(dropTarget(G54, z.x - p, cy)).toEqual(RELEASE);
+    expect(dropTarget(G54, z.x + z.w + p - 0.5, cy)).toEqual(RELEASE);
+    expect(dropTarget(G54, cx, z.y - p)).toEqual(RELEASE);
+    expect(dropTarget(G54, cx, z.y + z.h + p - 0.5)).toEqual(RELEASE);
+    // 여유 밖
+    expect(dropTarget(G54, z.x - p - 1, cy)).toEqual(NONE);
+    expect(dropTarget(G54, z.x + z.w + p + 1, cy)).toEqual(NONE);
+    expect(dropTarget(G54, cx, z.y + z.h + p + 1)).toEqual(NONE);
+  });
+
+  it('놓아주기 판정은 그리드·포탈 판정 원과 겹치지 않는다', () => {
+    expect(RELEASE_HIT.y).toBeGreaterThanOrEqual(REGION.grid.y + REGION.grid.h);
+    for (const pt of Object.values(PORTAL)) {
+      expect(RELEASE_HIT.y - pt.y).toBeGreaterThan(PORTAL_HIT_RADIUS);
+    }
+  });
+
   it('포탈 위와 판정 반경 안', () => {
-    expect(dropTarget(PORTAL.happy.x, PORTAL.happy.y)).toBe('happy');
-    expect(dropTarget(PORTAL.unhappy.x, PORTAL.unhappy.y)).toBe('unhappy');
-    expect(dropTarget(PORTAL.happy.x - 30, PORTAL.happy.y)).toBe('happy');
-    expect(dropTarget(PORTAL.unhappy.x + 30, PORTAL.unhappy.y)).toBe('unhappy');
+    expect(dropTarget(G54, PORTAL.happy.x, PORTAL.happy.y)).toEqual(HAPPY);
+    expect(dropTarget(G54, PORTAL.unhappy.x, PORTAL.unhappy.y)).toEqual(UNHAPPY);
+    expect(dropTarget(G54, PORTAL.happy.x - 30, PORTAL.happy.y)).toEqual(HAPPY);
+    expect(dropTarget(G54, PORTAL.unhappy.x + 30, PORTAL.unhappy.y)).toEqual(UNHAPPY);
   });
 
   it('레인 영역 전체', () => {
-    expect(dropTarget(10, 100)).toBe('happy');
-    expect(dropTarget(350, 100)).toBe('unhappy');
-    expect(dropTarget(PORTAL.happy.x, SHADOW_WALL.y + 1)).toBe('happy');
+    expect(dropTarget(G54, 10, 100)).toEqual(HAPPY);
+    expect(dropTarget(G54, 350, 100)).toEqual(UNHAPPY);
+    expect(dropTarget(G54, PORTAL.happy.x, SHADOW_WALL.y + 1)).toEqual(HAPPY);
   });
 
-  it('거울·HUD·그리드 안·포탈 받침의 빈 곳은 무효', () => {
-    expect(dropTarget(VIEW_W / 2, 200)).toBeNull(); // 거울
-    expect(dropTarget(VIEW_W / 2, PORTAL.happy.y)).toBeNull(); // 두 포탈 사이
-    expect(dropTarget(100, 10)).toBeNull(); // HUD
-    expect(dropTarget(PORTAL.happy.x, REGION.grid.y + 5)).toBeNull(); // 그리드 윗줄 (포탈 판정 원과 겹쳐도 그리드 우선)
-    expect(dropTarget(10, PORTAL.happy.y)).toBeNull(); // 포탈 받침 왼쪽 끝
-    expect(dropTarget(100, 610)).toBeNull(); // 하단 바
+  it('거울·HUD·포탈 받침의 빈 곳·하단 바의 나머지는 무효', () => {
+    expect(dropTarget(G54, VIEW_W / 2, 200)).toEqual(NONE); // 거울
+    expect(dropTarget(G54, VIEW_W / 2, PORTAL.happy.y)).toEqual(NONE); // 두 포탈 사이
+    expect(dropTarget(G54, 100, 10)).toEqual(NONE); // HUD
+    expect(dropTarget(G54, 10, PORTAL.happy.y)).toEqual(NONE); // 포탈 받침 왼쪽 끝
+    expect(dropTarget(G54, 60, 612)).toEqual(NONE); // 조각 생성 버튼 위
+    expect(dropTarget(G54, 300, 612)).toEqual(NONE); // 그림자 게이지 위
   });
 });
 
@@ -118,5 +175,19 @@ describe('그리드 배치', () => {
     expect(Math.abs(VIEW_W - (l.x * 2 + l.width))).toBeLessThanOrEqual(1);
     expect(l.y).toBeGreaterThanOrEqual(REGION.grid.y);
     expect(l.y + l.height).toBeLessThanOrEqual(REGION.grid.y + REGION.grid.h);
+  });
+});
+
+describe('cellAt / cellCenter', () => {
+  it.each(balance.grid.gridPresets as [number, number][])('%i×%i: 칸 중심 → 같은 칸, 그리드 밖 → null', (cols, rows) => {
+    for (let i = 0; i < cols * rows; i++) {
+      const c = cellCenter(cols, rows, i);
+      expect(cellAt(cols, rows, c.x, c.y)).toBe(i);
+    }
+    const l = gridLayout(cols, rows);
+    expect(cellAt(cols, rows, l.x - 1, l.y + 1)).toBeNull();
+    expect(cellAt(cols, rows, l.x + 1, l.y - 1)).toBeNull();
+    expect(cellAt(cols, rows, l.x + l.width, l.y + 1)).toBeNull();
+    expect(cellAt(cols, rows, l.x + 1, l.y + l.height)).toBeNull();
   });
 });
