@@ -3,8 +3,9 @@
 | 폴더 | 문서 | 내용 | 상태 |
 |---|---|---|---|
 | `01-planning/` | [worldview.md](01-planning/worldview.md) | 세계관, 코어 판타지, 핵심 조작, 추억 체인, 결말, 톤 | 최신 (2026-09-30) |
-| `02-spec/` | [prototype-spec.md](02-spec/prototype-spec.md) | 프로토타입 구현 스펙 v0.6.1 (M6 gating·저장·결말 + M6.5 튜닝 규칙 포함) | 최신 (2026-09-30) |
+| `02-spec/` | [prototype-spec.md](02-spec/prototype-spec.md) | 프로토타입 구현 스펙 v0.7 (M6 gating·저장·결말, M6.5 튜닝, M7 metrics 규칙 포함) | 최신 (2026-09-30) |
 | `03-decisions/` | [decision-log.md](03-decisions/decision-log.md) | 기획 결정 기록 (결정 / 이유 / 버린 대안) | 최신 (2026-09-30) |
+| `04-playtest/` | [playtest-plan.md](04-playtest/playtest-plan.md) | 사람 플레이 테스트 계획 (트랙 A 실제 일생 / 트랙 B 그리드 비교), 매일 체크리스트, 판정표 | 최신 (2026-10-01) |
 
 ## 문서 규칙
 - 기획 결정이 바뀌면 `decision-log.md`에 항목을 추가하고, `worldview.md`를 갱신한다.

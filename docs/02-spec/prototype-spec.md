@@ -1,8 +1,12 @@
-# Happy And Unhappy — 프로토타입 스펙 v0.6.1 (2026-10-01)
+# Happy And Unhappy — 프로토타입 스펙 v0.7 (2026-10-01)
 
 > Claude Code에서 프로토타입을 구현하기 위한 스펙이다.
 > 기획 배경: `docs/01-planning/worldview.md` / 결정 근거: `docs/03-decisions/decision-log.md` (D-010 ~ D-016)
 > **프로토타입은 버리는 코드다.** 목적은 재미 검증이며, 본 개발(Godot)로 넘기는 것은 코드가 아니라 이 규칙과 JSON 수치다.
+
+### v0.6.1 → v0.7 (D-025)
+- **M7 구현 세부 규칙 추가** (§5.10): core 결정적 metrics 필드, 씬 입력 metrics, `hau_metrics_v2` 형식·쓰기 시점·상한, 판 도중 복원 감지, 하루 끝 주관 평가(`?playtest=1`), 내보내기(clipboard 불가 시 textarea·파일), 분석 스크립트 `npm run metrics`, 잔여 버그 2개.
+- 사람 플레이 테스트 계획 `docs/04-playtest/playtest-plan.md` (트랙 A 실제 일생 / 트랙 B 그리드 비교, D-025).
 
 ### v0.6 → v0.6.1 (D-024)
 - **M6.5 튜닝 규칙·후보 수치 추가** (§5.9): 조용한 날(`days.quietDays` 2), 아침 기쁨 바닥(`days.morningJoyFloor` 20), Happy 점수에 가라앉음 감점(`wSunk`)·점수 0 하한, 걱정 성장 `hpGrowthPerDay` 1.13·`countStep` 2, 결말 가중치·임계값·균형 비율.
@@ -819,6 +823,122 @@ unhappyScore = max(0, sentDownTierSum × wDownTier + layersCleared × wLayer + s
 **6. 하지 않는 것**
 - 봇 정책 변경 (실험: 보스 진행 중에도 창문 우선 규칙 → 결과 동일, 효과 없음), 그리드 크기·`dailyLimit`·`storeCap` (M7 사람 플레이), 결말 공식의 비율화(처치율 등 — 절대값의 한계는 위 민감도 경고로 기록만)
 
+### 5.10 M7 구현 세부 규칙 (v0.7)
+
+M7 범위: **metrics 수집·저장·내보내기 + 하루 끝 주관 평가 + metrics 분석 스크립트 + 잔여 버그 2개.** 밸런스 수치는 바꾸지 않는다. M7이 끝나면 사람 플레이 테스트(`docs/04-playtest/playtest-plan.md`)를 시작한다.
+
+**원칙**
+- **metrics는 관찰만 한다.** core 결정성·저장 round-trip을 깨지 않는다. 게임 규칙이 metrics를 읽지 않는다.
+- 결정적인 값(게임 시간 기준)은 core가 센다 (`DayStats`·`SummonRecord`에 필드 추가). 입력·실제 시간처럼 비결정적인 값은 씬 층이 센다.
+- 저장(`hau_save_v2`)과 **분리된 키** `hau_metrics_v2`. 새 일생·저장 초기화에도 지워지지 않는다 (디버그 "metrics 초기화"로만 지움).
+
+#### 1. core 추가 (결정적)
+- `SummonRecord`에 `day` 추가.
+- `DayStats`에 추가: `spawns`, `merges`, `releases`, `releaseTiers: number[]`(단계별 개수, 길이 maxTier+1, 0 = 와일드카드), `lostReturns`, `abyssDeaths`, `stallSeconds`, `gridFullSeconds`(웨이브 진행 중 그리드에 빈칸이 없던 게임 시간), `layerClearTimes: number[]`(그날 층 돌파 시각, playTime 기준).
+- 일생 `GameStats`에 추가: `tier3ByChain: Record<string, number>`(머지로 3단계가 된 횟수), `heroFirstSummonDay: Record<string, number>`(체인별 영웅 첫 소환 일차).
+- **저장 스키마 변경 → 기존 `hau_save_v2`는 스키마 불일치로 초기화된다** (마이그레이션 없음, 개발 단계라 허용). version은 2 유지.
+
+#### 2. 씬 층 수집 (비결정적)
+| 항목 | 정의 |
+|---|---|
+| `dropFails.invalid` | 드래그를 놓은 곳이 그리드·포탈·놓아주기 영역 어디에도 해당하지 않음 |
+| `dropFails.laneFull` | 닫힌 포탈(정원 초과)에 놓음 |
+| `dropFails.wildcard` | 와일드카드를 포탈에 놓음 |
+| `dragDistance` | 드래그 시작 → 놓은 점 직선 거리 합 (논리 좌표 px) |
+| `realSeconds` | 그날 waves 단계의 실제 경과 시간(배속·백그라운드 제외, `visibilitychange` hidden 동안 정지) |
+| `speedUsed` | 그날 ×1이 아닌 배속을 쓴 실제 시간(초). 0이 아니면 분석에서 하루 길이 표본에서 제외 |
+
+#### 3. 저장 형식 `hau_metrics_v2`
+```ts
+interface MetricsData {
+  version: 2;
+  firstSeen: string;                 // ISO
+  sessions: SessionRecord[];         // 최대 500 (넘으면 오래된 것부터 버림)
+  lives: LifeMetrics[];              // 최대 20 (넘으면 오래된 것부터)
+}
+interface SessionRecord {
+  date: string;                      // 기기 로컬 YYYY-MM-DD (디버그 날짜 오프셋 반영값과 실제값 둘 다: date, realDate)
+  realDate: string;
+  startedAt: string;                 // ISO
+  foregroundSeconds: number;         // 앱이 보이던 실제 시간
+  daysCompleted: number;             // 이 세션에서 끝낸 날 수
+}
+interface LifeMetrics {
+  lifeId: string;                    // `${seed}-${startedAt}`
+  seed: number;
+  gridSize: { cols: number; rows: number };
+  startedAt: string;
+  endedAt: string | null;
+  days: DayMetrics[];
+  milestoneChoices: { day: number; eventId: string; choiceId: string }[];
+  midDayRestores: number;
+  gatingBypassUsed: boolean;         // 한 번이라도 우회했으면 true (분석에서 H4 표본 제외)
+  ending: { id: string; happy: number; unhappy: number; breakdown: Record<string, number> } | null;
+  stats: GameStats | null;           // lifeEnd 시점 일생 stats
+}
+interface DayMetrics {
+  day: number;
+  date: string; realDate: string;    // 그날을 끝낸 날짜
+  eventId: string;
+  dayStats: DayStats;                // core (1절 필드 포함)
+  summons: SummonRecord[];           // 그날 소환 (summonLog의 day 필터)
+  dropFails: { invalid: number; laneFull: number; wildcard: number };
+  dragDistance: number;
+  realSeconds: number;
+  speedUsed: number;
+  bypass: boolean;                   // 그날 gating 우회 상태로 시작했는지
+  rating: DayRating | null;          // 4절
+}
+```
+- **쓰기 시점:** 하루 끝(diary 진입) — 그날 `DayMetrics` 확정 / lifeEnd — `ending`·`stats` / `visibilitychange` hidden — 세션 시간 / 하루 평가 입력 시.
+- **판 도중 복원 감지:** `confirmDay` 때 metrics에 `inProgress: { lifeId, day }`를 기록하고, 하루 끝에 지운다. 부팅 시 `inProgress`가 남아 있고 복원된 저장이 같은 lifeId·day의 `dayStart`면 `midDayRestores += 1` 후 지운다. 그날 중단된 판의 입력 카운터는 버린다.
+- 파싱 실패·version 불일치 → 키 삭제 + `console.warn` 후 새로 시작 (저장과 같은 규칙). localStorage 예외는 무시하고 계속 (게임 진행 우선).
+- 크기 상한: 직렬화 결과가 1.5MB를 넘으면 가장 오래된 life의 `summons`부터 비운다 (localStorage 5MB 한도 대비). 경고 로그.
+
+#### 4. 하루 끝 주관 평가 (`?debug=1` 또는 `?playtest=1`에서만)
+- 그림일기 패널 아래에 한 줄: **"오늘은?" [좋았다] [그저 그랬다] [별로였다]** (선택 안 해도 다음 날로 갈 수 있음).
+- 그날 역류가 있었으면 한 줄 더: **"역류는?" [긴장됐다] [짜증났다]**.
+- 결과 화면(lifeEnd)에 한 줄: **"이 결말, 납득돼?" [응] [아니]**.
+```ts
+interface DayRating { day: 'good' | 'meh' | 'bad' | null; backflow: 'tense' | 'annoyed' | null }
+// 결말 납득은 LifeMetrics.endingAgree: boolean | null
+```
+- 이유: §1 재미 판정 기준 중 "역류가 짜증이 아니라 긴장감인가"는 주관 항목이라 숫자로 남기지 않으면 기억에 의존하게 된다. 버튼 하나라 플레이 흐름을 깨지 않는다.
+- `?playtest=1`: 디버그 패널은 숨기고 평가 버튼만 보인다 (사람 테스트용 URL).
+
+#### 5. 내보내기·요약 (디버그 "metrics" 탭)
+- **[metrics JSON 복사]**: `navigator.clipboard.writeText` 시도 → 실패하거나 보안 컨텍스트가 아니면(**폰에서 LAN `http://` 접속 시 clipboard API 없음**) 전체 화면 모달에 선택 가능한 `<textarea>`(DOM 오버레이) + [파일로 저장](Blob 다운로드 `hau_metrics_YYYYMMDD.json`)을 띄운다.
+- **요약 표시** (현재 일생 + 전체): 일생 수, 끝낸 날 수, 세션 날짜 수, Unhappy 비율, 소환 단계 분포, 하루 길이 중앙값(배속 사용일 제외), 그리드 가득 참 비율, 놓아주기 수, 역류 수·처치, 평가 분포(좋았다/그저/별로, 긴장/짜증).
+- [metrics 초기화] (두 번 탭).
+
+#### 6. 분석 스크립트 `npm run metrics -- <파일.json> [--bot sim/out/xxx.json]`
+- Node 전용 (`sim/`과 같은 tsconfig, 게임 번들 제외). 내보낸 JSON을 읽어 **§1 가설 H1~H6 표**를 출력한다.
+  | 가설 | 출력 |
+  |---|---|
+  | H1 | Unhappy 비율(일생·일차별), 칸 열(col)별 Unhappy 비율 — 왼쪽/오른쪽 편향 |
+  | H2 | 소환 단계 분포 (위/아래 따로) |
+  | H3 | 층 돌파 → 다음 Unhappy 소환까지 시간 중앙값 (`layerClearTimes` + `summons.t`) |
+  | H4 | 하루 길이 중앙값(배속·우회 제외), 실제 날짜별 세션 수, 연속 접속 일수, 하루에 연 날 수 |
+  | H5 | 체인별 3단계 도달·영웅 첫 소환 일차 |
+  | H6 | 그리드 가득 참 비율, 놓아주기 수·단계, 귀환 소실, 드롭 실패 — **그리드 프리셋별로 나눠서** |
+  | 주관 | 하루 평가 분포, 역류 긴장/짜증, 결말 납득 |
+  | 결과 | 결말, 두 점수, 가라앉음 |
+- `--bot`: 같은 지표를 봇 리포트(balanced)와 나란히 출력 (§8.1 "사람 metrics와 봇 리포트가 크게 어긋나면 봇 정책을 고친다").
+- 내보낸 파일은 `playtest/` 폴더(gitignore)에 둔다.
+
+#### 7. 잔여 버그
+- "다음 날" 직후(dayStart) 상단 바에 전날 마지막 칸("저녁")이 남는 문제 → dayStart에서는 슬롯 표시를 "아침"(또는 칸 표시 없음)으로.
+- 디버그 기본 탭 그리드 설명 문구가 패널 밖으로 넘침 → 줄바꿈 또는 문구 축약.
+
+#### 8. 필수 테스트
+- core: 새 DayStats 필드 집계 (spawns·merges·releases·releaseTiers·gridFullSeconds·layerClearTimes), tier3ByChain·heroFirstSummonDay, SummonRecord.day
+- 결정성: 기존 round-trip·시뮬 결과가 M6.5와 동일 (metrics 추가로 게임 결과가 바뀌면 안 됨 — `--compare`로 확인)
+- metrics: 상한(500/20/1.5MB) 자르기, 파싱 실패 초기화, midDayRestores 감지, 우회일 표시
+- 분석 스크립트: 고정 fixture JSON → 기대 표
+
+#### 9. 하지 않는 것
+- 서버 전송·원격 수집 (로컬 JSON 내보내기만), 밸런스 수치 변경, 새 콘텐츠, 아트
+
 ## 6. 데이터 파일 (JSON)
 
 모든 콘텐츠 데이터에 `world` 필드(프로토타입은 `"modern"`만)를 둔다. 아래 값은 **임시 값**.
@@ -1073,6 +1193,7 @@ interface SaveGame {
 - 저장 초기화(게임만 / 전부), 저장 JSON 복사, 시드 표시 (M6), metrics JSON 복사 (M7)
 
 ### metrics (`hau_metrics_v2`)
+- 형식·수집 위치·쓰기 시점은 §5.10. 아래는 항목 목록 (분석 스크립트 출력 기준).
 | 분류 | 항목 |
 |---|---|
 | 선택 (H1, H2) | Happy/Unhappy 소환 횟수·비율, 소환 시 단계 분포, 조각 생성 → 소환까지 보유 시간, **소환 시 조각의 칸 위치(col, row)** |
@@ -1201,8 +1322,9 @@ Happy-Unhappy/
 │  │   └─ metrics.ts
 │  ├─ platform/        # clock.ts(로컬 날짜) · storage.ts(localStorage) — 브라우저 의존은 여기만
 │  ├─ scenes/          # 표시·입력만
+│  ├─ metrics/         # 수집·저장(hau_metrics_v2)·요약 (M7, 브라우저 층)
 │  └─ debug/
-├─ sim/               # 자동 플레이 시뮬레이터 (Node, Phaser 없음, 번들 제외)
+├─ sim/               # 자동 플레이 시뮬레이터 + metrics 분석 스크립트(metrics.ts) (Node, Phaser 없음, 번들 제외)
 │  ├─ run.ts
 │  ├─ policies/
 │  └─ out/            # 리포트 (gitignore)
@@ -1226,8 +1348,8 @@ Happy-Unhappy/
 | M5 | 하루 구조: 3웨이브·이벤트·이정표·하루 끝·그림일기·하루 안의 역류 (§5.7) | 14일 연속 플레이 가능. 시뮬 `--until life`가 실제 하루 구조 사용, 보스 등장 진단·판 길이 리포트, §8.2 M5 부분 목표 판정 |
 | M6 | C안 gating + 결말 판정 + 저장/복원 (§5.8) | 5개 결말 디버그로 도달, 날짜 엣지 케이스·round-trip 테스트 통과, 새로고침 후 이어하기 동작, 시뮬 결말 분포 리포트 + `--saveRoundTrip` 일치 |
 | M6.5 | 결말 분포 튜닝 (§5.9: 조용한 날·아침 기쁨 바닥·`wSunk`·후보 수치·목표 정리) | **시뮬 결말 분포가 §8.2 M6 목표에 들어옴**, M5 목표 회귀 없음. 변경 수치와 근거를 결정 기록에 남김 |
-| M7 | metrics + 디버그 패널 완성 | metrics JSON 복사 가능 |
-| — | 실제 플레이 (그리드 3종 각각 1회 이상) → 판정 | 1장 기준 평가 |
+| M7 | metrics + 하루 끝 평가 + 분석 스크립트 (§5.10) | 폰(LAN http)에서 metrics 내보내기 가능, `npm run metrics`가 H1~H6 표 출력, 시뮬 결과 M6.5와 동일 |
+| — | 사람 플레이 테스트 (`docs/04-playtest/playtest-plan.md`) | 트랙 A 실제 일생 1회 + 트랙 B 그리드 4×4·6×4 → §1 판정 |
 
 ---
 
