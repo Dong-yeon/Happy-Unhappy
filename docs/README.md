@@ -3,7 +3,7 @@
 | 폴더 | 문서 | 내용 | 상태 |
 |---|---|---|---|
 | `01-planning/` | [worldview.md](01-planning/worldview.md) | 세계관, 코어 판타지, 핵심 조작, 추억 체인, 결말, 톤 | 최신 (2026-09-30) |
-| `02-spec/` | [prototype-spec.md](02-spec/prototype-spec.md) | 프로토타입 구현 스펙 v0.6 (M6 gating·저장·결말 판정 세부 규칙 포함) | 최신 (2026-09-30) |
+| `02-spec/` | [prototype-spec.md](02-spec/prototype-spec.md) | 프로토타입 구현 스펙 v0.6.1 (M6 gating·저장·결말 + M6.5 튜닝 규칙 포함) | 최신 (2026-09-30) |
 | `03-decisions/` | [decision-log.md](03-decisions/decision-log.md) | 기획 결정 기록 (결정 / 이유 / 버린 대안) | 최신 (2026-09-30) |
 
 ## 문서 규칙

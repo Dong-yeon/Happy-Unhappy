@@ -1,8 +1,13 @@
-# Happy And Unhappy — 프로토타입 스펙 v0.6 (2026-09-30)
+# Happy And Unhappy — 프로토타입 스펙 v0.6.1 (2026-10-01)
 
 > Claude Code에서 프로토타입을 구현하기 위한 스펙이다.
 > 기획 배경: `docs/01-planning/worldview.md` / 결정 근거: `docs/03-decisions/decision-log.md` (D-010 ~ D-016)
 > **프로토타입은 버리는 코드다.** 목적은 재미 검증이며, 본 개발(Godot)로 넘기는 것은 코드가 아니라 이 규칙과 JSON 수치다.
+
+### v0.6 → v0.6.1 (D-024)
+- **M6.5 튜닝 규칙·후보 수치 추가** (§5.9): 조용한 날(`days.quietDays` 2), 아침 기쁨 바닥(`days.morningJoyFloor` 20), Happy 점수에 가라앉음 감점(`wSunk`)·점수 0 하한, 걱정 성장 `hpGrowthPerDay` 1.13·`countStep` 2, 결말 가중치·임계값·균형 비율.
+- 진단: M6의 `balanced` 비 오는 어른 7%는 1일차 `scraped_knee` → 기쁨 0 소프트락.
+- §8.2 목표 정리: hoarder 비교를 결말 점수로, M5 아침 보스 목표를 "방어 ≥ 3기" 조건부·전 정책 합산으로.
 
 ### v0.5.1 → v0.6 (D-023)
 - **M6 구현 세부 규칙 추가** (§5.8): gating 순수 함수·지급/소비 시점, 하루 경계 저장(dayStart·diary·lifeEnd), rng 상태 저장, 결과 화면, 디버그, 시뮬 결말 분포·`--saveRoundTrip`.
@@ -527,13 +532,14 @@ M4 범위: **◐ 손거울 소환 + 심연 레인(같은 `Lane` 모듈의 `abyss
 ### 5.6 결말 판정 (14일째 종료 후)
 
 ```
-happyScore   = sentUpTierSum      × wUpTier
-             + worriesDefeated    × wDefeat
-             + totalJoyEarned     × wJoy
+happyScore   = max(0, sentUpTierSum      × wUpTier
+                    + worriesDefeated    × wDefeat
+                    + totalJoyEarned     × wJoy
+                    − sunkCount          × wSunk)      // v0.6.1, D-024
 
-unhappyScore = sentDownTierSum    × wDownTier
-             + layersCleared      × wLayer
-             + shadowPurified     × wPurified   // 층 돌파로 줄인 그림자만 (v0.6, D-023)
+unhappyScore = max(0, sentDownTierSum    × wDownTier
+                    + layersCleared      × wLayer
+                    + shadowPurified     × wPurified)  // 층 돌파로 줄인 그림자만 (v0.6, D-023)
 ```
 - 역류 보스 승리로 줄어든 그림자는 `stats.shadowCalmed`에 따로 기록하고 **점수에 넣지 않는다.** (Unhappy를 외면해서 생긴 역류를 Happy가 막은 것이 Unhappy 점수가 되면 역설이 뒤집힌다. M5 시뮬: `alwaysHappy`의 unhappy 점수 60 전부가 보스 승리분)
 
@@ -756,6 +762,63 @@ function endingFixtures(cfg: EndingsConfig): Record<EndingResult['id'], { stats:
 #### 6. M6에서 하지 않는 것
 - 결말 분포 튜닝 (M6.5), metrics 저장 `hau_metrics_v2` (M7), 클라우드 저장, 날짜 치트 방지(되돌림 무지급 외), 결말 연출(수면 반사 로고 애니메이션)
 
+### 5.9 M6.5 결말 분포 튜닝 (v0.6.1, D-024)
+
+M6.5 범위: **후보 수치 적용 + 구조 보정 2개 + 결말 공식 1항 추가 + 목표 판정 정리.** 새 시스템은 없다.
+
+**왜 수치만으로 안 되는가 (M6 시뮬 진단, 시드 100)**
+- `balanced`의 비 오는 어른 7%는 실력 차가 아니라 **경제 소프트락**이었다. 해당 시드는 전부 1일차 이벤트가 `scraped_knee`(걱정 ×1.4) → 1~2일차 걱정 35마리 전부 가라앉음 → 기쁨 0 + 그리드 빈칸 → **생성 불가로 14일 내내 아무것도 못 함** (처치 3, 역류 16). 사람도 같은 상태에 빠질 수 있다 (따뜻한 톤과 충돌).
+- 나머지 `balanced`는 가라앉음 0(89%). 결말이 임계값 하나로만 갈려서, 임계값을 올리면 "기준선만 옮기기"가 된다. 잘 지켰는지/못 지켰는지가 점수에 들어가야 결말이 플레이의 질을 반영한다.
+
+**1. 조용한 날 (1~2일차 일상 이벤트 없음)**
+- `days.json`에 `"quietDays": 2` 추가. `resolveDayEvent`에서 **고정 이벤트 확인 직후, `rng()` 호출 전에** `day <= quietDays`면 평범한 날을 반환 (난수 소비 없음).
+- 이유: D-020 "1~2일차는 규칙을 익히는 날". 첫날부터 걱정 ×1.4는 학습 구간을 깬다.
+
+**2. 아침 기쁨 바닥 (소프트락 방지)**
+- `balance.json` `days`에 `"morningJoyFloor": 20` 추가 (= `spawnCostBase` × 2, 조각 2개).
+- `confirmDay` 2단계(이벤트 효과: joy 가감 → freePieces → chainWeight) **직후, 3단계(이정표 선택) 전에** `joy = max(joy, morningJoyFloor)`.
+- 더하기가 아니라 **바닥**이다. 정상 경제에는 영향이 거의 없고(balanced 하루 시작 기쁨 중앙값 > 20), 무너진 판만 다시 일어설 기회를 준다. 세계관 표현: "아무리 힘든 날 뒤에도, 아침에는 작은 기쁨 하나가 남아 있다."
+- D-022에서 버린 "매일 기쁨 +30"(가산)과는 다르다.
+
+**3. 결말 공식: Happy 점수에 가라앉음 감점**
+```
+happyScore   = max(0, sentUpTierSum × wUpTier + worriesDefeated × wDefeat + totalJoyEarned × wJoy − sunkCount × wSunk)
+unhappyScore = max(0, sentDownTierSum × wDownTier + layersCleared × wLayer + shadowPurified × wPurified)
+```
+- `wSunk` 추가 (`stats.sunkCount`, 역류 보스 포함 전체). 두 점수는 0 미만이면 0 (표시·판정 모두).
+- 이유: "Happy는 행복을 방해하는 공격을 막는다"(D-007). 막지 못한 것이 점수에 없으면 Happy 점수는 "보낸 양"만 잰다. 아래로 많이 보내 층은 뚫었지만 위를 지키지 못한 판 → **조용한 어른** (아픔은 알지만 웃는 법을 잊었다)으로 가는 것이 세계관과 맞다.
+- `wJoy`는 0 (기쁨 수입은 처치 수에 비례해 `wDefeat`와 중복).
+
+**4. 후보 수치 (Cowork 스크래치 시뮬로 도출)**
+| 파일 | 키 | 현재 | 후보 |
+|---|---|---|---|
+| `balance.json` | `wave.hpGrowthPerDay` | 1.08 | **1.13** |
+| `balance.json` | `wave.countStep` | 1 | **2** |
+| `balance.json` | `days.morningJoyFloor` | — | **20** (신규) |
+| `days.json` | `quietDays` | — | **2** (신규) |
+| `endings.json` | `weights` | 3 / 0.5 / 0.05 / 3 / 10 / 0.3 | **wUpTier 1, wDefeat 1, wJoy 0, wSunk 2(신규), wDownTier 1, wLayer 20, wPurified 0.3** |
+| `endings.json` | `thresholds` | 100 / 100 | **happy 770, unhappy 100** |
+| `endings.json` | `balanceRatio` | 0.15 | **0.1** |
+
+- **스크래치 결과 (시드 200, 5×4, 위 값 전부 적용)**
+  | 정책 | 결말 분포 | 비고 |
+  |---|---|---|
+  | `balanced` | 단단한 35.5% · 히든 13.5% · 조용한 50% · 비 오는 1% | 가라앉음 중앙값 47, 1~2일차 0, 층 돌파 23, 역류 1 |
+  | `alwaysHappy` | 웃는 가면 100% | 역류 5, 보스 처치 5 |
+  | `alwaysUnhappy` | 조용한 66% · 비 오는 34% | 최선 0% |
+  | `hoarder` | 비 오는 72.5% · 웃는 가면 27.5% | 점수 합 중앙값 731 < balanced 1535 |
+  | `random` / `idle` | 비 오는 100% | |
+  - 하루 길이 중앙값 81초 → 110초 (`countStep` 2의 부수 효과. 목표 3~5분은 여전히 미달 → M7 사람 플레이에서 재판단)
+- **민감도 경고:** `hpGrowthPerDay` 1.12 → 1.14 사이에서 `balanced` 단단한 어른이 51% → 18%로 급변한다 (복리 성장). 임계값 770도 걱정 수(`countStep`)에 묶인 절대값이라, 웨이브 구성을 바꾸면 다시 맞춰야 한다. **봇 기준 수치이며 사람 첫 플레이로 M7에서 재보정**한다.
+
+**5. 목표 판정 정리 (§8.2)**
+- M3·M4의 "`hoarder`: `balanced`보다 나쁨 (가라앉은 수 비교)" → **결말 점수 합 중앙값 비교**로 바꾼다. 난이도를 올리면 `balanced`는 아래로 투자하느라 가라앉음이 생기고, 창문만 쓰는 `hoarder`보다 가라앉음이 많아질 수 있다 (후보 수치에서 34 vs 47). 가라앉은 수는 "쌓아두기가 지배 전략인가"를 재는 지표가 아니다.
+- M5 "준비 시간이 있는 아침 보스 처치율 ≥ 50% (`balanced`)" → **"준비 시간이 있는 아침 보스, 등장 시 방어 유닛 ≥ 3기인 경우 처치율 ≥ 50% (전 정책 합산)"** 으로 바꾼다. 진단: `balanced`의 준비된 보스는 이미 무너진 판에서만 나와(시드 200 중 65회, 등장 시 방어 1기·그리드 1조각·기쁨 10) 표본이 편향됐다. 같은 조건에서 `alwaysHappy`는 341/341 처치 → D-021 구조 자체는 작동한다.
+- M6 목표는 그대로 (§8.2). **M6.5 완료 조건 = M6 목표 전부 OK + 바뀐 M3~M5 목표 회귀 없음.**
+
+**6. 하지 않는 것**
+- 봇 정책 변경 (실험: 보스 진행 중에도 창문 우선 규칙 → 결과 동일, 효과 없음), 그리드 크기·`dailyLimit`·`storeCap` (M7 사람 플레이), 결말 공식의 비율화(처치율 등 — 절대값의 한계는 위 민감도 경고로 기록만)
+
 ## 6. 데이터 파일 (JSON)
 
 모든 콘텐츠 데이터에 `world` 필드(프로토타입은 `"modern"`만)를 둔다. 아래 값은 **임시 값**.
@@ -783,12 +846,12 @@ function endingFixtures(cfg: EndingsConfig): Record<EndingResult['id'], { stats:
   "wave": {
     "wavesPerDay": 3,
     "countBase": 6,
-    "countStep": 1,
+    "countStep": 2,
     "spawnInterval": 1.5,
     "waveGap": 3,
     "dayStartDelay": 3,
     "bossPrepSeconds": 10,
-    "hpGrowthPerDay": 1.08
+    "hpGrowthPerDay": 1.13
   },
   "abyss": {
     "layerHpBase": 120,
@@ -811,7 +874,8 @@ function endingFixtures(cfg: EndingsConfig): Record<EndingResult['id'], { stats:
   "days": {
     "lifeLengthDays": 14,
     "dailyLimit": 2,
-    "storeCap": 4
+    "storeCap": 4,
+    "morningJoyFloor": 20
   },
   "diary": { "diarySinkThreshold": 3 }
 }
@@ -903,7 +967,8 @@ function endingFixtures(cfg: EndingsConfig): Record<EndingResult['id'], { stats:
   "age": 8,
   "fixed": { "7": "first_tooth", "10": "birthday" },
   "dailyEventChance": 0.5,
-  "dailyEventCooldownDays": 3
+  "dailyEventCooldownDays": 3,
+  "quietDays": 2
 }
 ```
 
@@ -924,11 +989,11 @@ function endingFixtures(cfg: EndingsConfig): Record<EndingResult['id'], { stats:
 ```json
 {
   "weights": {
-    "wUpTier": 3, "wDefeat": 0.5, "wJoy": 0.05,
-    "wDownTier": 3, "wLayer": 10, "wPurified": 0.3
+    "wUpTier": 1, "wDefeat": 1, "wJoy": 0, "wSunk": 2,
+    "wDownTier": 1, "wLayer": 20, "wPurified": 0.3
   },
-  "thresholds": { "happy": 100, "unhappy": 100 },
-  "balanceRatio": 0.15,
+  "thresholds": { "happy": 770, "unhappy": 100 },
+  "balanceRatio": 0.1,
   "endings": {
     "hidden": { "name": "Happy와 Unhappy의 화해", "title": "(Un)Happy",         "desc": "불행 속에도 행복이 들어 있었어." },
     "solid":  { "name": "단단한 어른",            "title": "Happy And Unhappy", "desc": "슬픔을 안고도 웃을 수 있는 어른." },
@@ -1083,7 +1148,7 @@ interface SaveGame {
   | 하루 끝 남는 기쁨 | 하루 시작 기쁨 이하 (쓰고도 남아돌면 경제가 너무 넉넉함) |
   | 소환 단계 분포 | 1단계만으로 버티지 못함 (1단계 비율 ≤ 50%) — "더 합칠까"의 이유가 있어야 함 (H2) |
   | 그리드 가득 참 비율 | 0보다 큼 (가득 차는 순간이 있어야 그리드 크기 비교 D-012가 의미 있음) |
-  | `hoarder` | `balanced`보다 나쁨 (쌓아두기가 지배 전략이 아님) |
+  | `hoarder` | `balanced`보다 나쁨 (쌓아두기가 지배 전략이 아님) — v0.6.1부터 **결말 점수 합 중앙값**으로 비교 (§5.9-5) |
 - 난이도 곡선(첫 가라앉음 시점, 역류 빈도, 결말 분포)은 **M4 이후** `balanced`가 위/아래로 자원을 나눌 때 맞춘다.
 - **M4 부분 목표** (`--dayMode m5`, 14일 = 42웨이브, 시드 200)
   | 대상 | 목표 |
@@ -1091,19 +1156,19 @@ interface SaveGame {
   | `alwaysHappy` | 역류 **반복** (14일 중 3회 이상), 층 돌파 0 |
   | `alwaysUnhappy` | 가라앉음 다수 (1일차부터), 층 돌파는 일어남 |
   | `balanced` | 역류 **0~2회**, 층 돌파가 꾸준함 (이틀에 1층 이상), Unhappy에게 보낸 비율 30~60% |
-  | `hoarder` | `balanced`보다 나쁨 |
+  | `hoarder` | `balanced`보다 나쁨 (v0.6.1부터 결말 점수 합 중앙값 비교) |
   | ~~`balanced` 그리드 가득 참~~ | v0.4.4에서 제거 → M7 사람 플레이 metrics(그리드 가득 참 비율)로 확인 (봇이 조각을 쌓아두지 않아 판정에 부적합) |
   | 귀환 대기열 소실 | `balanced`에서 거의 없음 (있으면 그리드가 좁거나 `returnQueueCap` 부족) |
 - **M5 부분 목표** (`--until life`, 실제 하루 구조, 시드 200)
   | 대상 | 목표 |
   |---|---|
-  | `balanced` 보스 처치율 | **준비 시간이 있는 아침 보스 ≥ 50%** (0%면 D-021이 효과 없음 → 구조 재검토) |
+  | 준비된 보스 처치율 | ~~`balanced` 준비 시간이 있는 아침 보스 ≥ 50%~~ → v0.6.1: **준비 시간이 있는 아침 보스 중 등장 시 방어 유닛 ≥ 3기인 경우 처치율 ≥ 50% (전 정책 합산)** (§5.9-5, 표본 편향) |
   | `balanced` 역류 | 0~2회 (중앙값) |
   | `alwaysHappy` | 역류 반복 (3회 이상), 층 돌파 0 |
   | 1~2일차 (`balanced`) | 가라앉음 0~2마리 (초반은 쉽게, D-020) |
   | 하루 길이 | 측정값 보고 (목표 3~5분은 수치 조정 후 판정) |
 
-- **M6 목표** (`--until life`, 시드 200) — M6에서는 **판정 출력만**, 통과는 M6.5 완료 조건
+- **M6 목표** (`--until life`, 시드 200) — M6에서는 판정 출력만, **M6.5에서 전부 통과** (후보 수치 스크래치 결과는 §5.9-4)
   | 대상 | 목표 |
   |---|---|
   | `balanced` | 단단한 어른 **30~50%**, 히든 **5~15%** |
@@ -1160,7 +1225,7 @@ Happy-Unhappy/
 | M4 | 심연 레인 + 층 돌파 귀환 + Unhappy 멈춤 + 그림자·역류 (§4.3.2) | Unhappy에게 보내면 단계 +1로 돌아오고, 안 보내면 역류. `alwaysUnhappy` 추가, `balanced`를 위/아래 배분으로 확장, 시뮬 리포트 (§8.2 M4 부분 목표) |
 | M5 | 하루 구조: 3웨이브·이벤트·이정표·하루 끝·그림일기·하루 안의 역류 (§5.7) | 14일 연속 플레이 가능. 시뮬 `--until life`가 실제 하루 구조 사용, 보스 등장 진단·판 길이 리포트, §8.2 M5 부분 목표 판정 |
 | M6 | C안 gating + 결말 판정 + 저장/복원 (§5.8) | 5개 결말 디버그로 도달, 날짜 엣지 케이스·round-trip 테스트 통과, 새로고침 후 이어하기 동작, 시뮬 결말 분포 리포트 + `--saveRoundTrip` 일치 |
-| M6.5 | 결말 분포 튜닝 (난이도·가중치·임계값, `--sweep`) | **시뮬 결말 분포가 §8.2 M6 목표에 들어옴**, M5 목표 회귀 없음. 변경 수치와 근거를 결정 기록에 남김 |
+| M6.5 | 결말 분포 튜닝 (§5.9: 조용한 날·아침 기쁨 바닥·`wSunk`·후보 수치·목표 정리) | **시뮬 결말 분포가 §8.2 M6 목표에 들어옴**, M5 목표 회귀 없음. 변경 수치와 근거를 결정 기록에 남김 |
 | M7 | metrics + 디버그 패널 완성 | metrics JSON 복사 가능 |
 | — | 실제 플레이 (그리드 3종 각각 1회 이상) → 판정 | 1장 기준 평가 |
 
