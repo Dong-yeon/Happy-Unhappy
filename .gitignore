@@ -4,3 +4,6 @@ dist/
 sim/out/
 Claude outputs/
 playtest/
+
+# M9 에셋 팩 (비상업·재배포 금지, §5.16-1): 사용자가 직접 풀어 둔다. 절대 커밋하지 않는다
+public/packs/
