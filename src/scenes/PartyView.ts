@@ -80,7 +80,8 @@ export class PartyView {
     this.cells.forEach((c, i) => {
       const p = i < visible ? party[i] : undefined;
       c.box.setFillStyle(p ? this.colorOf(p) : COLOR.cell);
-      c.label.setText(p ? (p.tier >= maxTier ? '★' : String(p.tier)) : '');
+      c.label.setText(p ? (p.legend ? '◆' : p.tier >= maxTier ? '★' : String(p.tier)) : '');
+      c.box.setStrokeStyle(p?.legend ? 2 : 1, p?.legend || p?.shining ? 0xf2c94c : COLOR.portalUnhappy);
     });
   }
 

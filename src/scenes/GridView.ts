@@ -4,8 +4,8 @@ import Phaser from 'phaser';
 import type { GameState, SummonBlock, SummonResult } from '../core/game';
 import { isWildcard, type Piece } from '../core/grid';
 import type { Chain } from '../data/types';
-import { HERO_WARNING_TEXT, showHeroWarning } from './heroWarning';
 import { CELL_H, CELL_W, DRAG_THRESHOLD, PORTAL, PORTAL_RADIUS, cellAt, cellCenter, dropTarget, type PortalId } from './layout';
+import { portalBubble } from './portalBubble';
 import { releaseHoverLabel, type ReleaseHover } from './ReleaseZoneView';
 import { COLOR, text } from './ui';
 
@@ -38,6 +38,16 @@ export interface GridViewHooks {
   onDropResult?(fail: 'invalid' | 'laneFull' | 'wildcard' | null, distance: number): void;
 }
 
+/** 전설·조합 미리보기 금색 */
+const GOLD = 0xf2c94c;
+
+/** 조각 라벨: 와일드카드 ? / 전설 ◆ / 영웅 ★ / 단계 숫자 */
+export function pieceLabel(p: Piece, maxTier: number): string {
+  if (isWildcard(p)) return '?';
+  if (p.legend) return '◆';
+  return p.tier >= maxTier ? '★' : String(p.tier);
+}
+
 const SUMMON_BLOCKED_LABEL: Partial<Record<SummonBlock, string>> = {
   wildcard: '보낼 수 없음',
   closed: '밤에는 닫힘',
@@ -55,8 +65,11 @@ export class GridView {
   private press: Press | null = null;
   private readonly chainColor = new Map<string, number>();
   private readonly tag: Phaser.GameObjects.Text;
-  /** 영웅 정화 경고 말풍선 (손거울 위, §5.12-2) */
-  private readonly heroBubble: Phaser.GameObjects.Container;
+  /** 포탈 위 말풍선: 쉬는 조각 "쉬는 중이에요" (§5.13-2) */
+  private readonly bubble: Phaser.GameObjects.Container;
+  private readonly bubbleText: Phaser.GameObjects.Text;
+  /** 조합 미리보기: 대상 칸 금색 테두리 (§5.13-5) */
+  private readonly combineFrame: Phaser.GameObjects.Rectangle;
 
   constructor(
     private readonly scene: Phaser.Scene,
@@ -69,16 +82,19 @@ export class GridView {
       .setOrigin(0.5)
       .setDepth(30)
       .setVisible(false);
-    const bubbleText = text(scene, 0, 0, HERO_WARNING_TEXT, {
+    this.bubbleText = text(scene, 0, 0, '', {
       fontSize: '11px',
       color: '#2a2418',
       backgroundColor: '#f6e7b8',
       padding: { x: 6, y: 4 },
     }).setOrigin(0.5, 1);
     const tail = scene.add.triangle(0, 0, -5, 0, 5, 0, 0, 6, 0xf6e7b8).setOrigin(0.5, 0);
-    this.heroBubble = scene.add
-      .container(PORTAL.unhappy.x, PORTAL.unhappy.y - PORTAL_RADIUS - 10, [bubbleText, tail])
-      .setDepth(31)
+    this.bubble = scene.add.container(0, 0, [this.bubbleText, tail]).setDepth(31).setVisible(false);
+    this.combineFrame = scene.add
+      .rectangle(0, 0, CELL_W - 2, CELL_H - 2)
+      .setStrokeStyle(3, GOLD)
+      .setFillStyle(GOLD, 0.12)
+      .setDepth(9)
       .setVisible(false);
     scene.input.on('pointerdown', this.onDown, this);
     scene.input.on('pointermove', this.onMove, this);
@@ -108,15 +124,34 @@ export class GridView {
     if (dragging) this.placeAt(from);
   }
 
+  /**
+   * 조각 표시: 빛나는 영웅 = 금빛 테두리 + ✦ / 전설 = 굵은 금 테두리 + ◆ / 쉬는 중 = 흐리게 + 붕대 띠 (§5.13)
+   */
   private makePiece(p: Piece, index: number): Phaser.GameObjects.Container {
-    const { cols, rows, maxTier } = this.state.grid;
+    const { cols, rows } = this.state.grid;
     const { x, y } = cellCenter(cols, rows, index);
-    const wild = isWildcard(p);
-    const fill = wild ? COLOR.wildcard : (this.chainColor.get(p.chain) ?? 0x999999);
-    const rect = this.scene.add.rectangle(0, 0, CELL_W - 8, CELL_H - 8, fill).setStrokeStyle(1, 0x1b1d24);
-    const label = wild ? '?' : p.tier >= maxTier ? '★' : String(p.tier);
-    const t = text(this.scene, 0, 0, label, { fontSize: '16px', color: '#1b1d24', fontStyle: 'bold' }).setOrigin(0.5);
-    return this.scene.add.container(x, y, [rect, t]);
+    const parts: Phaser.GameObjects.GameObject[] = [];
+    const fill = isWildcard(p) ? COLOR.wildcard : (this.chainColor.get(p.chain) ?? 0x999999);
+    const rect = this.scene.add.rectangle(0, 0, CELL_W - 8, CELL_H - 8, fill);
+    if (p.legend) rect.setStrokeStyle(3, GOLD);
+    else if (p.shining) rect.setStrokeStyle(2, 0xfff1a8);
+    else rect.setStrokeStyle(1, 0x1b1d24);
+    parts.push(rect);
+    const t = text(this.scene, 0, 0, pieceLabel(p, this.state.grid.maxTier), { fontSize: '16px', color: '#1b1d24', fontStyle: 'bold' }).setOrigin(0.5);
+    parts.push(t);
+    if (p.shining && !p.legend) parts.push(text(this.scene, CELL_W / 2 - 10, -CELL_H / 2 + 8, '✦', { fontSize: '10px', color: '#fff1a8' }).setOrigin(0.5));
+    if (p.legend) {
+      const name = this.state.recipes.find((r) => r.id === p.legend)?.name ?? '';
+      parts.push(text(this.scene, 0, CELL_H / 2 - 9, name, { fontSize: '7px', color: '#3b2a00' }).setOrigin(0.5));
+    }
+    if (p.restUntil) {
+      // 붕대: 흰 띠 두 줄 + 흐리게 (쉬는 동안 포탈 거부)
+      rect.setAlpha(0.55);
+      t.setAlpha(0.6);
+      parts.push(this.scene.add.rectangle(0, 0, CELL_W - 10, 6, 0xf5f2e8).setAngle(-28).setStrokeStyle(1, 0xc9c2ad));
+      parts.push(this.scene.add.rectangle(0, 0, CELL_W - 10, 6, 0xf5f2e8).setAngle(28).setStrokeStyle(1, 0xc9c2ad));
+    }
+    return this.scene.add.container(x, y, parts);
   }
 
   private placeAt(index: number): void {
@@ -158,14 +193,31 @@ export class GridView {
       hover = { kind: 'summon', portal: target.portal, block: this.state.canSummon(press.from, target.portal) };
     }
     this.setHover(hover, w.x, w.y);
-    // 영웅을 손거울(낮 맡기기·밤 즉시)에 올리면 경고만 (드롭은 막지 않는다)
-    this.heroBubble.setVisible(showHeroWarning(this.state, press.from, hover?.kind === 'summon' ? hover.portal : null));
+    // 쉬는 조각을 포탈에 올리면 "쉬는 중이에요" (§5.13-2)
+    const portal = hover?.kind === 'summon' ? hover.portal : null;
+    const msg = portalBubble(this.state, press.from, portal);
+    this.bubble.setVisible(msg !== null);
+    if (msg && portal) {
+      this.bubbleText.setText(msg);
+      this.bubble.setPosition(PORTAL[portal].x, PORTAL[portal].y - PORTAL_RADIUS - 10);
+    }
+    // 조합 미리보기: 조합되는 칸이면 금색 테두리 + 결과 이름 (§5.13-5)
+    const recipe = target.kind === 'cell' ? this.state.combinePreview(press.from, target.index) : null;
+    this.combineFrame.setVisible(recipe !== null);
+    if (recipe && target.kind === 'cell') {
+      const c = cellCenter(this.state.grid.cols, this.state.grid.rows, target.index);
+      this.combineFrame.setPosition(c.x, c.y);
+      this.tag.setText(`✦ ${recipe.name}`).setColor('#ffe08a').setPosition(w.x, w.y + TAG_OFFSET_Y).setVisible(true);
+    }
   }
 
   /** 영역·포탈 표시는 scene에, 조각 위 태그는 여기서 (조각·손가락이 영역 라벨을 가리므로) */
   private setHover(hover: DragHover, x = 0, y = 0): void {
     this.hooks.onHover(hover);
-    if (hover === null) this.heroBubble.setVisible(false);
+    if (hover === null) {
+      this.bubble.setVisible(false);
+      this.combineFrame.setVisible(false);
+    }
     let label: string | null = null;
     let blocked = false;
     if (hover?.kind === 'release') {

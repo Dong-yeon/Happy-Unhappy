@@ -79,9 +79,10 @@ export class GameScene extends Phaser.Scene {
     this.drawPortals();
     this.drawBottomBar(data);
     this.laneView = new DefenseLaneView(this, this.state, data.chains, { x: this.joyText.x, y: this.joyText.y });
-    this.abyssView = new AbyssLaneView(this, this.state, data.chains, partySlot);
+    this.abyssView = new AbyssLaneView(this, this.state, data.chains, partySlot, data.balance.abyss);
     this.party = new PartyView(this, this.state, data.chains, data.balance.lane.laneCap);
     this.drawSleepButton();
+    this.drawRecipeButton();
     this.gridView = new GridView(this, this.state, data.chains, {
       onChange: () => this.syncUi(),
       onHover: (hover) => this.onDragHover(hover),
@@ -167,7 +168,8 @@ export class GameScene extends Phaser.Scene {
     this.abyssView.handle(events);
     // 층 돌파 귀환 조각은 core에서 이미 그리드에 들어가 있다
     // 층 돌파·하루 끝 귀환·선물 조각은 core에서 이미 그리드에 들어가 있다
-    if (events.some((e) => e.type === 'layerClear' || e.type === 'dayReturn' || e.type === 'freePiece')) this.gridView.refresh();
+    const gridEvents = ['layerClear', 'dayReturn', 'freePiece', 'injured', 'bossFloorClear', 'combine'];
+    if (events.some((e) => gridEvents.includes(e.type))) this.gridView.refresh();
     this.laneView.sync();
     this.abyssView.sync();
     this.party.sync();
@@ -298,6 +300,13 @@ export class GameScene extends Phaser.Scene {
       .setOrigin(1, 0.5)
       .setDepth(6)
       .setVisible(false);
+  }
+
+  /** [추억 조합] 도감 (§5.13-5): 하늘 띠 오른쪽 위, 언제나 */
+  private drawRecipeButton(): void {
+    const sky = REGION.sky;
+    const b = new Button(this, sky.x + sky.w - 40, sky.y + 14, 72, 20, '추억 조합', () => this.dayUi.showRecipes(), '10px');
+    b.container.setDepth(8);
   }
 
   /** [잠들기]: 밤 + 심연 유닛 0기 + 맡긴 추억 0일 때 (남은 시간 × 멈춤 그림자를 한 번에, §5.11-4) */

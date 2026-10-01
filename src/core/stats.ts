@@ -24,10 +24,25 @@ export interface GameStats {
   tier3ByChain: Record<string, number>;
   /** 체인별 영웅 첫 소환 일차 */
   heroFirstSummonDay: Record<string, number>;
+  // ── v0.9 영웅 규칙 (§5.13, D-029) ──
+  /** 영웅·전설 부상 (낮 방어 레인 / 밤 심연 레인) */
+  injuriesDay: number;
+  injuriesNight: number;
+  /** 정화로 새로 빛나게 된 영웅 수 */
+  shiningMade: number;
+  /** 조합으로 만든 전설 수 */
+  legendsMade: number;
+  /** 조합 id별 만든 수 (조합 도감 ✓) */
+  legendsByRecipe: Record<string, number>;
+  /** 보스 층에 도달한 수 / 돌파한 수 */
+  bossFloorsReached: number;
+  bossFloorsCleared: number;
+  /** 얻은 와일드카드 (보스 층 보상·이정표 보너스) */
+  wildcardsGained: number;
 }
 
 /** 숫자 필드 (결말·저장 검증) */
-export type NumericStatKey = Exclude<keyof GameStats, 'tier3ByChain' | 'heroFirstSummonDay'>;
+export type NumericStatKey = Exclude<keyof GameStats, 'tier3ByChain' | 'heroFirstSummonDay' | 'legendsByRecipe'>;
 
 export const GAME_STATS_KEYS: readonly NumericStatKey[] = [
   'sentUpTierSum',
@@ -43,10 +58,17 @@ export const GAME_STATS_KEYS: readonly NumericStatKey[] = [
   'bossLosses',
   'stallSeconds',
   'abyssDeaths',
+  'injuriesDay',
+  'injuriesNight',
+  'shiningMade',
+  'legendsMade',
+  'bossFloorsReached',
+  'bossFloorsCleared',
+  'wildcardsGained',
 ];
 
 export function emptyGameStats(): GameStats {
-  const s = { tier3ByChain: {}, heroFirstSummonDay: {} } as unknown as GameStats;
+  const s = { tier3ByChain: {}, heroFirstSummonDay: {}, legendsByRecipe: {} } as unknown as GameStats;
   for (const k of GAME_STATS_KEYS) s[k] = 0;
   return s;
 }

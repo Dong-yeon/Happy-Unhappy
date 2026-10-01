@@ -4,7 +4,8 @@ import Phaser from 'phaser';
 import type { CoreEvent, GameState } from '../core/game';
 import { isWildcard, type Piece } from '../core/grid';
 import type { Unit } from '../core/lane';
-import type { Chain } from '../data/types';
+import type { Balance, Chain } from '../data/types';
+import { isBossFloor } from '../core/lane';
 import { CORE, HOME, PORTAL, REGION, cellCenter, progressX, toScreen } from './layout';
 import { COLOR, text } from './ui';
 
@@ -13,6 +14,9 @@ const HP_BAR_W = 16;
 const SUMMON_MS = 250; // 조각 → 손거울 → 출발선
 const DUSK_MS = 600; // 해질녘: 맡긴 추억 줄 → 손거울 → 출발선
 const RETURN_MS = 450; // 유닛 자리 → 손거울 → 그리드 칸
+/** 보스 층 벽 (§5.13-4) */
+const BOSS_WALL = 0x3a1626;
+const BOSS_EDGE = 0xd0607a;
 
 interface UnitView {
   container: Phaser.GameObjects.Container;
@@ -29,6 +33,8 @@ export class AbyssLaneView {
   private readonly wallLabel: Phaser.GameObjects.Text;
   private readonly wallBar: Phaser.GameObjects.Rectangle;
   private readonly wallX: number;
+  private readonly wallRect: Phaser.GameObjects.Rectangle;
+  private bossShown = false;
   private readonly unhappy: Phaser.GameObjects.Arc;
   private readonly unhappyLabel: Phaser.GameObjects.Text;
   private stalledShown = false;
@@ -39,13 +45,16 @@ export class AbyssLaneView {
     chains: Chain[],
     /** 해질녘 연출 시작점: 맡긴 추억 줄의 i번째 칸 */
     private readonly partySlot: (i: number) => { x: number; y: number },
+    /** 보스 층 판정용 (balance.abyss) */
+    private readonly abyssStats: Balance['abyss'],
   ) {
     for (const c of chains) this.chainColor.set(c.archetypeId, parseInt(c.color.slice(1), 16));
     const g = REGION.ground;
     const bg = scene.add.rectangle(g.x, g.y, g.w, g.h, COLOR.abyss).setOrigin(0);
     // 그림자 벽: 진행 축 끝(오른쪽) 세로 띠 + 남은 HP 막대(세로) + "N층 hp/max"
     this.wallX = progressX(CORE.wallY);
-    const wall = scene.add.rectangle(this.wallX, g.y, g.x + g.w - this.wallX, g.h, COLOR.wall).setOrigin(0);
+    this.wallRect = scene.add.rectangle(this.wallX, g.y, g.x + g.w - this.wallX, g.h, COLOR.wall).setOrigin(0);
+    const wall = this.wallRect;
     this.wallBar = scene.add.rectangle(this.wallX + 2, g.y + g.h, 3, g.h, COLOR.unhappy).setOrigin(0, 1);
     this.wallLabel = text(scene, this.wallX - 4, g.y + 4, '', { fontSize: '9px', color: '#8796c2' }).setOrigin(1, 0);
     const startX = progressX(CORE.lineY);
@@ -76,7 +85,11 @@ export class AbyssLaneView {
       else if (e.type === 'dusk') {
         // 해질녘: 맡긴 추억이 줄에서 손거울을 지나 출발선으로 내려간다
         e.units.forEach((u, i) => this.flyIn(u, [this.partySlot(i), PORTAL.unhappy], DUSK_MS));
-      } else if (e.type === 'layerClear' || (e.type === 'dayReturn' && e.side === 'unhappy')) {
+      } else if (e.type === 'injured' && e.side === 'unhappy') {
+        // 영웅·전설 밤 부상: 손거울을 지나 그리드로 (§5.13-2)
+        const from = toScreen('abyss', e.ret.x, e.ret.y);
+        this.returnFlow(e.ret.piece, from.x, from.y, e.ret.placedAt, e.ret.lost);
+      } else if (e.type === 'layerClear' || e.type === 'bossFloorClear' || (e.type === 'dayReturn' && e.side === 'unhappy')) {
         for (const r of e.returns) {
           const v = this.units.get(r.unitId);
           const from = v ? { x: v.container.x, y: v.container.y } : toScreen('abyss', r.x, r.y);
@@ -91,8 +104,15 @@ export class AbyssLaneView {
   sync(): void {
     const s = this.state;
     const w = s.abyss.wall;
-    const label = `▓ 그림자 벽 ${w.layer}층  ${Math.max(0, Math.ceil(w.hp))}/${Math.ceil(w.maxHp)}`;
-    if (this.wallLabel.text !== label) this.wallLabel.setText(label);
+    // 보스 층 (§5.13-4): 붉은 벽 + 굵은 테두리 + "보스 층"
+    const boss = isBossFloor(this.abyssStats, w.layer);
+    const label = `${boss ? '◆ 보스 층' : '▓ 그림자 벽'} ${w.layer}층  ${Math.max(0, Math.ceil(w.hp))}/${Math.ceil(w.maxHp)}`;
+    if (this.wallLabel.text !== label) this.wallLabel.setText(label).setColor(boss ? '#ff9e9e' : '#8796c2');
+    if (boss !== this.bossShown) {
+      this.bossShown = boss;
+      this.wallRect.setFillStyle(boss ? BOSS_WALL : COLOR.wall).setStrokeStyle(boss ? 3 : 0, BOSS_EDGE);
+      this.wallBar.setFillStyle(boss ? BOSS_EDGE : COLOR.unhappy);
+    }
     this.wallBar.height = REGION.ground.h * Math.max(0, Math.min(1, w.hp / w.maxHp));
 
     if (s.unhappyStalled !== this.stalledShown) {
@@ -147,8 +167,10 @@ export class AbyssLaneView {
     const maxTier = this.state.grid.maxTier;
     const fill = this.chainColor.get(u.chain) ?? 0x999999;
     // 꿈속 = 차가운 팔레트: 같은 체인 색에 차가운 테두리
-    const body = this.scene.add.rectangle(0, 0, UNIT_SIZE, UNIT_SIZE, fill).setStrokeStyle(2, COLOR.portalUnhappy);
-    const label = text(this.scene, 0, 0, u.tier >= maxTier ? '★' : String(u.tier), {
+    const body = this.scene.add
+      .rectangle(0, 0, UNIT_SIZE, UNIT_SIZE, fill)
+      .setStrokeStyle(u.legend ? 3 : 2, u.legend ? 0xf2c94c : u.shining ? 0xfff1a8 : COLOR.portalUnhappy);
+    const label = text(this.scene, 0, 0, u.legend ? '◆' : u.tier >= maxTier ? '★' : String(u.tier), {
       fontSize: '10px',
       color: '#1b1d24',
       fontStyle: 'bold',

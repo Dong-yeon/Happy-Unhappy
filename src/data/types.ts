@@ -52,7 +52,15 @@ export interface Balance {
     counterRange: number;
     abyssDeathShadow: number;
     layerClearShadowReduce: number;
+    /** 보스 층 (§5.13-4): 이 값의 배수 층 */
+    bossFloorEvery: number;
+    bossFloorHpMult: number;
+    bossFloorCounterMult: number;
+    /** 보스 층 돌파 보상 와일드카드 수 */
+    bossFloorWildcards: number;
   };
+  /** 영웅 (§5.13-3): 빛나는 영웅의 hp·atk 배수 */
+  hero: { shineMult: number };
   /** 밤 (§5.11-7, D-027) */
   night: {
     /** 밤 길이(초, 달이 질 때까지) */
@@ -194,6 +202,25 @@ export interface Endings {
   endings: Record<EndingId, { name: string; title: string; desc: string }>;
 }
 
+/** 조합표 (§5.13-5) */
+export interface RecipeInput {
+  chain: string;
+  tier: number;
+  /** true면 빛나는 영웅만 */
+  shining?: boolean;
+}
+
+export interface Recipe {
+  id: string;
+  name: string;
+  inputs: [RecipeInput, RecipeInput];
+  legend: CombatStats;
+}
+
+export interface Recipes {
+  recipes: Recipe[];
+}
+
 export interface GameData {
   balance: Balance;
   units: Units;
@@ -203,4 +230,5 @@ export interface GameData {
   days: Days;
   diary: Diary;
   endings: Endings;
+  recipes: Recipes;
 }

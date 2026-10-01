@@ -3,7 +3,7 @@
 // 시간은 고정 틱(FIXED_DT)으로만, 그리고 하루 단계가 'waves'일 때만 흐른다 (§5.7).
 // 한 틱의 처리 순서는 §4.3.2 (step() 참고). 하루 시작·끝 처리 순서는 §5.7 (confirmDay() / endDay()).
 
-import type { CombatStats, GameData } from '../data/types';
+import type { CombatStats, GameData, Recipe } from '../data/types';
 import {
   effectsOf,
   emptyDayStats,
@@ -19,6 +19,7 @@ import {
   WILDCARD,
   WILDCARD_TIER,
   applyDrop,
+  resolveDrop,
   createGrid,
   enqueueReturn,
   flushReturnQueue,
@@ -42,6 +43,7 @@ import {
   FIXED_DT,
   Lane,
   TICK_RATE,
+  isBossFloor,
   type AbyssGeometry,
   type LaneEvent,
   type LaneGeometry,
@@ -49,6 +51,7 @@ import {
   type Unit,
 } from './lane';
 import { judgeEnding, type EndingResult } from './ending';
+import { LEGEND_TIER, findRecipe, isHeroic } from './recipes';
 import type { SeededRng } from './rng';
 import type { SaveGame } from './save';
 import { emptyGameStats, type GameStats } from './stats';
@@ -56,8 +59,8 @@ import { clampShadow, weatherOf, type Weather } from './shadow';
 import { DayWaves, type SlotId } from './wave';
 
 /** 소환 불가 사유. empty: 빈 칸 */
-/** partyFull: 낮의 맡긴 추억이 laneCap / closed: 지금 단계에서 닫힌 포탈 (밤의 창문, 낮·밤이 아닌 단계) */
-export type SummonBlock = 'wildcard' | 'laneFull' | 'empty' | 'partyFull' | 'closed';
+/** partyFull: 낮의 맡긴 추억이 laneCap / closed: 지금 단계에서 닫힌 포탈 (밤의 창문, 낮·밤이 아닌 단계) / injured: 부상으로 쉬는 영웅·전설 (§5.13-2) */
+export type SummonBlock = 'wildcard' | 'laneFull' | 'empty' | 'partyFull' | 'closed' | 'injured';
 
 /** 두 레인의 좌표 (scene의 layout.ts에서 만든다) */
 export interface GameGeometry {
@@ -133,6 +136,13 @@ export type CoreEvent =
   | { type: 'dusk'; day: number; units: Unit[] }
   /** 잠들기: 밤을 건너뜀 (남은 시간 × 멈춤 그림자를 한 번에) */
   | { type: 'sleep'; skipped: number }
+  // §5.13
+  /** 영웅·전설 부상: 레인에서 빠져 즉시 그리드로 (side: happy = 낮 / unhappy = 밤) */
+  | { type: 'injured'; side: Side; ret: LayerReturn }
+  /** 조합: from 칸이 비고 to 칸에 전설 */
+  | { type: 'combine'; recipe: string; from: number; to: number; piece: Piece }
+  /** 보스 층 돌파 보상 (와일드카드) */
+  | { type: 'bossFloorClear'; layer: number; returns: LayerReturn[] }
   | { type: 'dayEnd'; day: number; entry: DiaryEntry; stats: DayStats }
   | { type: 'dayStart'; day: number; event: DayEvent }
   | { type: 'lifeEnd' };
@@ -189,6 +199,8 @@ export class GameState {
   nightTimer = 0;
   /** 영웅 정화로 도감에 기록된 체인 (처음일 때만 추가) */
   readonly heroFirstPurify: string[] = [];
+  /** 전설 정화로 도감에 기록된 조합 id (§5.13-3) */
+  readonly legendPurified: string[] = [];
 
   // ── 하루 (§5.7) ──
   day = 1;
@@ -340,7 +352,10 @@ export class GameState {
     this.defense.step(FIXED_DT, out);
     for (let i = from; i < out.length; i++) {
       const e = out[i];
-      if (e.type === 'worryDie') {
+      if (e.type === 'unitDie' && isHeroic(e, this.data.balance.grid.maxTier)) {
+        // 영웅·전설은 쓰러지지 않고 부상: 즉시 그리드로, 새벽까지 쉼 (§5.13-2)
+        this.injure('happy', e, 'dawn', out);
+      } else if (e.type === 'worryDie') {
         this.joy += e.joy;
         this.stats.worriesDefeated += 1;
         this.stats.totalJoyEarned += e.joy;
@@ -369,10 +384,15 @@ export class GameState {
     const from = out.length;
     const r = this.abyss.stepAbyss(FIXED_DT, out);
     for (let i = from; i < out.length; i++) {
-      if (out[i].type === 'abyssUnitDie') {
-        this.stats.abyssDeaths += 1;
+      const e = out[i];
+      if (e.type !== 'abyssUnitDie') continue;
+      this.addShadow(b.abyss.abyssDeathShadow); // 그림자 대가는 부상에도 유지
+      if (isHeroic(e, this.data.balance.grid.maxTier)) {
+        // 영웅·전설 밤 부상: 즉시 그리드로, 다음 날 해질녘까지 쉼 (§5.13-2)
+        this.injure('unhappy', e, 'dusk', out);
+      } else {
+        this.stats.abyssDeaths += 1; // 1~2단계: 조각 소실
         this.dayStats.abyssDeaths += 1;
-        this.addShadow(b.abyss.abyssDeathShadow); // 조각 소실 + 그림자
       }
     }
     if (r.cleared) this.clearLayer(r.cleared.layer, r.cleared.units, out);
@@ -508,11 +528,17 @@ export class GameState {
    * 이정표 face를 고른 날의 첫 층 돌파면 조각 +1 (첫 비영웅 유닛의 체인 1단계, 영웅뿐이면 와일드카드).
    */
   private clearLayer(layer: number, units: Unit[], out: CoreEvent[]): void {
-    const maxTier = this.data.balance.grid.maxTier;
+    const b = this.data.balance;
+    const maxTier = b.grid.maxTier;
+    // 정화 (§5.13-3): 1~2단계 → 같은 체인 +1 / 영웅 → 빛나는 영웅 / 전설 → 그대로 + 도감. 와일드카드는 나오지 않는다
     const returns: LayerReturn[] = units.map((u) => {
       let piece: Piece;
-      if (u.tier >= maxTier) {
-        piece = this.newPiece(WILDCARD, 0);
+      if (u.legend !== undefined) {
+        piece = this.newPiece(u.chain, u.tier, { legend: u.legend, shining: u.shining });
+        if (!this.legendPurified.includes(u.legend)) this.legendPurified.push(u.legend);
+      } else if (u.tier >= maxTier) {
+        if (!u.shining) this.stats.shiningMade += 1;
+        piece = this.newPiece(u.chain, u.tier, { shining: true });
         if (!this.heroFirstPurify.includes(u.chain)) this.heroFirstPurify.push(u.chain);
       } else {
         piece = this.newPiece(u.chain, u.tier + 1);
@@ -523,11 +549,14 @@ export class GameState {
       this.faceBonusToday = false;
       const first = units.find((u) => u.tier < maxTier);
       const piece = first ? this.newPiece(first.chain, 1) : this.newPiece(WILDCARD, 0);
+      if (!first) this.stats.wildcardsGained += 1;
       const src = units[0] ?? { x: this.abyss.geo.centerX, y: this.abyss.geo.wallY };
       returns.push(this.returnPiece(-1, src.x, src.y, piece));
     }
+    // 보스 층 (§5.13-4): 돌파하면 와일드카드 + 그림자 감소 × 2
+    const boss = isBossFloor(b.abyss, layer);
     if (!this.shadowLocked) {
-      const next = Math.max(0, this.shadow - this.data.balance.abyss.layerClearShadowReduce);
+      const next = Math.max(0, this.shadow - b.abyss.layerClearShadowReduce * (boss ? 2 : 1));
       this.stats.shadowPurified += this.shadow - next;
       this.shadow = next;
     }
@@ -535,6 +564,38 @@ export class GameState {
     this.dayStats.layersCleared += 1;
     this.dayStats.layerClearTimes.push(this.playTime);
     out.push({ type: 'layerClear', layer, returns });
+    if (boss) {
+      this.stats.bossFloorsCleared += 1;
+      const src = units[0] ?? { x: this.abyss.geo.centerX, y: this.abyss.geo.wallY };
+      const rewards: LayerReturn[] = [];
+      for (let k = 0; k < b.abyss.bossFloorWildcards; k++) {
+        rewards.push(this.returnPiece(-1, src.x, src.y, this.newPiece(WILDCARD, 0)));
+        this.stats.wildcardsGained += 1;
+      }
+      out.push({ type: 'bossFloorClear', layer, returns: rewards });
+    }
+    if (isBossFloor(b.abyss, this.abyss.wall.layer)) this.stats.bossFloorsReached += 1;
+  }
+
+  /** 영웅·전설 부상: 레인에서 빠진 유닛을 같은 조각(빛남·전설 유지)으로 그리드에 돌려보내고 쉬게 한다 */
+  private injure(
+    side: Side,
+    u: { unitId: number; chain: string; tier: number; x: number; y: number; shining?: boolean; legend?: string },
+    restUntil: 'dawn' | 'dusk',
+    out: CoreEvent[],
+  ): void {
+    const piece = this.newPiece(u.chain, u.tier, { shining: u.shining, legend: u.legend, restUntil });
+    if (side === 'happy') this.stats.injuriesDay += 1;
+    else this.stats.injuriesNight += 1;
+    this.dayStats.injuries += 1;
+    out.push({ type: 'injured', side, ret: this.returnPiece(u.unitId, u.x, u.y, piece) });
+  }
+
+  /** 새벽·해질녘: 그때 풀리는 부상 해제 (그리드·귀환 대기열) */
+  private releaseRest(when: 'dawn' | 'dusk'): void {
+    for (const p of [...this.grid.cells, ...this.returnQueue]) {
+      if (p && p.restUntil === when) p.restUntil = null;
+    }
   }
 
   private returnPiece(unitId: number, x: number, y: number, piece: Piece): LayerReturn {
@@ -618,9 +679,10 @@ export class GameState {
    * 3. 맡긴 추억이 맡긴 순서대로 심연 출발선 슬롯에 소환됨 → 밤 (nightSeconds)
    */
   private dusk(out: CoreEvent[]): void {
+    this.releaseRest('dusk'); // 전날 밤 부상이 풀린다 (§5.13-2)
     this.defense.worries.length = 0;
     const back = this.defense.units.splice(0);
-    out.push({ type: 'dayReturn', side: 'happy', returns: back.map((u) => this.returnPiece(u.id, u.x, u.y, this.newPiece(u.chain, u.tier))) });
+    out.push({ type: 'dayReturn', side: 'happy', returns: back.map((u) => this.returnPiece(u.id, u.x, u.y, this.unitPiece(u))) });
     if (this.faceReduceTonight !== null) {
       const w = this.abyss.wall;
       w.hp = w.hp * (1 - this.faceReduceTonight);
@@ -628,8 +690,8 @@ export class GameState {
     }
     const units: Unit[] = [];
     for (const p of this.nightParty.splice(0)) {
-      const u = this.abyss.addUnit(this.nextUnitId++, 'unhappy', p.chain, p.tier, this.unitStats(p.chain, p.tier));
-      if (u) units.push(u);
+      const u = this.abyss.addUnit(this.nextUnitId++, 'unhappy', p.chain, p.tier, this.pieceStats(p));
+      if (u) units.push(this.markHeroic(u, p));
     }
     this.wave.phase = 'idle';
     this.phase = 'night';
@@ -663,11 +725,12 @@ export class GameState {
    * 그리드·그림자·심연 층·역류 예약은 다음 날로 이어진다.
    */
   private endDay(out: CoreEvent[]): void {
+    this.releaseRest('dawn'); // 그날 낮 부상이 풀린다 (§5.13-2)
     this.phase = 'diary';
     this.updateStall(out); // 멈춤 해제
     this.nightTimer = 0;
     const back = this.abyss.units.splice(0);
-    out.push({ type: 'dayReturn', side: 'unhappy', returns: back.map((u) => this.returnPiece(u.id, u.x, u.y, this.newPiece(u.chain, u.tier))) });
+    out.push({ type: 'dayReturn', side: 'unhappy', returns: back.map((u) => this.returnPiece(u.id, u.x, u.y, this.unitPiece(u))) });
     this.dayStats.joyEnd = this.joy;
     const prev = this.diary.length ? this.diary[this.diary.length - 1] : null;
     const entry = writeDiary(this.data, this.day, this.today, this.dayStats, this.rng, prev);
@@ -726,11 +789,13 @@ export class GameState {
     refill(g.returnQueue, save.returnQueue);
     g.lostReturns = save.lostReturns;
     Object.assign(g.abyss.wall, save.abyss);
+    g.abyss.syncWallForLayer(); // 보스 층이면 반격 배수 (§5.13-4)
     g.defense.happy.cd = save.happyCd;
     g.defense.nextWorryId = save.nextWorryId;
     g.wave.day = save.waveDay;
     Object.assign(g.stats, copy(save.stats));
     refill(g.heroFirstPurify, save.heroFirstPurify);
+    refill(g.legendPurified, save.legendPurified);
     refill(g.diary, save.diary);
     refill(g.flags, save.flags);
     refill(g.dailyUsed, save.dailyUsed);
@@ -779,7 +844,36 @@ export class GameState {
   // ── 드래그 ──
 
   /** 머지로 칸이 비면 귀환 대기열을 바로 배치한다 */
-  drop(from: number, to: number | null): DropKind {
+  /** 조합표 (§5.13-5, 표시·봇용) */
+  get recipes(): readonly Recipe[] {
+    return this.data.recipes.recipes;
+  }
+
+  /** from을 to에 놓으면 조합되는 조합 (머지가 아니고 두 칸 모두 조각일 때만, §5.13-5) */
+  combinePreview(from: number, to: number | null): Recipe | null {
+    if (to === null || resolveDrop(this.grid, from, to) !== 'swap') return null;
+    const a = this.grid.cells[from];
+    const b = this.grid.cells[to];
+    return a && b ? findRecipe(this.data.recipes.recipes, a, b) : null;
+  }
+
+  /** 드롭: ① 머지 ② 조합 (순서 무관, B 칸에 전설) ③ 교환·이동 (§5.13-5) */
+  drop(from: number, to: number | null): DropKind | 'combine' {
+    const recipe = this.combinePreview(from, to);
+    if (recipe && to !== null) {
+      const a = this.grid.cells[from]!;
+      const b = this.grid.cells[to]!;
+      const legend = this.newPiece(recipe.inputs[0].chain, LEGEND_TIER, { legend: recipe.id });
+      this.grid.cells[from] = null;
+      this.grid.cells[to] = legend;
+      this.stats.legendsMade += 1;
+      this.stats.legendsByRecipe[recipe.id] = (this.stats.legendsByRecipe[recipe.id] ?? 0) + 1;
+      const tag = (p: Piece) => `${p.chain}:${p.tier}${p.shining ? '*' : ''}`;
+      this.dayStats.combines.push({ t: this.playTime, recipe: recipe.id, inputs: [tag(a), tag(b)] });
+      this.pending.push({ type: 'combine', recipe: recipe.id, from, to, piece: legend });
+      this.flushReturnQueue();
+      return 'combine';
+    }
     const kind = applyDrop(this.grid, from, to);
     if (kind === 'merge') {
       // metrics: 머지 수, 3단계(영웅)가 된 체인
@@ -839,6 +933,7 @@ export class GameState {
     if (!this.portalOpen(side)) return 'closed';
     const p = this.grid.cells[cell];
     if (!p) return 'empty';
+    if (p.restUntil) return 'injured';
     if (isWildcard(p)) return 'wildcard';
     if (this.isReserve(side)) return this.nightParty.length >= this.data.balance.lane.laneCap ? 'partyFull' : null;
     if (this.laneOf(side).isFull) return 'laneFull';
@@ -863,7 +958,7 @@ export class GameState {
       this.pending.push({ type: 'reserve', cell, piece });
       return { ok: true, unit: null, reserved: piece };
     }
-    const unit = this.laneOf(side).addUnit(this.nextUnitId++, side, piece.chain, piece.tier, this.unitStats(piece.chain, piece.tier))!;
+    const unit = this.markHeroic(this.laneOf(side).addUnit(this.nextUnitId++, side, piece.chain, piece.tier, this.pieceStats(piece))!, piece);
     this.grid.cells[cell] = null;
     this.flushReturnQueue();
     this.recordSummon(piece, cell, side, false);
@@ -883,7 +978,7 @@ export class GameState {
       heldFor: this.playTime - piece.bornAt,
       reserved,
     });
-    if (piece.tier >= this.data.balance.grid.maxTier && this.stats.heroFirstSummonDay[piece.chain] === undefined) {
+    if (piece.tier === this.data.balance.grid.maxTier && piece.legend === undefined && this.stats.heroFirstSummonDay[piece.chain] === undefined) {
       this.stats.heroFirstSummonDay[piece.chain] = this.day;
     }
     if (side === 'happy') {
@@ -896,6 +991,31 @@ export class GameState {
   }
 
   /** 1~(maxTier-1)단계 = 공용 추억 정령, maxTier = 체인 영웅 */
+  /** 조각의 유닛 능력치: 전설 = 조합표 능력치 / 빛나는 영웅 = 영웅 × shineMult (hp·atk) / 그 외 unitStats (§5.13) */
+  pieceStats(p: Pick<Piece, 'chain' | 'tier' | 'shining' | 'legend'>): CombatStats {
+    if (p.legend !== undefined) {
+      const r = this.data.recipes.recipes.find((x) => x.id === p.legend);
+      if (!r) throw new Error(`알 수 없는 전설: ${p.legend}`);
+      return r.legend;
+    }
+    const s = this.unitStats(p.chain, p.tier);
+    if (!p.shining) return s;
+    const m = this.data.balance.hero.shineMult;
+    return { ...s, hp: s.hp * m, atk: s.atk * m };
+  }
+
+  /** 유닛에 조각의 빛남·전설 표시를 옮긴다 (값이 있을 때만) */
+  private markHeroic(u: Unit, p: Piece): Unit {
+    if (p.shining) u.shining = true;
+    if (p.legend !== undefined) u.legend = p.legend;
+    return u;
+  }
+
+  /** 하루 끝 귀환: 유닛 → 같은 조각 (빛남·전설 유지, 부상 아님) */
+  private unitPiece(u: Unit): Piece {
+    return this.newPiece(u.chain, u.tier, { shining: u.shining, legend: u.legend });
+  }
+
   unitStats(chain: ChainId, tier: number): CombatStats {
     if (tier >= this.data.balance.grid.maxTier) {
       const c = this.data.chains.find((ch) => ch.archetypeId === chain);
@@ -910,7 +1030,9 @@ export class GameState {
   // ── 귀환 대기열 (층 돌파·하루 끝·선물 조각) ──
 
   enqueueReturn(piece: Piece): EnqueueResult {
-    const r = enqueueReturn(this.grid, this.returnQueue, piece, this.data.balance.grid.returnQueueCap, this.rng);
+    // 영웅·전설은 사라지지 않는다: 대기열 상한 무시 (§5.13-2)
+    const heroic = !isWildcard(piece) && isHeroic(piece, this.data.balance.grid.maxTier);
+    const r = enqueueReturn(this.grid, this.returnQueue, piece, this.data.balance.grid.returnQueueCap, this.rng, heroic);
     this.lostReturns += r.lost;
     this.dayStats.lostReturns += r.lost;
     return r;
@@ -922,13 +1044,22 @@ export class GameState {
 
   // ── 조각 만들기 ──
 
-  newPiece(chain: ChainId | typeof WILDCARD, tier: number): Piece {
-    return {
+  /** extra는 값이 있을 때만 키로 넣는다 (1~2단계 조각 모양은 그대로) */
+  newPiece(
+    chain: ChainId | typeof WILDCARD,
+    tier: number,
+    extra: { shining?: boolean; legend?: string; restUntil?: 'dawn' | 'dusk' | null } = {},
+  ): Piece {
+    const p: Piece = {
       id: this.nextPieceId++,
       chain,
       tier: chain === WILDCARD ? WILDCARD_TIER : tier,
       bornAt: this.playTime,
     };
+    if (extra.shining) p.shining = true;
+    if (extra.legend !== undefined) p.legend = extra.legend;
+    if (extra.restUntil) p.restUntil = extra.restUntil;
+    return p;
   }
 
   // ── 디버그 (?debug=1) ──
@@ -938,10 +1069,14 @@ export class GameState {
   }
 
   /** 빈 칸 랜덤 위치에 지급. 칸이 없으면 null */
-  debugGrant(chain: ChainId | typeof WILDCARD, tier: number): number | null {
+  debugGrant(
+    chain: ChainId | typeof WILDCARD,
+    tier: number,
+    extra: { shining?: boolean; legend?: string; restUntil?: 'dawn' | 'dusk' | null } = {},
+  ): number | null {
     const index = pickEmpty(this.rng, this.grid);
     if (index === null) return null;
-    this.grid.cells[index] = this.newPiece(chain, tier);
+    this.grid.cells[index] = this.newPiece(chain, tier, extra);
     return index;
   }
 

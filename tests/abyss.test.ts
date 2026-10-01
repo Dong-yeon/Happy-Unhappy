@@ -3,7 +3,6 @@ import { describe, expect, it } from 'vitest';
 import { rawGameData } from '../src/data';
 import type { GameData } from '../src/data/types';
 import { GameState, bossHp, type CoreEvent } from '../src/core/game';
-import { WILDCARD } from '../src/core/grid';
 import { FIXED_DT, Lane, layerBaseHp, type AbyssGeometry, type LaneEvent, type WallStats } from '../src/core/lane';
 import { mulberry32 } from '../src/core/rng';
 import { weatherOf } from '../src/core/shadow';
@@ -132,7 +131,7 @@ describe('벽의 반격', () => {
 // ── GameState ──
 
 describe('층 돌파', () => {
-  it('전진 중 유닛 포함 전원 귀환: 1·2단계 → +1, 3단계 → 와일드카드 + heroFirstPurify (중복 없음)', () => {
+  it('전진 중 유닛 포함 전원 귀환: 1·2단계 → +1, 3단계 → 빛나는 영웅 + heroFirstPurify (중복 없음, v0.9)', () => {
     const g = night();
     for (const [c, t] of [[DOG, 1], [BLANKET, 2], [DOG, 3]] as const) g.summon(g.debugGrant(c, t)!, 'unhappy');
     ticks(g, 30); // 모두 아직 전진 중
@@ -140,10 +139,10 @@ describe('층 돌파', () => {
     g.debugBreakLayer();
     const [clear] = ofType(ticks(g, 1), 'layerClear');
     expect(clear.layer).toBe(1);
-    expect(clear.returns.map((r) => [r.piece.chain, r.piece.tier])).toEqual([
-      [DOG, 2],
-      [BLANKET, 3],
-      [WILDCARD, 0],
+    expect(clear.returns.map((r) => [r.piece.chain, r.piece.tier, r.piece.shining ?? false])).toEqual([
+      [DOG, 2, false],
+      [BLANKET, 3, false],
+      [DOG, 3, true],
     ]);
     expect(clear.returns.every((r) => r.placedAt !== null && r.piece.bornAt === g.playTime)).toBe(true);
     expect(g.abyss.units).toEqual([]);

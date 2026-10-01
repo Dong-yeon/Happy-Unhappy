@@ -73,6 +73,10 @@ export interface WallStats {
   counterAtk: number;
   counterAtkInterval: number;
   counterRange: number;
+  /** 보스 층 (§5.13-4): 이 값의 배수 층은 HP × bossFloorHpMult, 반격 × bossFloorCounterMult. 없으면 보스 층 없음 */
+  bossFloorEvery?: number;
+  bossFloorHpMult?: number;
+  bossFloorCounterMult?: number;
 }
 
 type OptsOf<K extends LaneKind> = K extends 'defense' ? HappyStats : { wall: WallStats; advanceSpeed: number };
@@ -102,6 +106,21 @@ export function stepAttack(a: Attacker, dt: number, hasTarget: boolean): boolean
 }
 
 /** 층 HP 기본값 = layerHpBase × layerHpGrowth^(층-1) */
+/** 보스 층인지 (§5.13-4) */
+export function isBossFloor(w: WallStats, layer: number): boolean {
+  return !!w.bossFloorEvery && layer % w.bossFloorEvery === 0;
+}
+
+/** 층 HP = 기본 HP (보스 층이면 × bossFloorHpMult) */
+export function layerHp(w: WallStats, layer: number): number {
+  return layerBaseHp(w, layer) * (isBossFloor(w, layer) ? (w.bossFloorHpMult ?? 1) : 1);
+}
+
+/** 층 반격 공격력 (보스 층이면 × bossFloorCounterMult) */
+export function layerCounterAtk(w: WallStats, layer: number): number {
+  return w.counterAtk * (isBossFloor(w, layer) ? (w.bossFloorCounterMult ?? 1) : 1);
+}
+
 export function layerBaseHp(w: WallStats, layer: number): number {
   return w.layerHpBase * Math.pow(w.layerHpGrowth, layer - 1);
 }
@@ -125,6 +144,10 @@ export interface Unit extends Attacker {
   arrived: boolean;
   /** defense 제한 이동: 할 일이 없어 홈(슬롯)으로 돌아가는 중 (표시용, §4.3.3) */
   returning?: boolean;
+  /** 빛나는 영웅 (§5.13-3) */
+  shining?: boolean;
+  /** 전설 추억 id (§5.13-5) */
+  legend?: string;
 }
 
 export type WorryState = 'moving' | 'stopped' | 'passing';
@@ -170,13 +193,14 @@ export type LaneEvent =
   | { type: 'worryStop'; worryId: number }
   | { type: 'attack'; attacker: AttackerRef; targetId: number; damage: number }
   | { type: 'worryDie'; worryId: number; x: number; y: number; joy: number; boss: boolean }
-  | { type: 'unitDie'; unitId: number; slot: number }
+  /** 방어 유닛 쓰러짐. 영웅·전설은 GameState가 부상(그리드 귀환)으로 처리 (§5.13-2) */
+  | { type: 'unitDie'; unitId: number; slot: number; chain: string; tier: number; x: number; y: number; shining?: boolean; legend?: string }
   | { type: 'sink'; worryId: number; x: number; y: number; boss: boolean }
   // 심연 (§4.3.2)
   | { type: 'abyssArrive'; unitId: number }
   | { type: 'wallHit'; unitId: number; damage: number }
   | { type: 'counter'; unitId: number; damage: number }
-  | { type: 'abyssUnitDie'; unitId: number; slot: number; chain: string; tier: number; x: number; y: number };
+  | { type: 'abyssUnitDie'; unitId: number; slot: number; chain: string; tier: number; x: number; y: number; shining?: boolean; legend?: string };
 
 /** 이벤트를 쌓을 곳. GameState는 더 넓은 이벤트 배열을 넘긴다 */
 export interface LaneEventSink {
@@ -306,11 +330,17 @@ export class Lane<K extends LaneKind = LaneKind> {
     this.wall.maxHp += amount;
   }
 
+  /** 복원 뒤: 현재 층에 맞는 반격 공격력 (보스 층 배수) */
+  syncWallForLayer(): void {
+    this.wall.atk = layerCounterAtk(this.wallStats!, this.wall.layer);
+  }
+
   private nextLayer(): void {
     const w = this.wall;
     w.layer += 1;
     w.extraHp = 0;
-    w.hp = layerBaseHp(this.wallStats!, w.layer);
+    w.hp = layerHp(this.wallStats!, w.layer);
+    w.atk = layerCounterAtk(this.wallStats!, w.layer);
     w.maxHp = w.hp;
     w.cd = 0;
   }
@@ -382,7 +412,7 @@ export class Lane<K extends LaneKind = LaneKind> {
 
     // 사망 처리: 조각 소실 (그림자는 GameState가 이벤트로)
     for (const u of removeWhere(this.units, (u) => u.hp <= 0)) {
-      out.push({ type: 'abyssUnitDie', unitId: u.id, slot: u.slot, chain: u.chain, tier: u.tier, x: u.x, y: u.y });
+      out.push({ type: 'abyssUnitDie', unitId: u.id, slot: u.slot, chain: u.chain, tier: u.tier, x: u.x, y: u.y, ...heroicOf(u) });
     }
 
     // 층 돌파: 그 틱에 살아 있는 모든 유닛(전진 중 포함)이 귀환 대상
@@ -568,7 +598,7 @@ export class Lane<K extends LaneKind = LaneKind> {
     }
     // 슬롯이 빈다. 나머지 유닛은 움직이지 않음
     for (const u of removeWhere(this.units, (u) => u.hp <= 0)) {
-      out.push({ type: 'unitDie', unitId: u.id, slot: u.slot });
+      out.push({ type: 'unitDie', unitId: u.id, slot: u.slot, chain: u.chain, tier: u.tier, x: u.x, y: u.y, ...heroicOf(u) });
     }
   }
 
@@ -579,6 +609,14 @@ export class Lane<K extends LaneKind = LaneKind> {
       out.push({ type: 'sink', worryId: w.id, x: w.x, y: w.y, boss: w.boss });
     }
   }
+}
+
+/** 이벤트에 실을 영웅 표시 (값이 있을 때만 키를 넣는다 — 1~2단계 이벤트 모양은 그대로) */
+function heroicOf(u: Unit): { shining?: boolean; legend?: string } {
+  const o: { shining?: boolean; legend?: string } = {};
+  if (u.shining) o.shining = true;
+  if (u.legend !== undefined) o.legend = u.legend;
+  return o;
 }
 
 /** 조건에 맞는 항목을 제자리에서 제거하고, 제거된 항목을 원래 순서대로 돌려준다 */

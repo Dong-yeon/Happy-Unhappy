@@ -226,7 +226,7 @@ describe('이정표', () => {
     g.debugBreakLayer();
     const [c1] = ofType(ticks(g, 1), 'layerClear');
     expect(c1.returns.map((r) => [r.piece.chain, r.piece.tier])).toEqual([
-      [WILDCARD, 0],
+      [DOG, 3], // 빛나는 영웅 (v0.9)
       [BLANKET, 3],
       [BLANKET, 1], // 보너스
     ]);
@@ -236,14 +236,15 @@ describe('이정표', () => {
     expect(c2.returns).toHaveLength(1); // 두 번째 돌파에는 없음
   });
 
-  it('face: 돌파 유닛이 영웅뿐이면 보너스는 와일드카드', () => {
+  it('face: 돌파 유닛이 영웅뿐이면 보너스는 와일드카드 (영웅은 빛나는 영웅으로)', () => {
     const g = fresh();
     begin(g, 'first_tooth', 'unhappy');
     g.debugToNight();
     g.summon(g.debugGrant(DOG, 3)!, 'unhappy');
     g.debugBreakLayer();
     const [c] = ofType(ticks(g, 1), 'layerClear');
-    expect(c.returns.map((r) => r.piece.chain)).toEqual([WILDCARD, WILDCARD]);
+    expect(c.returns.map((r) => r.piece.chain)).toEqual([DOG, WILDCARD]);
+    expect(c.returns[0].piece.shining).toBe(true);
   });
 });
 

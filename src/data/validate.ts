@@ -120,7 +120,7 @@ function checkCombat(c: Checker, v: unknown, path: string, extra: string[] = [])
 
 function checkBalance(c: Checker, v: unknown): { maxTier?: number; lifeLengthDays?: number } {
   const p = 'balance';
-  const b = c.obj(v, p, ['version', 'start', 'grid', 'lane', 'happy', 'wave', 'abyss', 'night', 'shadow', 'days', 'diary']);
+  const b = c.obj(v, p, ['version', 'start', 'grid', 'lane', 'happy', 'wave', 'abyss', 'hero', 'night', 'shadow', 'days', 'diary']);
   if (!b) return {};
   if (b.version !== 2) c.fail(`${p}.version`, `2여야 함 (현재 ${String(b.version)})`);
   c.nums(b.start, `${p}.start`, ['joy', 'shadow'], { min: 0 });
@@ -180,12 +180,17 @@ function checkBalance(c: Checker, v: unknown): { maxTier?: number; lifeLengthDay
 
   const a = c.nums(b.abyss, `${p}.abyss`, [
     'layerHpBase', 'layerHpGrowth', 'counterAtk', 'counterAtkInterval', 'counterRange', 'abyssDeathShadow',
-    'layerClearShadowReduce',
+    'layerClearShadowReduce', 'bossFloorEvery', 'bossFloorHpMult', 'bossFloorCounterMult', 'bossFloorWildcards',
   ], { min: 0 });
   if (a) {
+    c.num(a.bossFloorEvery, `${p}.abyss.bossFloorEvery`, { int: true, min: 1 });
+    c.num(a.bossFloorWildcards, `${p}.abyss.bossFloorWildcards`, { int: true, min: 0 });
     c.num(a.layerHpBase, `${p}.abyss.layerHpBase`, { min: 1 });
     c.num(a.counterAtkInterval, `${p}.abyss.counterAtkInterval`, { min: 0.01 });
   }
+
+  // 영웅 (v0.9, D-029)
+  c.nums(b.hero, `${p}.hero`, ['shineMult'], { min: 0 });
 
   // 밤 (v0.8, D-027): abyss.unhappyStallShadowPerSec → night.stallShadowPerSec
   const n = c.nums(b.night, `${p}.night`, ['nightSeconds', 'stallShadowPerSec'], { min: 0 });
@@ -452,6 +457,34 @@ function checkEndings(c: Checker, v: unknown): void {
   }
 }
 
+/** 조합표 (§5.13-5): 재료 chain이 chains.json에 존재, tier 2~3, 재료 2개, id 중복 금지, 알 수 없는 키 오류 */
+function checkRecipes(c: Checker, v: unknown, chainIds: string[]): void {
+  const r = c.obj(v, 'recipes', ['recipes']);
+  if (!r) return;
+  const list = c.arr(r.recipes, 'recipes.recipes', 1) ?? [];
+  const ids: (string | undefined)[] = [];
+  list.forEach((it, i) => {
+    const p = `recipes.recipes[${i}]`;
+    const o = c.obj(it, p, ['id', 'name', 'inputs', 'legend']);
+    if (!o) return;
+    ids.push(c.str(o.id, `${p}.id`));
+    c.str(o.name, `${p}.name`);
+    const inputs = c.arr(o.inputs, `${p}.inputs`);
+    if (inputs && inputs.length !== 2) c.fail(`${p}.inputs`, '재료는 2개여야 함');
+    inputs?.forEach((inp, j) => {
+      const q = `${p}.inputs[${j}]`;
+      const io = c.obj(inp, q, ['chain', 'tier'], ['shining']);
+      if (!io) return;
+      const ch = c.str(io.chain, `${q}.chain`);
+      if (ch !== undefined && !chainIds.includes(ch)) c.fail(`${q}.chain`, `chains.json에 없는 체인 "${ch}"`);
+      c.num(io.tier, `${q}.tier`, { int: true, min: 2, max: 3 });
+      if ('shining' in io) c.bool(io.shining, `${q}.shining`);
+    });
+    checkCombat(c, o.legend, `${p}.legend`);
+  });
+  c.unique(ids, 'recipes.recipes', '조합 id');
+}
+
 /** 원본 JSON 묶음을 검증한다. 하나라도 문제가 있으면 전체 목록을 돌려준다. */
 export function validateGameData(raw: Record<keyof GameData, unknown>): ValidationResult {
   const c = new Checker();
@@ -465,6 +498,7 @@ export function validateGameData(raw: Record<keyof GameData, unknown>): Validati
   checkDays(c, raw.days, eventIds, lifeLengthDays);
   checkDiary(c, raw.diary);
   checkEndings(c, raw.endings);
+  checkRecipes(c, raw.recipes, chainIds);
 
   if (c.issues.length > 0) return { ok: false, issues: c.issues };
   return { ok: true, data: raw as unknown as GameData };

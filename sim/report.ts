@@ -184,6 +184,14 @@ export const METRICS: { key: string; label: string; get: (r: RunResult) => numbe
   { key: 'maxShadow', label: '최대 그림자', get: (r) => r.maxShadow },
   { key: 'stallSeconds', label: '밤 멈춤(초, 잠들기 포함)', get: (r) => r.stallSeconds },
   { key: 'sleeps', label: '잠들기', get: (r) => r.sleeps ?? null },
+  // v0.9 영웅 규칙 (§5.13-7)
+  { key: 'injuriesDay', label: '부상 (낮)', get: (r) => r.injuriesDay ?? null },
+  { key: 'injuriesNight', label: '부상 (밤)', get: (r) => r.injuriesNight ?? null },
+  { key: 'shiningMade', label: '빛나는 영웅 생성', get: (r) => r.shiningMade ?? null },
+  { key: 'legendsMade', label: '전설 생성', get: (r) => r.legendsMade ?? null },
+  { key: 'bossFloorsReached', label: '보스 층 도달', get: (r) => r.bossFloorsReached ?? null },
+  { key: 'bossFloorsCleared', label: '보스 층 돌파', get: (r) => r.bossFloorsCleared ?? null },
+  { key: 'wildcardsGained', label: '와일드카드 획득', get: (r) => r.wildcardsGained ?? null },
   { key: 'abyssDeaths', label: '심연 유닛 사망', get: (r) => r.abyssDeaths },
   { key: 'lostReturns', label: '귀환 소실', get: (r) => r.lostReturns },
   { key: 'releases', label: '놓아주기 수', get: (r) => r.releases },
@@ -305,8 +313,20 @@ export function formatReport(r: PolicyReport): string {
     curveLine(r),
     formatBossDiag(r),
     formatEndings(r),
+    heroLine(r),
   ];
   return lines.join('\n');
+}
+
+/** v0.9 영웅 규칙 요약 한 줄: 전설 종류(전 시드 합), 보스 층 도달·돌파 판 비율 */
+function heroLine(r: PolicyReport): string {
+  const kinds: Record<string, number> = {};
+  for (const run of r.runs) for (const [k, n] of Object.entries(run.legendsByRecipe ?? {})) kinds[k] = (kinds[k] ?? 0) + n;
+  const n = Math.max(1, r.runs.length);
+  const reached = r.runs.filter((x) => (x.bossFloorsReached ?? 0) > 0).length / n;
+  const cleared = r.runs.filter((x) => (x.bossFloorsCleared ?? 0) > 0).length / n;
+  const kindText = Object.entries(kinds).map(([k, c]) => `${k} ${c}`).join(' · ') || '없음';
+  return `영웅 규칙: 전설 종류(전 시드 합) ${kindText} / 보스 층 도달한 판 ${fmt(reached * 100, 1)}% · 돌파한 판 ${fmt(cleared * 100, 1)}%`;
 }
 
 const BREAKDOWN_LABEL: Record<BreakdownKey, string> = {
@@ -374,7 +394,7 @@ export function formatBossDiag(r: PolicyReport): string {
 
 /** 정책 간 비교 표 (중앙값 중심) */
 export function formatComparison(reports: PolicyReport[]): string {
-  const keys = ['firstSinkDay', 'sunk', 'layersCleared', 'backflows', 'bossWins', 'downRatio', 'reservedRatio', 'finalJoy', 'dayLengthDay', 'dayLengthNight', 'meanSummonTier'];
+  const keys = ['sunk', 'layersCleared', 'backflows', 'downRatio', 'reservedRatio', 'dayLengthDay', 'injuriesDay', 'injuriesNight', 'shiningMade', 'legendsMade', 'bossFloorsCleared', 'wildcardsGained'];
   const header = [
     '정책',
     ...keys.map((k) => METRICS.find((m) => m.key === k)!.label + ' (중앙값)'),

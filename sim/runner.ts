@@ -40,6 +40,16 @@ export interface RunResult {
   reserved: number;
   /** 잠들기 횟수 */
   sleeps: number;
+  // v0.9 영웅 규칙 (§5.13-7)
+  injuriesDay: number;
+  injuriesNight: number;
+  shiningMade: number;
+  legendsMade: number;
+  legendsByRecipe: Record<string, number>;
+  bossFloorsReached: number;
+  bossFloorsCleared: number;
+  wildcardsGained: number;
+  combines: number;
   dayStartJoy: number[];
   dayEndJoy: number[];
   /** 1일차 일반 걱정 수·가라앉은 수 */
@@ -121,7 +131,7 @@ export function runLife(data: GameData, cfg: SimConfig, policy: Policy, opt: Run
   let fullTicks = 0;
   let ticks = 0;
   let maxShadow = state.shadow;
-  const counts = { spawns: 0, merges: 0, releases: 0, mistakes: 0, staleActions: 0, sleeps: 0 };
+  const counts = { spawns: 0, merges: 0, releases: 0, mistakes: 0, staleActions: 0, sleeps: 0, combines: 0 };
 
   let nextDecision = 0;
   let pending: { action: Action; at: number } | null = null;
@@ -141,6 +151,7 @@ export function runLife(data: GameData, cfg: SimConfig, policy: Policy, opt: Run
       case 'drop': {
         const kind = state.drop(a.from, a.to);
         if (kind === 'merge') counts.merges += 1;
+        else if (kind === 'combine') counts.combines += 1;
         else if (kind === 'none') counts.staleActions += 1;
         break;
       }
@@ -264,6 +275,14 @@ export function runLife(data: GameData, cfg: SimConfig, policy: Policy, opt: Run
     ...counts,
     playTime: state.playTime,
     ending: state.ending && structuredClone(state.ending),
+    injuriesDay: st.injuriesDay,
+    injuriesNight: st.injuriesNight,
+    shiningMade: st.shiningMade,
+    legendsMade: st.legendsMade,
+    legendsByRecipe: { ...st.legendsByRecipe },
+    bossFloorsReached: st.bossFloorsReached,
+    bossFloorsCleared: st.bossFloorsCleared,
+    wildcardsGained: st.wildcardsGained,
   };
   return { result, state };
 }

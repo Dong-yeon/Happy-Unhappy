@@ -14,7 +14,7 @@
   "lane": {
     "laneCap": 5,
     "abyssAdvanceSpeed": 30,
-    "defenseInterceptRange": 0,
+    "defenseInterceptRange": 80,
     "defenseMoveSpeed": 60,
     "defenseContact": 8
   },
@@ -36,8 +36,13 @@
     "counterAtkInterval": 1.5,
     "counterRange": 60,
     "abyssDeathShadow": 5,
-    "layerClearShadowReduce": 15
+    "layerClearShadowReduce": 15,
+    "bossFloorEvery": 10,
+    "bossFloorHpMult": 2,
+    "bossFloorCounterMult": 1.5,
+    "bossFloorWildcards": 1
   },
+  "hero": { "shineMult": 1.2 },
   "night": {
     "nightSeconds": 60,
     "stallShadowPerSec": 0.3

@@ -15,6 +15,12 @@ export interface Piece {
   tier: number;
   /** 생성 시점의 누적 게임 시간(초, 배속 반영) */
   bornAt: number;
+  /** 빛나는 영웅: 밤에 정화된 영웅 (§5.13-3). 능력치 × hero.shineMult */
+  shining?: boolean;
+  /** 부상으로 쉬는 중 (§5.13-2): 'dawn' = 새벽에 / 'dusk' = 다음 해질녘에 풀림 */
+  restUntil?: 'dawn' | 'dusk' | null;
+  /** 전설 추억 (tier 4): 조합표 id (§5.13-5) */
+  legend?: string;
 }
 
 export interface GridSize {
@@ -201,7 +207,7 @@ export interface EnqueueResult {
  * 빈 칸이 있으면 rng로 고른 빈 칸에 즉시 배치, 없으면 대기열 끝에 추가. 대기열이 cap이면 소실.
  * 행 우선 첫 빈 칸(왼쪽 위 = ☀ 창문 포탈 근처)에 두면 Happy 쪽 소환 편향이 생기므로 쓰지 않는다 (D-019).
  */
-export function enqueueReturn(grid: Grid, queue: Piece[], piece: Piece, cap: number, rng: Rng): EnqueueResult {
+export function enqueueReturn(grid: Grid, queue: Piece[], piece: Piece, cap: number, rng: Rng, ignoreCap = false): EnqueueResult {
   // 먼저 온 대기 조각이 앞서도록 대기열부터 비운다
   flushReturnQueue(grid, queue, rng);
   const index = pickEmpty(rng, grid);
@@ -209,7 +215,8 @@ export function enqueueReturn(grid: Grid, queue: Piece[], piece: Piece, cap: num
     grid.cells[index] = piece;
     return { placedAt: index, queued: false, lost: 0 };
   }
-  if (queue.length >= cap) return { placedAt: null, queued: false, lost: 1 };
+  // 영웅·전설은 사라지지 않는다: 대기열 상한을 무시한다 (§5.13-2)
+  if (queue.length >= cap && !ignoreCap) return { placedAt: null, queued: false, lost: 1 };
   queue.push(piece);
   return { placedAt: null, queued: true, lost: 0 };
 }

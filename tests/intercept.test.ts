@@ -7,7 +7,7 @@ import { WILDCARD } from '../src/core/grid';
 import { FIXED_DT, Lane, type InterceptConfig, type LaneEvent, type Worry } from '../src/core/lane';
 import { mulberry32 } from '../src/core/rng';
 import { serializeGame } from '../src/core/save';
-import { showHeroWarning } from '../src/scenes/heroWarning';
+import { portalBubble } from '../src/scenes/portalBubble';
 import { gameGeometry } from '../src/scenes/layout';
 import { POLICIES } from '../sim/policies';
 import { runLife } from '../sim/runner';
@@ -219,11 +219,12 @@ describe('결정성 (제한 이동 켬)', () => {
   });
 });
 
-// ── 봇 balanced 밤 규칙 (§5.12-1) ──
+// ── 봇 balanced 규칙 (v0.9 §5.13-7, D-028 대체) ──
 
-describe('봇 balanced: 영웅은 손거울로 보내지 않는다', () => {
+describe('봇 balanced: 밤에 빛나지 않은 영웅을 정화, 조합 우선', () => {
   const cfg = simJson as SimConfig;
   const DOG = 'companion_animal';
+  const BLANKET = 'comfort_object';
   function night(): GameState {
     const g = new GameState(structuredClone(base), { cols: 5, rows: 4 }, mulberry32(1), gameGeometry(5), 1);
     g.debugForceEvent('plain');
@@ -234,70 +235,68 @@ describe('봇 balanced: 영웅은 손거울로 보내지 않는다', () => {
   }
   const decide = (g: GameState) => POLICIES.balanced.decide({ state: g, rng: mulberry32(1), cfg });
 
-  it('밤: 영웅만 있으면 아무것도 보내지 않음, abyssMinTier ≤ 단계 < maxTier는 보냄', () => {
+  it('밤: 빛나지 않은 영웅이 2단계보다 먼저 손거울로', () => {
     const g = night();
+    g.grid.cells[3] = g.newPiece(BLANKET, 2);
     g.grid.cells[0] = g.newPiece(DOG, 3);
-    expect(decide(g)).toBeNull();
-    g.grid.cells[5] = g.newPiece('comfort_object', 2);
-    expect(decide(g)).toEqual({ type: 'summon', cell: 5, side: 'unhappy' });
+    expect(decide(g)).toEqual({ type: 'summon', cell: 0, side: 'unhappy' });
   });
 
-  it('밤: 와일드카드는 머지에만 (머지 우선)', () => {
+  it('밤: 빛나는 영웅·전설·쉬는 영웅은 보내지 않는다 (남은 2단계를 보냄)', () => {
+    const g = night();
+    g.grid.cells[0] = g.newPiece(DOG, 3, { shining: true });
+    g.grid.cells[1] = g.newPiece(DOG, 4, { legend: 'park_walk' });
+    g.grid.cells[2] = g.newPiece(BLANKET, 3, { restUntil: 'dusk' });
+    expect(decide(g)).toBeNull();
+    g.grid.cells[6] = g.newPiece(BLANKET, 1);
+    g.grid.cells[7] = g.newPiece(DOG, 2);
+    expect(decide(g)).toEqual({ type: 'summon', cell: 7, side: 'unhappy' });
+  });
+
+  it('조합 가능하면 즉시 조합 (머지보다 먼저)', () => {
+    const g = night();
+    g.grid.cells[0] = g.newPiece(DOG, 3, { shining: true });
+    g.grid.cells[1] = g.newPiece(BLANKET, 2);
+    g.grid.cells[5] = g.newPiece(DOG, 1);
+    g.grid.cells[6] = g.newPiece(DOG, 1);
+    const a = decide(g);
+    expect(a).toMatchObject({ type: 'drop' });
+    if (a?.type !== 'drop') return;
+    expect(g.combinePreview(a.from, a.to)?.id).toBe('park_walk');
+  });
+
+  it('와일드카드는 머지에만', () => {
     const g = night();
     g.grid.cells[0] = g.newPiece(WILDCARD, 0);
+    expect(decide(g)).toBeNull();
     g.grid.cells[1] = g.newPiece(DOG, 2);
     expect(decide(g)).toMatchObject({ type: 'drop' });
-    const solo = night();
-    solo.grid.cells[0] = solo.newPiece(WILDCARD, 0);
-    expect(decide(solo)).toBeNull();
-  });
-
-  it('낮의 맡기기도 영웅 제외 (안전할 때 abyssMinTier 이상만)', () => {
-    const g = new GameState(structuredClone(base), { cols: 5, rows: 4 }, mulberry32(1), gameGeometry(5), 1);
-    g.debugForceEvent('plain');
-    g.confirmDay();
-    g.wave.paused = true;
-    g.grid.cells.fill(null);
-    for (let k = 0; k < cfg.balanced.minUnits; k++) g.summon(g.debugGrant(DOG, 1)!, 'happy'); // 방어 충분 = 안전
-    g.joy = 0; // 생성 불가
-    g.grid.cells[0] = g.newPiece(DOG, 3);
-    const a = decide(g);
-    expect(a === null || a.type !== 'summon' || a.side !== 'unhappy').toBe(true);
-    g.grid.cells[7] = g.newPiece('comfort_object', 2);
-    expect(decide(g)).toEqual({ type: 'summon', cell: 7, side: 'unhappy' });
   });
 });
 
-// ── 영웅 경고 (§5.12-2) ──
+// ── 포탈 말풍선 (v0.9: 쉬는 중이에요, 영웅 경고는 제거) ──
 
-describe('영웅 정화 경고', () => {
-  function state(phase: 'day' | 'night'): GameState {
+describe('포탈 말풍선', () => {
+  function day(): GameState {
     const g = new GameState(structuredClone(base), { cols: 5, rows: 4 }, mulberry32(1), gameGeometry(5), 1);
     g.debugForceEvent('plain');
     g.confirmDay();
-    if (phase === 'night') g.debugToNight();
     g.grid.cells.fill(null);
     return g;
   }
 
-  it('영웅을 손거울에 올리면 표시 (낮 = 맡기기, 밤 = 즉시)', () => {
-    for (const ph of ['day', 'night'] as const) {
-      const g = state(ph);
-      g.grid.cells[0] = g.newPiece('companion_animal', 3);
-      expect(showHeroWarning(g, 0, 'unhappy'), ph).toBe(true);
-    }
+  it('쉬는 조각을 창문·손거울에 올리면 "쉬는 중이에요"', () => {
+    const g = day();
+    g.grid.cells[0] = g.newPiece('companion_animal', 3, { restUntil: 'dawn' });
+    expect(portalBubble(g, 0, 'happy')).toBe('쉬는 중이에요');
+    expect(portalBubble(g, 0, 'unhappy')).toBe('쉬는 중이에요');
   });
 
-  it('다른 단계·와일드카드·창문·보낼 수 없을 때는 미표시', () => {
-    const g = state('day');
-    g.grid.cells[0] = g.newPiece('companion_animal', 2);
-    g.grid.cells[1] = g.newPiece(WILDCARD, 0);
-    g.grid.cells[2] = g.newPiece('companion_animal', 3);
-    expect(showHeroWarning(g, 0, 'unhappy')).toBe(false);
-    expect(showHeroWarning(g, 1, 'unhappy')).toBe(false);
-    expect(showHeroWarning(g, 2, 'happy')).toBe(false);
-    expect(showHeroWarning(g, 2, null)).toBe(false);
-    for (let k = 0; k < base.balance.lane.laneCap; k++) g.summon(g.debugGrant('comfort_object', 1)!, 'unhappy');
-    expect(showHeroWarning(g, 2, 'unhappy')).toBe(false); // partyFull
+  it('영웅을 손거울에 올려도 경고 없음 (D-028 말풍선 제거), 쉬지 않는 조각·포탈 밖은 미표시', () => {
+    const g = day();
+    g.grid.cells[0] = g.newPiece('companion_animal', 3);
+    expect(portalBubble(g, 0, 'unhappy')).toBeNull();
+    expect(portalBubble(g, 0, 'happy')).toBeNull();
+    expect(portalBubble(g, 0, null)).toBeNull();
   });
 });

@@ -1,0 +1,16 @@
+{
+  "recipes": [
+    { "id": "not_alone_night", "name": "혼자가 아닌 밤",
+      "inputs": [ { "chain": "companion_animal", "tier": 3, "shining": true },
+                  { "chain": "comfort_object",   "tier": 3, "shining": true } ],
+      "legend": { "hp": 260, "atk": 32, "atkInterval": 0.8, "range": 55 } },
+    { "id": "park_walk", "name": "공원 산책",
+      "inputs": [ { "chain": "companion_animal", "tier": 3, "shining": true },
+                  { "chain": "comfort_object",   "tier": 2 } ],
+      "legend": { "hp": 160, "atk": 34, "atkInterval": 0.7, "range": 55 } },
+    { "id": "cozy_nap", "name": "포근한 낮잠",
+      "inputs": [ { "chain": "comfort_object",   "tier": 3, "shining": true },
+                  { "chain": "companion_animal", "tier": 2 } ],
+      "legend": { "hp": 300, "atk": 18, "atkInterval": 0.9, "range": 45 } }
+  ]
+}

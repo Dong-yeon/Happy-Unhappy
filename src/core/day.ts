@@ -52,6 +52,10 @@ export interface DayStats {
   gridFullSeconds: number;
   /** 그날 층 돌파 시각 (playTime) */
   layerClearTimes: number[];
+  /** 영웅·전설 부상 (낮·밤 합, §5.13-2) */
+  injuries: number;
+  /** 조합 (§5.13-5, metrics): 시각·조합 id·재료 ("chain:tier", 빛나면 "*") */
+  combines: { t: number; recipe: string; inputs: string[] }[];
 }
 
 export function emptyDayStats(joy: number, maxTier: number): DayStats {
@@ -78,6 +82,8 @@ export function emptyDayStats(joy: number, maxTier: number): DayStats {
     stallSeconds: 0,
     gridFullSeconds: 0,
     layerClearTimes: [],
+    injuries: 0,
+    combines: [],
   };
 }
 

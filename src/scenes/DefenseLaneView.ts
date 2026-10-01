@@ -113,6 +113,13 @@ export class DefenseLaneView {
         case 'unitDie':
           this.removeUnit(e.unitId);
           break;
+        case 'injured': {
+          // 영웅·전설 부상: 쓰러진 자리에서 창문을 지나 그리드로 (§5.13-2)
+          if (e.side !== 'happy') break;
+          const from = toScreen('defense', e.ret.x, e.ret.y + UNIT_DRAW_OFFSET);
+          this.returnFlow(e.ret.piece, from.x, from.y, e.ret.placedAt, e.ret.lost);
+          break;
+        }
         case 'attack': {
           // 유닛·Happy → 걱정 / 걱정 → 유닛
           const target = e.attacker.kind === 'worry' ? this.units.get(e.targetId) : this.worries.get(e.targetId);
@@ -196,8 +203,11 @@ export class DefenseLaneView {
   private makeUnit(u: Unit): HpView {
     const maxTier = this.state.grid.maxTier;
     const fill = this.chainColor.get(u.chain) ?? 0x999999;
-    const body = this.scene.add.rectangle(0, 0, UNIT_SIZE, UNIT_SIZE, fill).setStrokeStyle(1, 0x1b1d24);
-    const label = text(this.scene, 0, 0, u.tier >= maxTier ? '★' : String(u.tier), {
+    // 전설 = 금 테두리, 빛나는 영웅 = 금빛 테두리 (§5.13)
+    const body = this.scene.add
+      .rectangle(0, 0, UNIT_SIZE, UNIT_SIZE, fill)
+      .setStrokeStyle(u.legend ? 3 : u.shining ? 2 : 1, u.legend ? 0xf2c94c : u.shining ? 0xfff1a8 : 0x1b1d24);
+    const label = text(this.scene, 0, 0, u.legend ? '◆' : u.tier >= maxTier ? '★' : String(u.tier), {
       fontSize: '10px',
       color: '#1b1d24',
       fontStyle: 'bold',

@@ -250,10 +250,11 @@ export class DayUi {
     }
     const by = 204 + extra;
     const last = s.day >= s.lifeLengthDays;
-    m.button(VIEW_W / 2 - 64, by, 110, last ? '일생 끝' : '다음 날', () => {
+    m.button(VIEW_W / 2 - 94, by, 86, last ? '일생 끝' : '다음 날', () => {
       if (this.state.nextDay()) this.hooks.onChange();
     });
-    m.button(VIEW_W / 2 + 64, by, 110, '일기장', () => this.showDiaryList());
+    m.button(VIEW_W / 2, by, 86, '일기장', () => this.showDiaryList());
+    m.button(VIEW_W / 2 + 94, by, 86, '추억 조합', () => this.showRecipes());
     this.modal = m;
   }
 
@@ -340,6 +341,63 @@ export class DayUi {
       });
     }
     this.modal = m;
+  }
+
+  /**
+   * 추억 조합 도감 (§5.13-5): 조합표 전부를 처음부터 보여준다 (재료 아이콘 + 결과 이름, 만든 적 있으면 ✓).
+   * 원랜디·나랜디처럼 목표를 미리 보이게 한다.
+   */
+  showRecipes(): void {
+    if (this.diaryList) return;
+    const scene = this.scene;
+    const objs: Phaser.GameObjects.GameObject[] = [];
+    const d = OVERLAY_DEPTH + 10;
+    objs.push(scene.add.rectangle(0, 0, VIEW_W, VIEW_H, 0x0e1016, 0.96).setOrigin(0).setDepth(d).setInteractive());
+    objs.push(text(scene, VIEW_W / 2, 14, '추억 조합', { fontSize: '15px', color: '#f2c94c', fontStyle: 'bold' }).setOrigin(0.5, 0).setDepth(d + 1));
+    objs.push(
+      text(scene, VIEW_W / 2, 38, '빛나는 영웅(✦)은 밤에 정화하면 생겨요. 쉬는 영웅도 재료가 돼요.', { fontSize: '10px', color: '#8a8f9e' })
+        .setOrigin(0.5, 0)
+        .setDepth(d + 1),
+    );
+    const chains = new Map(this.data.chains.map((c) => [c.archetypeId, c]));
+    const made = this.state.stats.legendsByRecipe;
+    const maxTier = this.data.balance.grid.maxTier;
+    let y = 72;
+    for (const r of this.data.recipes.recipes) {
+      const icon = (x: number, inp: (typeof r.inputs)[number]) => {
+        const c = chains.get(inp.chain);
+        const box = scene.add.rectangle(x, y + 18, 34, 28, c ? parseInt(c.color.slice(1), 16) : 0x999999).setDepth(d + 1);
+        box.setStrokeStyle(inp.shining ? 2 : 1, inp.shining ? 0xfff1a8 : 0x1b1d24);
+        const lab = text(scene, x, y + 18, inp.tier >= maxTier ? '★' : String(inp.tier), { fontSize: '13px', color: '#1b1d24', fontStyle: 'bold' })
+          .setOrigin(0.5)
+          .setDepth(d + 2);
+        const name = c ? c.tierNames[inp.tier - 1] : inp.chain;
+        const cap = text(scene, x, y + 36, `${inp.shining ? '✦' : ''}${name}`, { fontSize: '8px', color: '#cfd6ea' }).setOrigin(0.5, 0).setDepth(d + 1);
+        objs.push(box, lab, cap);
+      };
+      icon(52, r.inputs[0]);
+      objs.push(text(scene, 90, y + 18, '+', { fontSize: '16px', color: '#cfd6ea' }).setOrigin(0.5).setDepth(d + 1));
+      icon(128, r.inputs[1]);
+      objs.push(text(scene, 166, y + 18, '→', { fontSize: '16px', color: '#f2c94c' }).setOrigin(0.5).setDepth(d + 1));
+      const res = scene.add.rectangle(205, y + 18, 34, 28, 0x3b2a00).setStrokeStyle(3, 0xf2c94c).setDepth(d + 1);
+      objs.push(res, text(scene, 205, y + 18, '◆', { fontSize: '13px', color: '#f2c94c' }).setOrigin(0.5).setDepth(d + 2));
+      const done = (made[r.id] ?? 0) > 0;
+      objs.push(
+        text(scene, 232, y + 10, r.name, { fontSize: '12px', color: '#ffe08a', fontStyle: 'bold' }).setDepth(d + 1),
+        text(scene, 232, y + 28, `공격 ${r.legend.atk} · 체력 ${r.legend.hp}${done ? '  ✓ 만듦' : ''}`, {
+          fontSize: '9px',
+          color: done ? '#9fe0a0' : '#8a8f9e',
+        }).setDepth(d + 1),
+      );
+      y += 64;
+    }
+    const close = new Button(scene, VIEW_W / 2, VIEW_H - 36, 120, 30, '닫기', () => {
+      for (const o of objs) o.destroy();
+      close.container.destroy();
+      this.diaryList = null;
+    }, '12px');
+    close.container.setDepth(d + 2);
+    this.diaryList = objs;
   }
 
   /** 일기장: 목록(일차 · 이벤트명 · 문장). 드래그·휠로 스크롤만 */

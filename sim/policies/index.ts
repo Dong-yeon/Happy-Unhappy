@@ -1,9 +1,12 @@
 // 봇 정책 (스펙 §8.1 최소 세트). M4: 손거울(Unhappy) 사용, alwaysUnhappy 추가, balanced는 위/아래 배분.
 // M8 (§5.11-8): summon(cell,'unhappy')는 낮 = 맡기기, 밤 = 즉시 소환. 밤에는 창문이 닫히고 sleep()이 있다.
 import { isWildcard } from '../../src/core/grid';
+import type { Piece } from '../../src/core/grid';
 import type { Action, Policy } from '../types';
 import {
+  bestCell,
   bestMerge,
+  bestMergeOrCombine,
   bestSummonCell,
   canSpawn,
   isGridFull,
@@ -52,7 +55,7 @@ const alwaysHappy: Policy = {
   decide({ state }) {
     if (state.phase === 'night') return state.canSleep ? { type: 'sleep' } : null;
     return (
-      bestMerge(state) ??
+      bestMergeOrCombine(state) ??
       summonHappy(state, bestSummonCell(state)) ??
       (canSpawn(state) ? { type: 'spawn' } : null)
     );
@@ -78,7 +81,7 @@ const hoarder: Policy = {
   decide({ state }) {
     if (state.phase === 'night') return null;
     const maxTier = state.grid.maxTier;
-    const merge = bestMerge(state);
+    const merge = bestMergeOrCombine(state);
     if (merge) return merge;
     const hero = summonHappy(state, bestSummonCell(state, maxTier));
     if (hero) return hero;
@@ -100,8 +103,9 @@ const hoarder: Policy = {
  * 4) 방어가 안전하면 abyssMinTier 이상 조각을 손거울로 맡김 (밤에 정화 → 단계 +1 귀환)
  * 5) proactiveSummonTier 이상 조각을 창문으로 미리
  * 6) 생성 → 7) 칸이 막히면 보내거나 가장 낮은 조각을 놓아줌
- * 밤: 머지 우선, 손거울로는 abyssMinTier ≤ 단계 < maxTier만 (영웅은 그리드에 남김, 와일드카드는 머지에만. §5.12-1, D-028)
- * 낮의 맡기기도 영웅 제외 (정화되면 와일드카드로 돌아와 다음 날 방어 주력을 잃는다)
+ * v0.9 (§5.13-7, D-029): 조합 가능하면 즉시 조합 (머지보다 먼저). 쉬는 조각은 보내지 않는다.
+ * 낮: 영웅·전설은 창문 우선, 맡기기 후보는 빛나지 않은 영웅 → abyssMinTier 이상 비영웅
+ * 밤: 머지·조합 우선 → 빛나지 않고 쉬지 않는 영웅을 손거울로 (정화해서 빛나게) → 그다음 abyssMinTier ≤ 단계 < maxTier
  */
 const balanced: Policy = {
   name: 'balanced',
@@ -109,8 +113,16 @@ const balanced: Policy = {
   milestone: (_ctx, choices) => choices.find((c) => c.id === 'unhappy')?.id ?? choices[0].id,
   decide({ state, cfg }) {
     const p = cfg.balanced;
-    const belowHero = state.grid.maxTier - 1;
-    if (state.phase === 'night') return bestMerge(state) ?? summonUnhappy(state, bestSummonCell(state, p.abyssMinTier, belowHero));
+    const maxTier = state.grid.maxTier;
+    const belowHero = maxTier - 1;
+    const unshinedHero = (x: Piece) => x.tier === maxTier && !x.legend && !x.shining;
+    if (state.phase === 'night') {
+      return (
+        bestMergeOrCombine(state) ??
+        summonUnhappy(state, bestCell(state, unshinedHero)) ??
+        summonUnhappy(state, bestSummonCell(state, p.abyssMinTier, belowHero))
+      );
+    }
     const lane = state.defense;
     const lineY = lane.geo.lineY;
     const danger = lane.worries.some((w) => w.state === 'stopped' || lineY - w.y < p.dangerDistance);
@@ -124,10 +136,11 @@ const balanced: Policy = {
       const a = summonHappy(state, bestSummonCell(state));
       if (a) return a;
     }
-    const merge = bestMerge(state);
+    const merge = bestMergeOrCombine(state);
     if (merge) return merge;
     if (safe) {
-      const down = summonUnhappy(state, bestSummonCell(state, p.abyssMinTier, belowHero));
+      const down =
+        summonUnhappy(state, bestCell(state, unshinedHero)) ?? summonUnhappy(state, bestSummonCell(state, p.abyssMinTier, belowHero));
       if (down) return down;
     }
     const proactive = summonHappy(state, bestSummonCell(state, p.proactiveSummonTier));

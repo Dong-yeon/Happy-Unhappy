@@ -1,6 +1,6 @@
 // 정책 공용: 상태를 읽기만 하는 판단 도우미. 판정은 core의 순수 함수(resolveDrop)를 그대로 쓴다.
 import type { GameState } from '../../src/core/game';
-import { isWildcard, resolveDrop } from '../../src/core/grid';
+import { isWildcard, resolveDrop, type Piece } from '../../src/core/grid';
 import type { Side } from '../../src/core/lane';
 import { randInt, type Rng } from '../../src/core/rng';
 import type { Action } from '../types';
@@ -22,11 +22,42 @@ export function bestMerge(state: GameState): Action | null {
   return best ? { type: 'drop', from: best.from, to: best.to } : null;
 }
 
-/** 소환 가능한 조각(와일드카드 제외) 중 단계가 가장 높은 칸. minTier 미만·maxTier 초과면 제외 */
+/** 조합 가능한 (from, to) 중 조합표 순서상 앞의 것 (§5.13-5). 같으면 먼저 찾은 것 */
+export function bestCombine(state: GameState): Action | null {
+  let best: { from: number; to: number; rank: number } | null = null;
+  const recipes = state.recipes;
+  for (let from = 0; from < state.grid.cells.length; from++) {
+    if (!state.grid.cells[from]) continue;
+    for (let to = 0; to < state.grid.cells.length; to++) {
+      const r = state.combinePreview(from, to);
+      if (!r) continue;
+      const rank = recipes.indexOf(r);
+      if (!best || rank < best.rank) best = { from, to, rank };
+    }
+  }
+  return best ? { type: 'drop', from: best.from, to: best.to } : null;
+}
+
+/** 조합 우선, 없으면 머지 */
+export function bestMergeOrCombine(state: GameState): Action | null {
+  return bestCombine(state) ?? bestMerge(state);
+}
+
+/** 조건에 맞는 보낼 수 있는 조각 중 단계가 가장 높은 칸 (와일드카드·쉬는 조각 제외) */
+export function bestCell(state: GameState, pred: (p: Piece) => boolean): number | null {
+  let best: number | null = null;
+  state.grid.cells.forEach((p, i) => {
+    if (!p || isWildcard(p) || p.restUntil || !pred(p)) return;
+    if (best === null || p.tier > state.grid.cells[best]!.tier) best = i;
+  });
+  return best;
+}
+
+/** 소환 가능한 조각(와일드카드·쉬는 조각 제외) 중 단계가 가장 높은 칸. minTier 미만·maxTier 초과면 제외 */
 export function bestSummonCell(state: GameState, minTier = 1, maxTier = Infinity): number | null {
   let best: number | null = null;
   state.grid.cells.forEach((p, i) => {
-    if (!p || isWildcard(p) || p.tier < minTier || p.tier > maxTier) return;
+    if (!p || isWildcard(p) || p.restUntil || p.tier < minTier || p.tier > maxTier) return;
     if (best === null || p.tier > state.grid.cells[best]!.tier) best = i;
   });
   return best;
