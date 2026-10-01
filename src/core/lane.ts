@@ -56,6 +56,16 @@ export interface HappyStats {
   range: number;
 }
 
+/** 방어 유닛 제한 이동 (§4.3.3, D-026). range ≤ 0이면 이동 처리를 아예 건너뛴다 (기존 규칙과 1비트도 같음) */
+export interface InterceptConfig {
+  /** 방어선에서 위(core y 감소)로 나갈 수 있는 최대 거리 */
+  range: number;
+  /** 이동 속도 (px/초, 직선 거리) */
+  speed: number;
+  /** 걱정 바로 아래 몇 px에 서는지 */
+  contact: number;
+}
+
 /** balance.abyss에서 벽에 필요한 값 */
 export interface WallStats {
   layerHpBase: number;
@@ -113,6 +123,8 @@ export interface Unit extends Attacker {
   y: number;
   /** abyss: 벽이 사거리 안에 들어와 멈춰 공격 중. defense는 항상 true */
   arrived: boolean;
+  /** defense 제한 이동: 할 일이 없어 홈(슬롯)으로 돌아가는 중 (표시용, §4.3.3) */
+  returning?: boolean;
 }
 
 export type WorryState = 'moving' | 'stopped' | 'passing';
@@ -194,6 +206,8 @@ export class Lane<K extends LaneKind = LaneKind> {
     readonly kind: K,
     readonly geo: GeoOf<K>,
     opts: OptsOf<K>,
+    /** defense만: 방어 유닛 제한 이동 (§4.3.3). 없거나 range ≤ 0이면 기존 규칙 */
+    private readonly intercept: InterceptConfig | null = null,
   ) {
     if (kind === 'defense') {
       this.happy = { ...(opts as HappyStats), cd: 0 };
@@ -306,6 +320,16 @@ export class Lane<K extends LaneKind = LaneKind> {
   /** defense: §4.3.1 처리 순서 2~6 */
   step(dt: number, out: LaneEventSink): void {
     if (this.kind !== 'defense') throw new Error('abyss 레인은 stepAbyss()');
+    if (this.intercept && this.intercept.range > 0) {
+      // §4.3.3: 1. 유닛 이동 → 2. 걱정 이동(막는 유닛의 y에서 정지) → 3. 유닛 공격(자기 y 기준) → 4~6 기존
+      this.moveUnits(dt, this.intercept);
+      this.moveWorriesIntercept(dt, out);
+      this.unitAttacksIntercept(dt, out);
+      this.worryAttacks(dt, out);
+      this.removeDead(out);
+      this.sinkPassed(out);
+      return;
+    }
     this.moveWorries(dt, out); // 2
     this.unitAttacks(dt, out); // 3
     this.worryAttacks(dt, out); // 4
@@ -413,6 +437,96 @@ export class Lane<K extends LaneKind = LaneKind> {
     for (const u of this.units) {
       if (u.hp <= 0) continue;
       const t = this.pickWorryTarget(u.range);
+      if (stepAttack(u, dt, t !== null)) {
+        t!.hp -= u.atk;
+        out.push({ type: 'attack', attacker: { kind: 'unit', id: u.id }, targetId: t!.id, damage: u.atk });
+      }
+    }
+    const t = this.pickWorryTarget(this.happy.range);
+    if (stepAttack(this.happy, dt, t !== null)) {
+      t!.hp -= this.happy.atk;
+      out.push({ type: 'attack', attacker: { kind: 'happy' }, targetId: t!.id, damage: this.happy.atk });
+    }
+  }
+
+  // ── 방어 유닛 제한 이동 (§4.3.3, D-026) ──
+
+  /**
+   * 1. 유닛 이동 (소환 순서대로).
+   * 추격 대상: 살아 있는 걱정 중 w.y ≥ lineY − range − u.range (손이 닿는 걱정). y가 큰(방어선에 가까운) 걱정, 같으면 먼저 등장.
+   * 이번 틱에 앞선 유닛이 고른 걱정은 건너뛴다 (남은 게 없으면 이미 고른 것 중 같은 우선순위로) → 유닛이 퍼진다.
+   * 목표 지점: (w.x, clamp(w.y + contact, lineY − range, lineY)) / 대상이 없으면 홈 (slotXs[slot], lineY). 직선으로 speed × dt.
+   */
+  private moveUnits(dt: number, ic: InterceptConfig): void {
+    const geo = this.geo as LaneGeometry;
+    const zoneTop = geo.lineY - ic.range;
+    const claimed = new Set<Worry>();
+    for (const u of this.units) {
+      if (u.hp <= 0) continue;
+      let pick: Worry | null = null;
+      let fallback: Worry | null = null;
+      for (const w of this.worries) {
+        if (w.hp <= 0 || w.y < zoneTop - u.range - EPS) continue;
+        if (!fallback || w.y > fallback.y + EPS) fallback = w;
+        if (claimed.has(w)) continue;
+        if (!pick || w.y > pick.y + EPS) pick = w;
+      }
+      const t = pick ?? fallback;
+      if (t) claimed.add(t);
+      const tx = t ? t.x : geo.slotXs[u.slot];
+      const ty = t ? Math.max(zoneTop, Math.min(geo.lineY, t.y + ic.contact)) : geo.lineY;
+      u.returning = !t && (Math.abs(u.x - tx) > EPS || Math.abs(u.y - ty) > EPS);
+      const dx = tx - u.x;
+      const dy = ty - u.y;
+      const d = Math.hypot(dx, dy);
+      const step = ic.speed * dt;
+      if (d <= step + EPS) {
+        u.x = tx;
+        u.y = ty;
+      } else {
+        u.x += (dx / d) * step;
+        u.y += (dy / d) * step;
+      }
+    }
+  }
+
+  /**
+   * 2. 걱정 이동 (제한 이동): moving이 막는 유닛(x 최근접)의 y에 닿으면 그 y에 멈춤.
+   * stopped: 막는 유닛이 물러나 w.y < blocker.y가 되면 다시 moving. 유닛이 모두 사라지면 방어선 위는 moving, 아래는 passing.
+   */
+  private moveWorriesIntercept(dt: number, out: LaneEventSink): void {
+    const { lineY } = this.geo as LaneGeometry;
+    for (const w of this.worries) {
+      const blocker = this.pickUnitTarget(w.x);
+      if (w.state === 'stopped') {
+        if (!blocker) w.state = w.y < lineY ? 'moving' : 'passing';
+        else if (w.y < blocker.y - EPS) w.state = 'moving';
+        else continue;
+      }
+      const ny = w.y + w.speed * dt;
+      if (w.state === 'moving') {
+        if (blocker && ny >= blocker.y - EPS) {
+          w.y = Math.max(w.y, blocker.y); // 막는 유닛이 더 위에 있으면 제자리 (뒤로 밀리지 않는다)
+          w.state = 'stopped';
+          w.cd = 0; // 도착 틱에 첫 공격 (4단계)
+          out.push({ type: 'worryStop', worryId: w.id });
+          continue;
+        }
+        if (!blocker && ny >= lineY) w.state = 'passing';
+      }
+      w.y = ny;
+    }
+  }
+
+  /** 3. 유닛 공격 (제한 이동): 대상은 |u.y − w.y| ≤ u.range인 걱정 중 y 최대 (같으면 먼저 등장). Happy는 기존대로 방어선 기준 */
+  private unitAttacksIntercept(dt: number, out: LaneEventSink): void {
+    for (const u of this.units) {
+      if (u.hp <= 0) continue;
+      let t: Worry | null = null;
+      for (const w of this.worries) {
+        if (w.hp <= 0 || Math.abs(u.y - w.y) > u.range + EPS) continue;
+        if (!t || w.y > t.y + EPS) t = w;
+      }
       if (stepAttack(u, dt, t !== null)) {
         t!.hp -= u.atk;
         out.push({ type: 'attack', attacker: { kind: 'unit', id: u.id }, targetId: t!.id, damage: u.atk });

@@ -100,7 +100,8 @@ const hoarder: Policy = {
  * 4) 방어가 안전하면 abyssMinTier 이상 조각을 손거울로 맡김 (밤에 정화 → 단계 +1 귀환)
  * 5) proactiveSummonTier 이상 조각을 창문으로 미리
  * 6) 생성 → 7) 칸이 막히면 보내거나 가장 낮은 조각을 놓아줌
- * 밤: 머지 우선, 남은 조각 중 abyssMinTier 이상을 손거울로 (§5.11-8)
+ * 밤: 머지 우선, 손거울로는 abyssMinTier ≤ 단계 < maxTier만 (영웅은 그리드에 남김, 와일드카드는 머지에만. §5.12-1, D-028)
+ * 낮의 맡기기도 영웅 제외 (정화되면 와일드카드로 돌아와 다음 날 방어 주력을 잃는다)
  */
 const balanced: Policy = {
   name: 'balanced',
@@ -108,7 +109,8 @@ const balanced: Policy = {
   milestone: (_ctx, choices) => choices.find((c) => c.id === 'unhappy')?.id ?? choices[0].id,
   decide({ state, cfg }) {
     const p = cfg.balanced;
-    if (state.phase === 'night') return bestMerge(state) ?? summonUnhappy(state, bestSummonCell(state, p.abyssMinTier));
+    const belowHero = state.grid.maxTier - 1;
+    if (state.phase === 'night') return bestMerge(state) ?? summonUnhappy(state, bestSummonCell(state, p.abyssMinTier, belowHero));
     const lane = state.defense;
     const lineY = lane.geo.lineY;
     const danger = lane.worries.some((w) => w.state === 'stopped' || lineY - w.y < p.dangerDistance);
@@ -125,14 +127,14 @@ const balanced: Policy = {
     const merge = bestMerge(state);
     if (merge) return merge;
     if (safe) {
-      const down = summonUnhappy(state, bestSummonCell(state, p.abyssMinTier));
+      const down = summonUnhappy(state, bestSummonCell(state, p.abyssMinTier, belowHero));
       if (down) return down;
     }
     const proactive = summonHappy(state, bestSummonCell(state, p.proactiveSummonTier));
     if (proactive) return proactive;
     if (canSpawn(state)) return { type: 'spawn' };
     if (isGridFull(state)) {
-      const send = summonHappy(state, bestSummonCell(state)) ?? summonUnhappy(state, bestSummonCell(state));
+      const send = summonHappy(state, bestSummonCell(state)) ?? summonUnhappy(state, bestSummonCell(state, 1, belowHero));
       if (send) return send;
       const cell = lowestReleaseCell(state);
       if (cell !== null) return { type: 'release', cell };

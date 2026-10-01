@@ -22,10 +22,22 @@ const SUMMON_MS = 250; // 조각 → 창문 → 슬롯
 const JOY_DOT_MS = 400; // 처치 지점 → 창문 → HUD 기쁨
 const SINK_MS = 450;
 const RETURN_MS = 450; // 해질녘 귀환: 유닛 자리 → 창문 → 그리드 칸 (D-022)
+/** 유닛은 core 위치보다 이만큼 거점 쪽(진행 축)에 그린다 (방어선에서 걱정과 겹치지 않게) */
+const UNIT_DRAW_OFFSET = CORE.homeY - CORE.lineY;
+/** 타격 연출 (§4.3.3): 대상 위치 원 번쩍 + 맞은 쪽 흰색 깜빡임 */
+const HIT_MS = 100;
+const HIT_BY_US = 0xfff3b0; // 유닛·Happy가 걱정을 침
+const HIT_BY_WORRY = 0xd28cff; // 걱정이 유닛을 침
+/** 홈으로 돌아가는 중 (쉬는 중) */
+const RETURNING_ALPHA = 0.85;
 
 interface HpView {
   container: Phaser.GameObjects.Container;
+  body: Phaser.GameObjects.Shape;
   bar: Phaser.GameObjects.Rectangle;
+  color: number;
+  /** 소환 연출 중에는 core 위치를 따라가지 않는다 */
+  tweening?: boolean;
 }
 
 export class DefenseLaneView {
@@ -63,6 +75,7 @@ export class DefenseLaneView {
   onSummon(unit: Unit, fromX: number, fromY: number): void {
     const v = this.makeUnit(unit);
     const to = this.unitPos(unit);
+    v.tweening = true;
     v.container.setPosition(fromX, fromY);
     this.root.remove(v.container);
     v.container.setDepth(15);
@@ -73,6 +86,7 @@ export class DefenseLaneView {
         { x: to.x, y: to.y, scale: 1, duration: SUMMON_MS / 2, ease: 'Sine.easeOut' },
       ],
       onComplete: () => {
+        v.tweening = false;
         if (!v.container.active) return;
         v.container.setDepth(0);
         this.root.add(v.container);
@@ -99,6 +113,12 @@ export class DefenseLaneView {
         case 'unitDie':
           this.removeUnit(e.unitId);
           break;
+        case 'attack': {
+          // 유닛·Happy → 걱정 / 걱정 → 유닛
+          const target = e.attacker.kind === 'worry' ? this.units.get(e.targetId) : this.worries.get(e.targetId);
+          if (target) this.hit(target, e.attacker.kind === 'worry' ? HIT_BY_WORRY : HIT_BY_US);
+          break;
+        }
         case 'dayReturn': {
           if (e.side !== 'happy') break;
           for (const r of e.returns) {
@@ -136,14 +156,27 @@ export class DefenseLaneView {
     for (const u of lane.units) {
       liveU.add(u.id);
       const v = this.units.get(u.id) ?? this.makeUnit(u);
+      if (!v.tweening) {
+        // 제한 이동(§4.3.3): core의 u.x, u.y를 매 프레임 따라간다. 복귀 중에는 반투명
+        const p = this.unitPos(u);
+        v.container.setPosition(p.x, p.y).setAlpha(u.returning ? RETURNING_ALPHA : 1);
+      }
       setHp(v, u.hp, u.maxHp);
     }
     for (const id of [...this.units.keys()]) if (!liveU.has(id)) this.removeUnit(id);
   }
 
-  /** 방어 유닛은 방어선 바로 뒤(왼쪽) 줄에 선다 */
+  /** 방어 유닛은 자기 위치보다 살짝 뒤(왼쪽)에 그린다 (방어선에 서 있으면 방어선 바로 뒤 줄) */
   private unitPos(u: Unit): { x: number; y: number } {
-    return toScreen('defense', u.x, CORE.homeY);
+    return toScreen('defense', u.x, u.y + UNIT_DRAW_OFFSET);
+  }
+
+  /** 타격: 대상 위치에 0.1초 원 번쩍 + 맞은 쪽 흰색 깜빡임 */
+  private hit(v: HpView, color: number): void {
+    const flash = this.scene.add.circle(v.container.x, v.container.y, 9, color, 0.9).setDepth(35);
+    this.scene.tweens.add({ targets: flash, scale: 1.6, alpha: 0, duration: HIT_MS, onComplete: () => flash.destroy() });
+    v.body.setFillStyle(0xffffff);
+    this.scene.time.delayedCall(HIT_MS, () => v.body.active && v.body.setFillStyle(v.color));
   }
 
   private makeWorry(w: Worry): HpView {
@@ -155,7 +188,7 @@ export class DefenseLaneView {
     const p = toScreen('defense', w.x, w.y - WORRY_DRAW_OFFSET);
     const container = this.scene.add.container(p.x, p.y, [body, face, bg, bar]);
     this.root.add(container);
-    const v = { container, bar };
+    const v: HpView = { container, body, bar, color: w.boss ? BOSS_COLOR : WORRY_COLOR };
     this.worries.set(w.id, v);
     return v;
   }
@@ -173,7 +206,7 @@ export class DefenseLaneView {
     const p = this.unitPos(u);
     const container = this.scene.add.container(p.x, p.y, [body, label, bg, bar]);
     this.root.add(container);
-    const v = { container, bar };
+    const v: HpView = { container, body, bar, color: fill };
     this.units.set(u.id, v);
     return v;
   }

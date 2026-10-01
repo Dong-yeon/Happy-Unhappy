@@ -227,6 +227,15 @@ describe('validateGameData', () => {
     );
   });
 
+  it('M8.5: lane.defenseInterceptRange·defenseMoveSpeed·defenseContact 필수, 0 이상', () => {
+    const issues = issuesAfter((d) => {
+      delete (d.balance.lane as Record<string, unknown>).defenseMoveSpeed;
+      d.balance.lane.defenseInterceptRange = -1;
+    });
+    expectIssue(issues, 'balance.lane.defenseMoveSpeed', /필수 키/);
+    expectIssue(issues, 'balance.lane.defenseInterceptRange', /0 이상/);
+  });
+
   it('balance.version ≠ 2', () => {
     const issues = issuesAfter((d) => {
       (d.balance as Record<string, unknown>).version = 1;

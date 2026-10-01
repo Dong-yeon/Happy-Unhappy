@@ -153,10 +153,14 @@ function checkBalance(c: Checker, v: unknown): { maxTier?: number; lifeLengthDay
     c.num(g.returnQueueCap, `${p}.grid.returnQueueCap`, { int: true, min: 0 });
   }
 
-  const lane = c.obj(b.lane, `${p}.lane`, ['laneCap', 'abyssAdvanceSpeed']);
+  const lane = c.obj(b.lane, `${p}.lane`, ['laneCap', 'abyssAdvanceSpeed', 'defenseInterceptRange', 'defenseMoveSpeed', 'defenseContact']);
   if (lane) {
     c.num(lane.laneCap, `${p}.lane.laneCap`, { int: true, min: 1 });
     c.num(lane.abyssAdvanceSpeed, `${p}.lane.abyssAdvanceSpeed`, { min: 0 });
+    // 방어 유닛 제한 이동 (§4.3.3): 0이면 기존 규칙
+    c.num(lane.defenseInterceptRange, `${p}.lane.defenseInterceptRange`, { min: 0 });
+    c.num(lane.defenseMoveSpeed, `${p}.lane.defenseMoveSpeed`, { min: 0 });
+    c.num(lane.defenseContact, `${p}.lane.defenseContact`, { min: 0 });
   }
 
   const h = c.nums(b.happy, `${p}.happy`, ['atk', 'atkInterval', 'range'], { min: 0 });

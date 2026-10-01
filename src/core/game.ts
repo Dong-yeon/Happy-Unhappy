@@ -239,7 +239,11 @@ export class GameState {
     ] as const) {
       if (g.slotXs.length !== b.lane.laneCap) throw new Error(`${name} 슬롯 수(${g.slotXs.length}) ≠ laneCap(${b.lane.laneCap})`);
     }
-    this.defense = new Lane('defense', geometry.defense, b.happy);
+    this.defense = new Lane('defense', geometry.defense, b.happy, {
+      range: b.lane.defenseInterceptRange,
+      speed: b.lane.defenseMoveSpeed,
+      contact: b.lane.defenseContact,
+    });
     this.abyss = new Lane('abyss', geometry.abyss, { wall: b.abyss, advanceSpeed: b.lane.abyssAdvanceSpeed });
     this.wave = new DayWaves({ ...b.wave, hpBase: data.monsters.worry.hpBase });
     this.today = this.resolveToday();

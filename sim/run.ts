@@ -245,7 +245,7 @@ function main(): void {
     const compact = rows.map((r) => ({
       value: r.value,
       goals: r.goals.map(({ id, label, pass, detail }) => ({ id, label, pass, detail })),
-      policies: Object.fromEntries(r.reports.map((p) => [p.policy, { summary: p.summary, tierShare: p.tierShare }])),
+      policies: Object.fromEntries(r.reports.map((p) => [p.policy, { summary: p.summary, tierShare: p.tierShare, endings: p.endings }])),
     }));
     writeFileSync(
       file,

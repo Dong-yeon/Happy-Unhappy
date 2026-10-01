@@ -22,11 +22,11 @@ export function bestMerge(state: GameState): Action | null {
   return best ? { type: 'drop', from: best.from, to: best.to } : null;
 }
 
-/** 소환 가능한 조각(와일드카드 제외) 중 단계가 가장 높은 칸. minTier 미만이면 제외 */
-export function bestSummonCell(state: GameState, minTier = 1): number | null {
+/** 소환 가능한 조각(와일드카드 제외) 중 단계가 가장 높은 칸. minTier 미만·maxTier 초과면 제외 */
+export function bestSummonCell(state: GameState, minTier = 1, maxTier = Infinity): number | null {
   let best: number | null = null;
   state.grid.cells.forEach((p, i) => {
-    if (!p || isWildcard(p) || p.tier < minTier) return;
+    if (!p || isWildcard(p) || p.tier < minTier || p.tier > maxTier) return;
     if (best === null || p.tier > state.grid.cells[best]!.tier) best = i;
   });
   return best;

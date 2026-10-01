@@ -4,7 +4,8 @@ import Phaser from 'phaser';
 import type { GameState, SummonBlock, SummonResult } from '../core/game';
 import { isWildcard, type Piece } from '../core/grid';
 import type { Chain } from '../data/types';
-import { CELL_H, CELL_W, DRAG_THRESHOLD, cellAt, cellCenter, dropTarget, type PortalId } from './layout';
+import { HERO_WARNING_TEXT, showHeroWarning } from './heroWarning';
+import { CELL_H, CELL_W, DRAG_THRESHOLD, PORTAL, PORTAL_RADIUS, cellAt, cellCenter, dropTarget, type PortalId } from './layout';
 import { releaseHoverLabel, type ReleaseHover } from './ReleaseZoneView';
 import { COLOR, text } from './ui';
 
@@ -54,6 +55,8 @@ export class GridView {
   private press: Press | null = null;
   private readonly chainColor = new Map<string, number>();
   private readonly tag: Phaser.GameObjects.Text;
+  /** 영웅 정화 경고 말풍선 (손거울 위, §5.12-2) */
+  private readonly heroBubble: Phaser.GameObjects.Container;
 
   constructor(
     private readonly scene: Phaser.Scene,
@@ -65,6 +68,17 @@ export class GridView {
     this.tag = text(scene, 0, 0, '', { fontSize: '11px', backgroundColor: '#1b1d24', padding: { x: 4, y: 2 } })
       .setOrigin(0.5)
       .setDepth(30)
+      .setVisible(false);
+    const bubbleText = text(scene, 0, 0, HERO_WARNING_TEXT, {
+      fontSize: '11px',
+      color: '#2a2418',
+      backgroundColor: '#f6e7b8',
+      padding: { x: 6, y: 4 },
+    }).setOrigin(0.5, 1);
+    const tail = scene.add.triangle(0, 0, -5, 0, 5, 0, 0, 6, 0xf6e7b8).setOrigin(0.5, 0);
+    this.heroBubble = scene.add
+      .container(PORTAL.unhappy.x, PORTAL.unhappy.y - PORTAL_RADIUS - 10, [bubbleText, tail])
+      .setDepth(31)
       .setVisible(false);
     scene.input.on('pointerdown', this.onDown, this);
     scene.input.on('pointermove', this.onMove, this);
@@ -144,11 +158,14 @@ export class GridView {
       hover = { kind: 'summon', portal: target.portal, block: this.state.canSummon(press.from, target.portal) };
     }
     this.setHover(hover, w.x, w.y);
+    // 영웅을 손거울(낮 맡기기·밤 즉시)에 올리면 경고만 (드롭은 막지 않는다)
+    this.heroBubble.setVisible(showHeroWarning(this.state, press.from, hover?.kind === 'summon' ? hover.portal : null));
   }
 
   /** 영역·포탈 표시는 scene에, 조각 위 태그는 여기서 (조각·손가락이 영역 라벨을 가리므로) */
   private setHover(hover: DragHover, x = 0, y = 0): void {
     this.hooks.onHover(hover);
+    if (hover === null) this.heroBubble.setVisible(false);
     let label: string | null = null;
     let blocked = false;
     if (hover?.kind === 'release') {

@@ -20,7 +20,16 @@ export interface Balance {
     releaseRefund: number;
     returnQueueCap: number;
   };
-  lane: { laneCap: number; abyssAdvanceSpeed: number };
+  lane: {
+    laneCap: number;
+    abyssAdvanceSpeed: number;
+    /** 방어 유닛 제한 이동 (§4.3.3, D-026): 방어선에서 나갈 수 있는 최대 거리. 0 = 기존 규칙 */
+    defenseInterceptRange: number;
+    /** 방어 유닛 이동 속도 (px/초) */
+    defenseMoveSpeed: number;
+    /** 유닛이 걱정 바로 아래 몇 px에 서는지 */
+    defenseContact: number;
+  };
   happy: { atk: number; atkInterval: number; range: number };
   wave: {
     wavesPerDay: number;

@@ -13,7 +13,10 @@
   },
   "lane": {
     "laneCap": 5,
-    "abyssAdvanceSpeed": 30
+    "abyssAdvanceSpeed": 30,
+    "defenseInterceptRange": 0,
+    "defenseMoveSpeed": 60,
+    "defenseContact": 8
   },
   "happy": { "atk": 2, "atkInterval": 1.0, "range": 60 },
   "wave": {

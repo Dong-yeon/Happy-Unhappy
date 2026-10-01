@@ -829,5 +829,30 @@ export function formatSweep(key: string, rows: SweepRow[]): string {
       return `${fmt(e.solid * 100, 0)}/${fmt(e.hidden * 100, 0)}/${fmt(e.mask * 100, 0)}`;
     }),
   ]);
-  return `■ --sweep ${key}\n${table(header, body)}\n\n결말 분포 (solid / hidden / mask %)\n${table(endHeader, endBody)}`;
+  // 정책별 상세 (§5.12-4): 결말 분포·가라앉음·1~2일차·역류·밤 층 돌파·맡긴 비율·낮/밤 길이·점수 p50 (중앙값)
+  const detailHeader = ['값', '정책', 'hid/sol/mask/qui/rainy %', '가라앉음', '1~2일차', '역류', '밤 층', '맡긴%', '낮(초)', '밤(초)', 'H p50', 'U p50'];
+  const detailBody = rows.flatMap((row) =>
+    row.reports.map((r) => {
+      const e = r.endings.dist;
+      const m = (k: string, d = 1) => fmt(r.summary[k]?.median ?? NaN, d);
+      return [
+        JSON.stringify(row.value),
+        r.policy,
+        [e.hidden, e.solid, e.mask, e.quiet, e.rainy].map((x) => fmt(x * 100, 0)).join('/'),
+        m('sunk'),
+        m('earlySunk'),
+        m('backflows'),
+        m('layersCleared'),
+        fmt((r.summary.reservedRatio?.median ?? NaN) * 100, 0),
+        m('dayLengthDay', 0),
+        m('dayLengthNight', 0),
+        fmt(r.endings.happy.median, 0),
+        fmt(r.endings.unhappy.median, 0),
+      ];
+    }),
+  );
+  return (
+    `■ --sweep ${key}\n${table(header, body)}\n\n결말 분포 (solid / hidden / mask %)\n${table(endHeader, endBody)}` +
+    `\n\n정책별 상세 (중앙값)\n${table(detailHeader, detailBody)}`
+  );
 }
