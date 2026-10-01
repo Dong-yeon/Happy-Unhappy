@@ -1419,11 +1419,11 @@ share = growth.happy / total                   // 행복한 추억 비율 (total
 ```json
 { "title": "해와 달이 된 오누이", "doneText": "이야기 한 편이 완성되었다.",
   "notDoneText": "아직 이야기가 남았어요.",
-  "companions": [ { "id": "sun_moon_siblings", "name": "해와 달이 된 오누이", "side": "day" },
-                  { "id": "purified_tiger",   "name": "정화된 호랑이",       "side": "night" } ] }
+  "learnedRecipes": [ { "id": "sun_moon_siblings", "name": "해와 달이 된 오누이", "side": "day" },
+                      { "id": "purified_tiger",   "name": "정화된 호랑이",       "side": "night" } ] }
 ```
-- 완성(`completed: true`) 화면: 제목, 완성 문구, **"동료가 되었다"**: 오누이(해의 동료) · 정화된 호랑이(달의 동료) 두 카드 (D-042, 프로토타입은 표시만), 기록(준 전설 행복/정화 수, 기억 수, 특성, 걸린 일수). [이야기책] [처음부터].
-- 미완성 화면: 미완성 문구 + 기록 + [이야기책] [처음부터]. 동료 카드 없음.
+- 완성(`completed: true`) 화면: 제목, 완성 문구, **"오누이와 정화된 호랑이를 만드는 법을 알게 되었다"** — 조합법 카드 2장 (D-043, 프로토타입은 표시만, 실제 조합표에 추가하지 않음), 기록(준 전설 행복/정화 수, 기억 수, 특성, 걸린 일수). [이야기책] [처음부터].
+- 미완성 화면: 미완성 문구 + 기록 + [이야기책] [처음부터]. 조합법 카드 없음.
 - 결말 판정 코드(`judgeEnding`·갈래 기반 히든 등)와 `endingFixtures`·결말 미리보기 디버그는 **삭제**. 디버그 "즉시 챕터 완성"(완성/미완성 둘 다) 추가.
 - 갈래(happy/unhappy/together/slow)·기억·특성 기록은 유지 (기록 표시용).
 
