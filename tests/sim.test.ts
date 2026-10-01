@@ -85,13 +85,15 @@ describe('정책 기본 동작', () => {
     }
   });
 
-  it('alwaysUnhappy는 손거울로만, alwaysHappy는 창문으로만', () => {
+  it('alwaysUnhappy는 손거울로만 (낮 = 맡기기), alwaysHappy는 창문으로만·밤에는 잠들기 (§5.11-8)', () => {
     const u = run('alwaysUnhappy', 1);
     expect(u.downRatio).toBe(1);
-    expect(u.layersCleared).toBeGreaterThan(0);
+    expect(u.reserved).toBeGreaterThan(0);
     const h = run('alwaysHappy', 1);
     expect(h.downRatio).toBe(0);
+    expect(h.reserved).toBe(0);
     expect(h.layersCleared).toBe(0);
+    expect(h.sleeps).toBe(h.days); // 매일 밤 잠들기
   });
 
   it('mistakeRate 0이면 실수 없음, 1이면 드래그 행동이 모두 원위치', () => {
@@ -170,12 +172,13 @@ describe('통계·리포트', () => {
 describe('M6: 결말 리포트 (§5.8-4)', () => {
   it('판마다 결말이 있고, 분포 합 = 1, 항목별 평균 기여의 합 = 점수 평균', () => {
     // 0 하한이 걸리지 않는 판들로 (random은 가라앉음 감점으로 happy가 0에 막힌다)
-    const runs = [run('balanced', 1), run('alwaysHappy', 1)];
+    const runs = [run('balanced', 1), run('alwaysHappy', 1), run('random', 1)];
     for (const r of runs) expect(r.ending).not.toBeNull();
     expect(run('random', 1).ending?.happy).toBe(0);
-    const e = endingStats(runs);
-    expect(e.n).toBe(2);
-    expect(Object.values(e.dist).reduce((a, b) => a + b, 0)).toBeCloseTo(1);
+    expect(Object.values(endingStats(runs).dist).reduce((a, b) => a + b, 0)).toBeCloseTo(1);
+    // 기여 합 = 점수: 0 하한이 걸리지 않은 판만 (alwaysHappy는 가라앉음 없음)
+    const e = endingStats([run('alwaysHappy', 1)]);
+    expect(e.n).toBe(1);
     const b = e.breakdown;
     expect(b.upTier + b.defeat + b.joy + b.sunk).toBeCloseTo(e.happy.mean);
     expect(b.downTier + b.layer + b.purified).toBeCloseTo(e.unhappy.mean);

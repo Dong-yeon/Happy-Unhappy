@@ -41,10 +41,10 @@ describe('소환 (☀ 창문)', () => {
     const g = game();
     const r1 = g.summon(g.debugGrant(BLANKET, 1)!, 'happy');
     const spirit1 = data.units.commonSpirit.find((u) => u.tier === 1)!;
-    expect(r1.ok && r1.unit.hp).toBe(spirit1.hp);
+    expect(r1.ok && r1.unit!.hp).toBe(spirit1.hp);
     for (const c of data.chains) {
       const r = g.summon(g.debugGrant(c.archetypeId, 3)!, 'happy');
-      expect(r.ok && { hp: r.unit.hp, atk: r.unit.atk, atkInterval: r.unit.atkInterval, range: r.unit.range }).toEqual(c.hero);
+      expect(r.ok && { hp: r.unit!.hp, atk: r.unit!.atk, atkInterval: r.unit!.atkInterval, range: r.unit!.range }).toEqual(c.hero);
     }
   });
 
@@ -52,7 +52,7 @@ describe('소환 (☀ 창문)', () => {
     const g = game(1, 5, 4);
     const xs = Array.from({ length: CAP }, () => {
       const r = g.summon(g.debugGrant(DOG, 1)!, 'happy');
-      return r.ok ? r.unit.x : NaN;
+      return r.ok ? r.unit!.x : NaN;
     });
     // 거리가 같으면(부동소수 오차 무시) x가 작은 쪽
     const dist = (x: number) => Math.abs(x - GEO.centerX);
@@ -91,8 +91,9 @@ describe('소환 (☀ 창문)', () => {
     expect(g.grid.cells[w]?.chain).toBe(WILDCARD);
   });
 
-  it('◐ 손거울(M4): 심연 출발선의 빈 슬롯, sentDownTierSum, 기록 side unhappy / 빈 칸은 empty', () => {
+  it('◐ 손거울 (밤): 심연 출발선의 빈 슬롯, sentDownTierSum, 기록 side unhappy / 빈 칸은 empty', () => {
     const g = game();
+    g.debugToNight();
     const i = g.debugGrant(DOG, 2)!;
     const r = g.summon(i, 'unhappy');
     expect(r.ok).toBe(true);
@@ -100,14 +101,14 @@ describe('소환 (☀ 창문)', () => {
     expect(g.abyss.units).toEqual([r.unit]);
     expect(g.defense.units).toEqual([]);
     expect(r.unit).toMatchObject({ side: 'unhappy', y: GEOS.abyss.startY, arrived: false });
-    expect(GEOS.abyss.slotXs).toContain(r.unit.x);
+    expect(GEOS.abyss.slotXs).toContain(r.unit!.x);
     expect(g.stats).toMatchObject({ sentDownTierSum: 2, sentUpTierSum: 0 });
     expect(g.summonLog.at(-1)?.side).toBe('unhappy');
     const empty = g.grid.cells.findIndex((c) => c === null);
-    expect(g.canSummon(empty, 'happy')).toBe('empty');
+    expect(g.canSummon(empty, 'unhappy')).toBe('empty');
   });
 
-  it('소환 기록 필드: {t, day, side, chain, tier, cell:{col,row}, heldFor}', () => {
+  it('소환 기록 필드: {t, day, side, chain, tier, cell:{col,row}, heldFor, reserved}', () => {
     const g = game(1, 4, 4);
     g.wave.paused = true;
     g.tick(1); // bornAt = 1
@@ -115,7 +116,7 @@ describe('소환 (☀ 창문)', () => {
     g.tick(2.5); // playTime = 3.5
     g.summon(i, 'happy');
     expect(g.summonLog).toEqual([
-      { t: 3.5, day: 1, side: 'happy', chain: BLANKET, tier: 1, cell: { col: i % 4, row: Math.floor(i / 4) }, heldFor: 2.5 },
+      { t: 3.5, day: 1, side: 'happy', chain: BLANKET, tier: 1, cell: { col: i % 4, row: Math.floor(i / 4) }, heldFor: 2.5, reserved: false },
     ]);
   });
 
@@ -133,7 +134,7 @@ describe('소환 (☀ 창문)', () => {
     g.wave.paused = true;
     g.tick(0); // 하루 시작 이벤트 비우기
     const r = g.summon(g.debugGrant(DOG, 1)!, 'happy');
-    expect(g.tick(0)).toEqual([expect.objectContaining({ type: 'summon', unitId: r.ok ? r.unit.id : -1, side: 'happy' })]);
+    expect(g.tick(0)).toEqual([expect.objectContaining({ type: 'summon', unitId: r.ok ? r.unit!.id : -1, side: 'happy' })]);
     expect(g.tick(0)).toEqual([]);
   });
 });

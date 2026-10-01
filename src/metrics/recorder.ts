@@ -34,7 +34,8 @@ export class MetricsRecorder {
   private active = false;
   private dropFails = emptyDropFails();
   private dragDistance = 0;
-  private realSeconds = 0;
+  private dayRealSeconds = 0;
+  private nightRealSeconds = 0;
   private speedUsed = 0;
   private bypass = false;
 
@@ -77,8 +78,9 @@ export class MetricsRecorder {
   /** 매 프레임: dt = 실제 경과(초, 백그라운드 동안은 프레임이 멈춘다), speed = 디버그 배속 */
   frame(dt: number, speed: number): void {
     this.session.foregroundSeconds += dt;
-    if (!this.active || this.state.phase !== 'waves') return;
-    this.realSeconds += dt;
+    if (!this.active || !this.state.timeFlows) return;
+    if (this.state.phase === 'day') this.dayRealSeconds += dt;
+    else this.nightRealSeconds += dt;
     if (speed !== 1) this.speedUsed += dt;
   }
 
@@ -95,7 +97,8 @@ export class MetricsRecorder {
     this.active = true;
     this.dropFails = emptyDropFails();
     this.dragDistance = 0;
-    this.realSeconds = 0;
+    this.dayRealSeconds = 0;
+    this.nightRealSeconds = 0;
     this.speedUsed = 0;
     this.bypass = bypass;
     if (bypass) this.life.gatingBypassUsed = true;
@@ -123,7 +126,10 @@ export class MetricsRecorder {
       summons: s.summonLog.filter((r) => r.day === s.day).map((r) => ({ ...r, cell: { ...r.cell } })),
       dropFails: { ...this.dropFails },
       dragDistance: this.dragDistance,
-      realSeconds: this.realSeconds,
+      realSeconds: this.dayRealSeconds + this.nightRealSeconds,
+      dayRealSeconds: this.dayRealSeconds,
+      nightRealSeconds: this.nightRealSeconds,
+      reserved: st.reserved,
       speedUsed: this.speedUsed,
       bypass: this.bypass,
       rating: null,

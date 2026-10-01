@@ -56,7 +56,8 @@ import { clampShadow, weatherOf, type Weather } from './shadow';
 import { DayWaves, type SlotId } from './wave';
 
 /** 소환 불가 사유. empty: 빈 칸 */
-export type SummonBlock = 'wildcard' | 'laneFull' | 'empty';
+/** partyFull: 낮의 맡긴 추억이 laneCap / closed: 지금 단계에서 닫힌 포탈 (밤의 창문, 낮·밤이 아닌 단계) */
+export type SummonBlock = 'wildcard' | 'laneFull' | 'empty' | 'partyFull' | 'closed';
 
 /** 두 레인의 좌표 (scene의 layout.ts에서 만든다) */
 export interface GameGeometry {
@@ -75,6 +76,8 @@ export interface SummonRecord {
   cell: { col: number; row: number };
   /** 조각 보유 시간 = t - bornAt */
   heldFor: number;
+  /** 낮의 손거울 = 밤까지 맡김 (§5.11-3). 기록은 맡긴 순간 */
+  reserved: boolean;
 }
 
 /** 층 돌파·하루 끝 귀환 하나 */
@@ -123,11 +126,22 @@ export type CoreEvent =
   | { type: 'freePiece'; ret: LayerReturn }
   /** 하루 끝 귀환 (D-022): 방어(side happy) → 심연(side unhappy) 순으로 한 번씩, 레인 안에서는 소환 순서 */
   | { type: 'dayReturn'; side: Side; returns: LayerReturn[] }
+  // §5.11
+  /** 낮의 손거울: 그리드 칸의 조각을 밤까지 맡김 */
+  | { type: 'reserve'; cell: number; piece: Piece }
+  /** 해질녘: 방어 유닛 귀환(dayReturn happy) 뒤, 맡긴 추억이 심연 출발선에 소환됨 (맡긴 순서) */
+  | { type: 'dusk'; day: number; units: Unit[] }
+  /** 잠들기: 밤을 건너뜀 (남은 시간 × 멈춤 그림자를 한 번에) */
+  | { type: 'sleep'; skipped: number }
   | { type: 'dayEnd'; day: number; entry: DiaryEntry; stats: DayStats }
   | { type: 'dayStart'; day: number; event: DayEvent }
   | { type: 'lifeEnd' };
 
-export type SummonResult = { ok: true; unit: Unit } | { ok: false; reason: SummonBlock };
+/** 즉시 소환이면 unit, 낮의 손거울(맡기기)이면 unit = null·reserved = 맡긴 조각 */
+export type SummonResult =
+  | { ok: true; unit: Unit; reserved?: undefined }
+  | { ok: true; unit: null; reserved: Piece }
+  | { ok: false; reason: SummonBlock };
 
 export type ConfirmResult = { ok: true } | { ok: false; reason: 'notDayStart' | 'needChoice' | 'badChoice' };
 
@@ -167,8 +181,12 @@ export class GameState {
   carryBackflow = false;
   /** 역류 보스 웨이브 진행 중 */
   bossActive = false;
-  /** Unhappy 멈춤 (심연 유닛 0기 + 웨이브 진행 중) */
+  /** Unhappy 멈춤 (밤 + 심연 유닛 0기) */
   unhappyStalled = false;
+  /** 낮에 손거울로 맡긴 추억 (최대 laneCap). 해질녘에 심연 출발선에 소환되고 비워진다 (§5.11-3) */
+  readonly nightParty: Piece[] = [];
+  /** 밤 남은 시간(초) */
+  nightTimer = 0;
   /** 영웅 정화로 도감에 기록된 체인 (처음일 때만 추가) */
   readonly heroFirstPurify: string[] = [];
 
@@ -191,6 +209,8 @@ export class GameState {
   private chainWeightToday: Record<string, number> = {};
   /** 디버그: 다음 dayStart에 강제할 이벤트 */
   private forcedNext: string | null = null;
+  /** 이정표 face의 층 HP 감소: 그날 해질녘에 적용 (§5.11-4) */
+  private faceReduceTonight: number | null = null;
   /** 결말 (14일째 nextDay → lifeEnd에서 1회 판정, §5.8-3) */
   ending: EndingResult | null = null;
 
@@ -226,6 +246,20 @@ export class GameState {
     this.dayStats = emptyDayStats(this.joy, b.grid.maxTier);
   }
 
+  /** 시간은 낮·밤에만 흐른다 */
+  get timeFlows(): boolean {
+    return this.phase === 'day' || this.phase === 'night';
+  }
+
+  get nightSeconds(): number {
+    return this.data.balance.night.nightSeconds;
+  }
+
+  /** 잠들기 가능: 밤 + 심연 유닛 0기 + 맡긴 추억 0 */
+  get canSleep(): boolean {
+    return this.phase === 'night' && this.abyss.units.length === 0 && this.nightParty.length === 0;
+  }
+
   get weather(): Weather {
     return weatherOf(this.shadow, this.data.balance.shadow.weatherThresholds);
   }
@@ -251,41 +285,54 @@ export class GameState {
   tick(dt: number): CoreEvent[] {
     const out = this.pending;
     this.pending = [];
-    if (this.phase !== 'waves') {
+    if (!this.timeFlows) {
       this.acc = 0;
       return out;
     }
     if (dt > 0) this.acc += dt;
     const n = Math.floor((this.acc + TICK_EPS) / FIXED_DT);
     this.acc = Math.max(0, this.acc - n * FIXED_DT);
-    for (let i = 0; i < n && this.phase === 'waves'; i++) this.step(out);
-    if (this.phase !== 'waves') this.acc = 0; // 하루가 끝난 뒤 남은 시간은 버린다
+    for (let i = 0; i < n && this.timeFlows; i++) this.step(out);
+    if (!this.timeFlows) this.acc = 0; // 하루가 끝난 뒤 남은 시간은 버린다
     return out;
   }
 
   /**
-   * 고정 틱 하나 (§4.3.2 처리 순서, 고정)
-   * 1. 웨이브 진행 (걱정·역류 보스 등장)
-   * 2. 방어 레인 step (§4.3.1의 2~6)
-   * 3. 심연 레인 step: 전진 → 벽 공격 → 반격 → 사망 → 층 돌파
-   * 4. Unhappy 멈춤에 의한 그림자 증가
-   * 5. 이번 틱의 가라앉음 반영 (그림자 +, 현재 층 추가 HP +)
-   * 6. 역류 판정 (그림자 ≥ shadowMax면 역류 예약)
-   * 저녁 웨이브가 끝난 틱이면 그 뒤 하루 끝 처리 (§5.7)
+   * 고정 틱 하나. 낮과 밤은 동시에 돌지 않는다 (§5.11-1, D-027).
+   * 낮 (방어 레인만): 1. 웨이브 진행 → 2. 방어 레인 step (§4.3.1의 2~6) → 3. 가라앉음 반영 (그림자 +, 현재 층 추가 HP +)
+   * 밤 (심연 레인만): 1. 심연 레인 step (전진 → 벽 공격 → 반격 → 사망 → 층 돌파) → 2. Unhappy 멈춤 그림자 → 3. 밤 시간 감소
+   * 공통: 역류 판정 (그림자 ≥ shadowMax면 역류 예약)
+   * 저녁 웨이브가 끝난 틱이면 해질녘(dusk), 밤 시간이 다 된 틱이면 새벽(dawn → 그림일기)
    */
   private step(out: CoreEvent[]): void {
     this.tickCount += 1;
     this.playTime = this.tickCount / TICK_RATE;
     this.dayStats.realSeconds += FIXED_DT;
-    const b = this.data.balance;
+    if (this.phase === 'day') this.dayStats.daySeconds += FIXED_DT;
+    else this.dayStats.nightSeconds += FIXED_DT;
     const shadowBefore = this.shadow;
 
-    // 1. 웨이브 진행
+    if (this.phase === 'day') this.stepDay(out);
+    else this.stepNight(out);
+
+    this.checkBackflow(out);
+
+    if (this.shadow !== shadowBefore) out.push({ type: 'shadowChange', value: this.shadow, weather: this.weather });
+
+    // metrics: 이 틱 끝에 그리드에 빈칸이 없음 (관찰만)
+    if (this.grid.cells.every((c) => c !== null)) this.dayStats.gridFullSeconds += FIXED_DT;
+
+    if (this.phase === 'day' && this.wave.phase === 'done') this.dusk(out);
+    else if (this.phase === 'night' && this.nightTimer <= TICK_EPS) this.endDay(out);
+  }
+
+  /** 낮: 웨이브 → 방어 레인 → 가라앉음 */
+  private stepDay(out: CoreEvent[]): void {
+    const b = this.data.balance;
     this.spawnFromWave(out);
 
-    // 2. 방어 레인 (가라앉음은 5단계에서 반영)
     const sinks: { boss: boolean }[] = [];
-    let from = out.length;
+    const from = out.length;
     this.defense.step(FIXED_DT, out);
     for (let i = from; i < out.length; i++) {
       const e = out[i];
@@ -300,8 +347,22 @@ export class GameState {
       }
     }
 
-    // 3. 심연 레인
-    from = out.length;
+    for (const sk of sinks) {
+      if (sk.boss) {
+        this.bossResult(false, out); // 보스 가라앉음은 일반 규칙(sinkShadow·sinkLayerHp) 미적용
+      } else {
+        this.stats.sunkCount += 1;
+        this.dayStats.sunk += 1;
+        this.addShadow(b.shadow.sinkShadow);
+        this.abyss.addExtraHp(b.shadow.sinkLayerHp); // 낮에 가라앉은 걱정이 그날 밤 벽을 단단하게 (D-027)
+      }
+    }
+  }
+
+  /** 밤: 심연 레인 → 멈춤 그림자 → 밤 시간 */
+  private stepNight(out: CoreEvent[]): void {
+    const b = this.data.balance;
+    const from = out.length;
     const r = this.abyss.stepAbyss(FIXED_DT, out);
     for (let i = from; i < out.length; i++) {
       if (out[i].type === 'abyssUnitDie') {
@@ -312,40 +373,18 @@ export class GameState {
     }
     if (r.cleared) this.clearLayer(r.cleared.layer, r.cleared.units, out);
 
-    // 4. Unhappy 멈춤: 심연 유닛 0기 + 웨이브 진행 중(보스 웨이브 포함). 대기·간격에는 없음
+    // Unhappy 멈춤 (외면의 대가): 밤 동안 심연 유닛 0기
     this.updateStall(out);
     if (this.unhappyStalled) {
       this.stats.stallSeconds += FIXED_DT;
       this.dayStats.stallSeconds += FIXED_DT;
-      this.addShadow(b.abyss.unhappyStallShadowPerSec * FIXED_DT);
+      this.addShadow(b.night.stallShadowPerSec * FIXED_DT);
     }
-
-    // 5. 가라앉음 반영
-    for (const sk of sinks) {
-      if (sk.boss) {
-        this.bossResult(false, out); // 보스 가라앉음은 일반 규칙(sinkShadow·sinkLayerHp) 미적용
-      } else {
-        this.stats.sunkCount += 1;
-        this.dayStats.sunk += 1;
-        this.addShadow(b.shadow.sinkShadow);
-        this.abyss.addExtraHp(b.shadow.sinkLayerHp);
-      }
-    }
-
-    // 6. 역류 판정
-    this.checkBackflow(out);
-
-    if (this.shadow !== shadowBefore) out.push({ type: 'shadowChange', value: this.shadow, weather: this.weather });
-
-    // metrics: 이 틱 끝에 그리드에 빈칸이 없음 (관찰만)
-    if (this.grid.cells.every((c) => c !== null)) this.dayStats.gridFullSeconds += FIXED_DT;
-
-    // 저녁 웨이브까지 끝남 → 하루 끝
-    if (this.wave.phase === 'done') this.endDay(out);
+    this.nightTimer -= FIXED_DT;
   }
 
   private updateStall(out: CoreEvent[]): void {
-    const stalled = this.phase === 'waves' && this.abyss.units.length === 0 && this.wave.active;
+    const stalled = this.phase === 'night' && this.abyss.units.length === 0;
     if (stalled !== this.unhappyStalled) {
       this.unhappyStalled = stalled;
       out.push({ type: stalled ? 'stallStart' : 'stallEnd' });
@@ -425,7 +464,8 @@ export class GameState {
   private scheduleBackflow(out: CoreEvent[]): void {
     this.shadow = this.data.balance.shadow.shadowMax;
     this.pendingBackflow = true;
-    const next = this.phase === 'waves' || this.phase === 'dayStart' ? this.wave.nextSlot() : null;
+    // 낮이면 남은 웨이브 칸, 밤·저녁 이후면 다음 날 아침 (D-021, §5.11-5)
+    const next = this.phase === 'day' || this.phase === 'dayStart' ? this.wave.nextSlot() : null;
     if (next !== null) {
       this.wave.markBoss(next);
       out.push({ type: 'backflowPending', slot: ['morning', 'noon', 'evening'][next] as SlotId });
@@ -530,6 +570,7 @@ export class GameState {
     this.spawnedToday = 0;
     this.dayStats = emptyDayStats(this.joy, this.data.balance.grid.maxTier);
     this.faceBonusToday = false;
+    this.faceReduceTonight = null;
 
     // 2
     const fx = effectsOf(e);
@@ -548,11 +589,8 @@ export class GameState {
       this.joy = Math.max(0, this.joy + choice.joy);
       if (choice.shadow) this.addShadow(choice.shadow);
       this.flags.push(choice.flag);
-      if (choice.faceLayerHpReduce !== undefined) {
-        // 현재 층의 남은 HP × (1 − faceLayerHpReduce), 선택 즉시 1회
-        const w = this.abyss.wall;
-        w.hp = w.hp * (1 - choice.faceLayerHpReduce);
-      }
+      // 현재 층의 남은 HP × (1 − faceLayerHpReduce): 그날 밤(해질녘)에 1회 (§5.11-4)
+      if (choice.faceLayerHpReduce !== undefined) this.faceReduceTonight = choice.faceLayerHpReduce;
       if (choice.bonusReturnPiece) this.faceBonusToday = true;
     }
     this.dayStats.joyStart = this.joy;
@@ -561,7 +599,7 @@ export class GameState {
     const carried = this.carryBackflow;
     this.carryBackflow = false;
     this.wave.startDay(this.day, mult, carried);
-    this.phase = 'waves';
+    this.phase = 'day';
     // 하루 시작 효과(이정표 Happy 등)로 그림자가 가득 차면 남은 칸(아침)을 보스로
     this.checkBackflow(out);
     if (this.shadow !== shadowBefore) out.push({ type: 'shadowChange', value: this.shadow, weather: this.weather });
@@ -570,33 +608,69 @@ export class GameState {
   }
 
   /**
-   * 하루 끝 처리 (저녁 웨이브의 마지막 걱정이 처치·가라앉음된 틱 이후, 이 순서):
-   * 1. 방어 레인의 살아남은 유닛 단계 그대로 귀환 (D-022). 방어선에 남은 걱정은 사라짐 (가라앉음 아님)
-   * 2. 심연 레인 유닛 단계 그대로 귀환
-   *    귀환 순서: 방어 → 심연, 각 레인 안에서는 소환 순서. 칸이 모자라면 대기열 → 상한 초과 소실
-   * 3. 그림일기 생성 4. dayStats 초기화
+   * 해질녘 (§5.11-1, 즉시 처리. 저녁 웨이브의 마지막 걱정이 처치·가라앉음된 틱 이후):
+   * 1. 방어선에 남은 걱정은 사라짐 (가라앉음 아님), 살아남은 방어 유닛 단계 그대로 귀환 (D-022)
+   * 2. 이정표 face의 층 HP 감소 (그날 밤)
+   * 3. 맡긴 추억이 맡긴 순서대로 심연 출발선 슬롯에 소환됨 → 밤 (nightSeconds)
+   */
+  private dusk(out: CoreEvent[]): void {
+    this.defense.worries.length = 0;
+    const back = this.defense.units.splice(0);
+    out.push({ type: 'dayReturn', side: 'happy', returns: back.map((u) => this.returnPiece(u.id, u.x, u.y, this.newPiece(u.chain, u.tier))) });
+    if (this.faceReduceTonight !== null) {
+      const w = this.abyss.wall;
+      w.hp = w.hp * (1 - this.faceReduceTonight);
+      this.faceReduceTonight = null;
+    }
+    const units: Unit[] = [];
+    for (const p of this.nightParty.splice(0)) {
+      const u = this.abyss.addUnit(this.nextUnitId++, 'unhappy', p.chain, p.tier, this.unitStats(p.chain, p.tier));
+      if (u) units.push(u);
+    }
+    this.wave.phase = 'idle';
+    this.phase = 'night';
+    this.nightTimer = this.nightSeconds;
+    out.push({ type: 'dusk', day: this.day, units: units.map((u) => ({ ...u })) }); // 소환 순간의 사본 (이후 전진은 core에서)
+    this.updateStall(out);
+  }
+
+  /** [잠들기]: 심연 유닛 0기 + 맡긴 추억 0일 때만. 남은 밤 시간 × 멈춤 그림자를 한 번에 더하고 새벽으로 */
+  sleep(): boolean {
+    if (!this.canSleep) return false;
+    const out = this.pending;
+    const skipped = Math.max(0, this.nightTimer);
+    const shadowBefore = this.shadow;
+    this.stats.stallSeconds += skipped;
+    this.dayStats.stallSeconds += skipped;
+    this.addShadow(this.data.balance.night.stallShadowPerSec * skipped);
+    this.checkBackflow(out);
+    if (this.shadow !== shadowBefore) out.push({ type: 'shadowChange', value: this.shadow, weather: this.weather });
+    out.push({ type: 'sleep', skipped });
+    this.nightTimer = 0;
+    this.endDay(out);
+    return true;
+  }
+
+  /**
+   * 새벽 (즉시 처리, 이 순서):
+   * 1. 심연 유닛 단계 그대로 귀환 (소환 순서). 칸이 모자라면 대기열 → 상한 초과 소실
+   * 2. 그림일기 생성 (그날의 dayStats 기준: 이벤트 + 낮 결과 + 밤 문장)
+   * 3. dayStats 초기화
    * 그리드·그림자·심연 층·역류 예약은 다음 날로 이어진다.
    */
   private endDay(out: CoreEvent[]): void {
-    this.phase = 'dayEnd';
+    this.phase = 'diary';
     this.updateStall(out); // 멈춤 해제
-    // 1·2 (귀환 연출 시작점은 유닛이 있던 곳)
-    this.defense.worries.length = 0; // 사라짐: 가라앉음·그림자·층 HP 없음
-    for (const side of ['happy', 'unhappy'] as const) {
-      const back = this.laneOf(side).units.splice(0);
-      const returns = back.map((u) => this.returnPiece(u.id, u.x, u.y, this.newPiece(u.chain, u.tier)));
-      out.push({ type: 'dayReturn', side, returns });
-    }
-    // 3
+    this.nightTimer = 0;
+    const back = this.abyss.units.splice(0);
+    out.push({ type: 'dayReturn', side: 'unhappy', returns: back.map((u) => this.returnPiece(u.id, u.x, u.y, this.newPiece(u.chain, u.tier))) });
     this.dayStats.joyEnd = this.joy;
-    const prev = this.diary.length ? this.diary[this.diary.length - 1].resultLine : null;
+    const prev = this.diary.length ? this.diary[this.diary.length - 1] : null;
     const entry = writeDiary(this.data, this.day, this.today, this.dayStats, this.rng, prev);
     this.diary.push(entry);
     this.lastDayStats = this.dayStats;
-    // 4
     this.dayStats = emptyDayStats(this.joy, this.data.balance.grid.maxTier);
     this.wave.phase = 'idle';
-    this.phase = 'diary';
     out.push({ type: 'dayEnd', day: this.day, entry, stats: this.lastDayStats });
   }
 
@@ -741,11 +815,28 @@ export class GameState {
     return side === 'happy' ? this.defense : this.abyss;
   }
 
-  /** 드래그 중 미리보기용: 소환할 수 없으면 사유, 가능하면 null. 조각 사유(wildcard)를 레인 사유보다 먼저 본다 */
+  /** 이 단계에서 포탈이 열려 있는지: 낮 = 창문(즉시)·손거울(맡기기), 밤 = 손거울(즉시)만 (§5.11-2) */
+  portalOpen(side: Side): boolean {
+    if (this.phase === 'day') return true;
+    if (this.phase === 'night') return side === 'unhappy';
+    return false;
+  }
+
+  /** 낮의 손거울 = 맡기기 */
+  isReserve(side: Side): boolean {
+    return this.phase === 'day' && side === 'unhappy';
+  }
+
+  /**
+   * 드래그 중 미리보기용: 소환할 수 없으면 사유, 가능하면 null.
+   * 닫힌 포탈 → 빈 칸 → 조각 사유(wildcard) → 정원(맡긴 추억 partyFull / 레인 laneFull) 순.
+   */
   canSummon(cell: number, side: Side): SummonBlock | null {
+    if (!this.portalOpen(side)) return 'closed';
     const p = this.grid.cells[cell];
     if (!p) return 'empty';
     if (isWildcard(p)) return 'wildcard';
+    if (this.isReserve(side)) return this.nightParty.length >= this.data.balance.lane.laneCap ? 'partyFull' : null;
     if (this.laneOf(side).isFull) return 'laneFull';
     return null;
   }
@@ -758,10 +849,26 @@ export class GameState {
     const block = this.canSummon(cell, side);
     if (block) return { ok: false, reason: block };
     const piece = this.grid.cells[cell]!;
+    // 낮의 손거울: 맡기기 (되돌릴 수 없음). 기록은 맡긴 순간 (§5.11-3)
+    if (this.isReserve(side)) {
+      this.grid.cells[cell] = null;
+      this.flushReturnQueue();
+      this.nightParty.push(piece);
+      this.recordSummon(piece, cell, side, true);
+      this.dayStats.reserved += 1;
+      this.pending.push({ type: 'reserve', cell, piece });
+      return { ok: true, unit: null, reserved: piece };
+    }
     const unit = this.laneOf(side).addUnit(this.nextUnitId++, side, piece.chain, piece.tier, this.unitStats(piece.chain, piece.tier))!;
     this.grid.cells[cell] = null;
     this.flushReturnQueue();
+    this.recordSummon(piece, cell, side, false);
+    this.pending.push({ type: 'summon', unitId: unit.id, side, slot: unit.slot, cell, chain: piece.chain, tier: piece.tier });
+    return { ok: true, unit };
+  }
 
+  /** 소환 기록·통계 (즉시 소환과 맡기기 공통) */
+  private recordSummon(piece: Piece, cell: number, side: Side, reserved: boolean): void {
     this.summonLog.push({
       t: this.playTime,
       day: this.day,
@@ -770,6 +877,7 @@ export class GameState {
       tier: piece.tier,
       cell: toCell(this.grid, cell),
       heldFor: this.playTime - piece.bornAt,
+      reserved,
     });
     if (piece.tier >= this.data.balance.grid.maxTier && this.stats.heroFirstSummonDay[piece.chain] === undefined) {
       this.stats.heroFirstSummonDay[piece.chain] = this.day;
@@ -781,8 +889,6 @@ export class GameState {
       this.stats.sentDownTierSum += piece.tier;
       this.dayStats.sentDown += 1;
     }
-    this.pending.push({ type: 'summon', unitId: unit.id, side, slot: unit.slot, cell, chain: piece.chain, tier: piece.tier });
-    return { ok: true, unit };
   }
 
   /** 1~(maxTier-1)단계 = 공용 추억 정령, maxTier = 체인 영웅 */
@@ -859,15 +965,27 @@ export class GameState {
     for (const u of this.abyss.units) u.hp = 0;
   }
 
-  /** 하루 즉시 종료 (저녁 끝으로): 남은 걱정은 사라지고 하루 끝 처리 */
-  debugEndDay(): void {
-    if (this.phase !== 'waves') return;
+  /** 낮 즉시 종료 → 해질녘 (밤 시작): 남은 걱정은 사라짐 */
+  debugToNight(): void {
+    if (this.phase !== 'day') return;
     if (this.bossActive) this.bossActive = false;
     // 아직 오지 않은 보스 칸을 건너뛰면 예약을 다음 날 아침으로 넘긴다 (예약이 떠돌지 않게)
     if (this.pendingBackflow) this.carryBackflow = true;
     this.defense.worries.length = 0;
     this.wave.phase = 'done';
+    this.dusk(this.pending);
+  }
+
+  /** 밤 즉시 종료 → 새벽 (그림일기). 건너뛴 시간의 멈춤 그림자는 없음 (디버그) */
+  debugEndNight(): void {
+    if (this.phase !== 'night') return;
     this.endDay(this.pending);
+  }
+
+  /** 하루 즉시 종료 (그림일기까지): 낮이면 해질녘 → 새벽, 밤이면 새벽 */
+  debugEndDay(): void {
+    this.debugToNight();
+    this.debugEndNight();
   }
 
   /** 즉시 결말 판정: 현재 stats·flags로 판정 → lifeEnd (레인은 비움) */
@@ -881,6 +999,8 @@ export class GameState {
     this.defense.worries.length = 0;
     this.defense.units.length = 0;
     this.abyss.units.length = 0;
+    this.nightParty.length = 0;
+    this.nightTimer = 0;
     this.bossActive = false;
     this.unhappyStalled = false;
     this.wave.phase = 'idle';

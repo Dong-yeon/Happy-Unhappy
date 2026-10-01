@@ -139,6 +139,8 @@ describe('일기장 병합', () => {
     eventLine: 'e',
     resultLine: 'r',
     category: 'default',
+    nightLine: 'n',
+    nightCategory: 'none',
   });
 
   it('forgotten 항목은 atDay번째 날 앞에 "기억나지 않는 날. (N일)"', () => {

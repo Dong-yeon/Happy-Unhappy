@@ -6,7 +6,7 @@ import type { EndingId, GameData } from '../data/types';
 import { Checker } from '../data/validate';
 import type { DailyUse, DayStats } from './day';
 import { eventById } from './day';
-import type { DiaryCategory, DiaryEntry } from './diary';
+import type { DiaryCategory, DiaryEntry, NightCategory } from './diary';
 import { BREAKDOWN_KEYS, type EndingResult } from './ending';
 import type { BossRecord, GameState, SummonRecord } from './game';
 import { isValidDate, type GatingState } from './gating';
@@ -73,8 +73,8 @@ function isSavePhase(p: string): p is SavePhase {
 /** 하루 경계 상태 → SaveGame. 경계가 아니거나 레인이 비어 있지 않으면 예외 */
 export function serializeGame(s: GameState): SaveGame {
   if (!isSavePhase(s.phase)) throw new Error(`하루 경계가 아니라 저장할 수 없음: ${s.phase}`);
-  if (s.defense.units.length || s.defense.worries.length || s.abyss.units.length) {
-    throw new Error('레인이 비어 있지 않아 저장할 수 없음');
+  if (s.defense.units.length || s.defense.worries.length || s.abyss.units.length || s.nightParty.length) {
+    throw new Error('레인·맡긴 추억이 비어 있지 않아 저장할 수 없음');
   }
   const w = s.abyss.wall;
   return structuredClone({
@@ -128,14 +128,15 @@ type Obj = Record<string, unknown>;
 const PIECE_KEYS = ['id', 'chain', 'tier', 'bornAt'];
 const DAY_STATS_KEYS: (keyof DayStats)[] = [
   'sunk', 'defeated', 'layersCleared', 'backflow', 'bossWin', 'sentUp', 'sentDown', 'joyStart', 'joyEnd', 'realSeconds',
-  'spawns', 'merges', 'releases', 'releaseTiers', 'lostReturns', 'abyssDeaths', 'stallSeconds', 'gridFullSeconds', 'layerClearTimes',
+  'daySeconds', 'nightSeconds', 'reserved', 'spawns', 'merges', 'releases', 'releaseTiers', 'lostReturns', 'abyssDeaths', 'stallSeconds', 'gridFullSeconds', 'layerClearTimes',
 ];
-const DIARY_KEYS: (keyof DiaryEntry)[] = ['day', 'eventTitle', 'line', 'eventLine', 'resultLine', 'category'];
-const DIARY_CATEGORIES: DiaryCategory[] = ['backflow', 'layerCleared', 'manySunk', 'default'];
+const DIARY_KEYS: (keyof DiaryEntry)[] = ['day', 'eventTitle', 'line', 'eventLine', 'resultLine', 'category', 'nightLine', 'nightCategory'];
+const DIARY_CATEGORIES: DiaryCategory[] = ['backflow', 'manySunk', 'default'];
+const NIGHT_CATEGORIES: NightCategory[] = ['layerCleared', 'tried', 'none'];
 const BOSS_KEYS: (keyof BossRecord)[] = [
   'day', 'slot', 'prep', 'defenseUnits', 'defenseAvgTier', 'abyssUnits', 'gridPieces', 'joy', 'shadowBefore', 'win',
 ];
-const SUMMON_KEYS: (keyof SummonRecord)[] = ['t', 'day', 'side', 'chain', 'tier', 'cell', 'heldFor'];
+const SUMMON_KEYS: (keyof SummonRecord)[] = ['t', 'day', 'side', 'chain', 'tier', 'cell', 'heldFor', 'reserved'];
 const ENDING_IDS: EndingId[] = ['hidden', 'solid', 'mask', 'quiet', 'rainy'];
 const GAME_KEYS: (keyof SaveGame)[] = [
   'seed', 'rngState', 'day', 'phase', 'todayId', 'playTime', 'tickCount', 'nextPieceId', 'nextUnitId', 'spawnedToday',
@@ -275,8 +276,9 @@ class SaveChecker extends Checker {
       const d = this.obj(it, pp, DIARY_KEYS);
       if (!d) return;
       this.num(d.day, `${pp}.day`, { int: true, min: 1 });
-      for (const k of ['eventTitle', 'line', 'eventLine', 'resultLine']) this.str(d[k], `${pp}.${k}`);
+      for (const k of ['eventTitle', 'line', 'eventLine', 'resultLine', 'nightLine']) this.str(d[k], `${pp}.${k}`);
       this.oneOf(d.category, `${pp}.category`, DIARY_CATEGORIES);
+      this.oneOf(d.nightCategory, `${pp}.nightCategory`, NIGHT_CATEGORIES);
     });
     if (o.lastDayStats !== null) this.dayStats(o.lastDayStats, p('lastDayStats'));
     this.list(o.bossLog, p('bossLog'), (it, pp) => {
@@ -293,6 +295,7 @@ class SaveChecker extends Checker {
       if (!r) return;
       for (const k of ['t', 'tier', 'heldFor']) this.num(r[k], `${pp}.${k}`);
       this.num(r.day, `${pp}.day`, { int: true, min: 1 });
+      this.bool(r.reserved, `${pp}.reserved`);
       this.oneOf(r.side, `${pp}.side`, ['happy', 'unhappy']);
       this.str(r.chain, `${pp}.chain`);
       this.nums(r.cell, `${pp}.cell`, ['col', 'row'], { int: true, min: 0 });

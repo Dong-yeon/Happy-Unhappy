@@ -10,32 +10,25 @@ import { AbyssLaneView } from './AbyssLaneView';
 import { DayUi } from './DayUi';
 import { DefenseLaneView } from './DefenseLaneView';
 import { GridView, type DragHover } from './GridView';
+import { PartyView, partySlot } from './PartyView';
 import { PortalView } from './PortalView';
 import { ReleaseZoneView } from './ReleaseZoneView';
 import { SaveSession } from './session';
-import {
-  DEFENSE_LINE_Y,
-  HOME_Y,
-  PORTAL,
-  PORTAL_RADIUS,
-  REGION,
-  SHADOW_WALL,
-  VIEW_W,
-  WORRY_SPAWN_Y,
-  gridLayout,
-  type Rect,
-} from './layout';
+import { SkyView } from './SkyView';
+import { PORTAL, PORTAL_RADIUS, REGION, VIEW_W, gridLayout, type PortalId, type Rect } from './layout';
 import { Button, COLOR, setupCamera, text } from './ui';
 
 /** HUD 시간대 이름 (표시 텍스트) */
-const SLOT_NAMES: Record<SlotId, string> = { morning: '아침', noon: '낮', evening: '저녁' };
+/** HUD 시간대 이름 (표시 텍스트). v0.8에서 "낮"은 낮 전체를 뜻하므로 가운데 칸은 "점심" */
+const SLOT_NAMES: Record<SlotId, string> = { morning: '아침', noon: '점심', evening: '저녁' };
 
 /** 한 프레임에 넘기는 시간 상한 (백그라운드 복귀 직후 몰아서 처리하지 않도록) */
 const MAX_FRAME_MS = 100;
 
 /**
- * M6: 하루 = 한 판 (이벤트 카드·3웨이브·그림일기, 14일 일생) + 그리드 + 방어 레인(☀ 창문) + 심연 레인(◐ 손거울) + 그림자·역류
- * + C안 gating·하루 경계 저장/복원·결말 (§5.8). 게임 규칙은 core(GameState)에서, 이 씬은 표시·입력만.
+ * M8: 하루 = 낮(방어 레인, ☀ 창문 즉시 소환 / ◐ 손거울 맡기기) → 밤(심연 레인, ◐ 손거울 즉시 소환) (§5.11, D-027).
+ * 화면은 가로 레인 하나 + 하늘 띠(해/달). + C안 gating·하루 경계 저장/복원·결말 (§5.8), metrics (§5.10).
+ * 게임 규칙은 core(GameState)에서, 이 씬은 표시·입력만.
  */
 export class GameScene extends Phaser.Scene {
   private state!: GameState;
@@ -55,6 +48,12 @@ export class GameScene extends Phaser.Scene {
   private age = 0;
   private shadowMax = 1;
   private portals!: Record<'happy' | 'unhappy', PortalView>;
+  private sky!: SkyView;
+  private party!: PartyView;
+  private sleepBtn!: Button;
+  private queueLabel!: Phaser.GameObjects.Text;
+  /** 땅 띠가 지금 보여주는 단계 (전환 연출 중에는 core 단계와 다를 수 있다) */
+  private groundShown: 'day' | 'night' = 'day';
   private phaseText!: Phaser.GameObjects.Text;
   /** 디버그 배속 (dt 배율) */
   private speed = 1;
@@ -74,27 +73,27 @@ export class GameScene extends Phaser.Scene {
     this.metrics = new MetricsRecorder(this.state, size);
 
     this.drawHud(data);
-    this.drawDefenseLane();
-    this.drawAbyssLane();
-    this.drawMirrorAndBase();
+    this.sky = new SkyView(this, this.state);
+    this.drawPortalBase();
     this.drawGrid(size);
     this.drawPortals();
     this.drawBottomBar(data);
-    this.abyssView = new AbyssLaneView(this, this.state, data.chains);
-    this.laneView = new DefenseLaneView(
-      this,
-      this.state,
-      data.chains,
-      { x: this.joyText.x, y: this.joyText.y },
-      { point: () => this.abyssView.wallCenter, onAbsorb: () => this.abyssView.pulseWall() },
-    );
+    this.laneView = new DefenseLaneView(this, this.state, data.chains, { x: this.joyText.x, y: this.joyText.y });
+    this.abyssView = new AbyssLaneView(this, this.state, data.chains, partySlot);
+    this.party = new PartyView(this, this.state, data.chains, data.balance.lane.laneCap);
+    this.drawSleepButton();
     this.gridView = new GridView(this, this.state, data.chains, {
       onChange: () => this.syncUi(),
       onHover: (hover) => this.onDragHover(hover),
-      onSummon: (unit, x, y) => (unit.side === 'happy' ? this.laneView : this.abyssView).onSummon(unit, x, y),
-      canInteract: () => this.state.phase === 'waves' && !this.dayUi.blocking,
+      onSummon: (r, x, y) => {
+        if (r.unit === null) this.party.onReserve(r.reserved, x, y);
+        else (r.unit.side === 'happy' ? this.laneView : this.abyssView).onSummon(r.unit, x, y);
+      },
+      groundPortal: () => this.groundPortal(),
+      canInteract: () => this.canAct(),
       onDropResult: (fail, distance) => this.metrics.drop(fail, distance),
     });
+    this.showGround(this.state.phase === 'night' ? 'night' : 'day');
     this.dayUi = new DayUi(this, this.state, data, {
       onChange: () => this.onDebugChange(),
       onRestart: () => this.restartLife(),
@@ -157,10 +156,13 @@ export class GameScene extends Phaser.Scene {
 
   update(_time: number, delta: number): void {
     const dt = Math.min(delta, MAX_FRAME_MS) / 1000;
+    // 낮 → 밤 전환 연출(1.5초) 동안은 게임 시간을 멈춘다 (밤이 줄어들지 않게, 입력도 막힘)
+    const paused = this.sky.transitioning;
     // metrics 실제 시간: 배속을 곱하지 않은 프레임 시간 (백그라운드 동안은 프레임이 멈춘다)
-    this.metrics.frame(dt, this.speed);
-    const events = this.state.tick(dt * this.speed);
+    this.metrics.frame(paused ? 0 : dt, this.speed);
+    const events = this.state.tick(paused ? 0 : dt * this.speed);
     this.persist(events);
+    this.onPhaseEvents(events);
     this.laneView.handle(events);
     this.abyssView.handle(events);
     // 층 돌파 귀환 조각은 core에서 이미 그리드에 들어가 있다
@@ -168,8 +170,49 @@ export class GameScene extends Phaser.Scene {
     if (events.some((e) => e.type === 'layerClear' || e.type === 'dayReturn' || e.type === 'freePiece')) this.gridView.refresh();
     this.laneView.sync();
     this.abyssView.sync();
+    this.party.sync();
+    this.sky.sync();
     this.dayUi.sync();
     this.syncUi();
+  }
+
+  /** 낮/밤 전환: 해질녘 → 1.5초 연출 (절반에서 땅 띠 교체) / 새 하루(dayStart) → 낮 */
+  private onPhaseEvents(events: CoreEvent[]): void {
+    for (const e of events) {
+      if (e.type === 'dusk') {
+        this.gridView.cancel();
+        this.sky.dusk(
+          () => this.showGround('night'),
+          () => this.syncUi(),
+        );
+      } else if (e.type === 'dayStart' || e.type === 'dayBegin') {
+        if (this.groundShown !== 'day' || this.sky.mode !== 'day') {
+          this.sky.setMode('day');
+          this.showGround('day');
+        }
+      }
+    }
+  }
+
+  /** 땅 띠 내용 교체 (낮 = 방어 레인 + 맡긴 추억 줄, 밤 = 심연 레인) */
+  private showGround(which: 'day' | 'night'): void {
+    this.groundShown = which;
+    this.laneView.setShown(which === 'day');
+    this.abyssView.setShown(which === 'night');
+    this.party.setShown(which === 'day');
+    if (which === 'night' && !this.sky.transitioning) this.sky.setMode('night');
+  }
+
+  /** 지금 땅 띠가 맡는 포탈 (드롭 판정): 낮 = 창문, 밤 = 손거울 */
+  private groundPortal(): PortalId | null {
+    if (this.state.phase === 'day') return 'happy';
+    if (this.state.phase === 'night') return 'unhappy';
+    return null;
+  }
+
+  /** 그리드·버튼 입력 가능: 낮·밤 + 모달 없음 + 전환 연출 아님 */
+  private canAct(): boolean {
+    return this.state.timeFlows && !this.dayUi.blocking && !this.sky.transitioning;
   }
 
   private onDragHover(hover: DragHover): void {
@@ -192,7 +235,8 @@ export class GameScene extends Phaser.Scene {
     const w = s.wave;
     // HUD: "8살 · n일째 · 아침/낮/저녁" (보스 웨이브면 시간대 옆에 "역류")
     // dayStart에서는 아직 웨이브가 시작되지 않았으므로 전날 마지막 칸 대신 아침
-    const slot = s.phase === 'dayStart' ? SLOT_NAMES.morning : SLOT_NAMES[w.slotId];
+    const slot =
+      s.phase === 'night' ? '밤' : s.phase === 'diary' ? '새벽' : s.phase === 'dayStart' ? SLOT_NAMES.morning : SLOT_NAMES[w.slotId];
     const tag = s.bossActive ? ' 역류' : w.inBossPrep ? ' 역류 준비' : s.pendingBackflow ? ' · 역류 예약' : w.paused ? ' (정지)' : '';
     const phase = `${this.age}살 · ${s.day}일째 · ${slot}${tag}`;
     if (this.phaseText.text !== phase) this.phaseText.setText(phase).setColor(s.shadowLocked ? '#ff9e9e' : '#e8e8e8');
@@ -201,17 +245,25 @@ export class GameScene extends Phaser.Scene {
     this.shadowFill.width = this.shadowBarW * (s.shadow / this.shadowMax);
     this.shadowFill.setFillStyle(s.shadowLocked ? 0xd0607a : COLOR.unhappy);
     this.shadowFrame.setStrokeStyle(1, s.shadowLocked ? 0xff9e9e : COLOR.cellLine);
-    this.portals.happy.setClosed(s.defense.isFull);
-    this.portals.unhappy.setClosed(s.abyss.isFull);
+    // 포탈: 낮 = 창문(즉시)·손거울(맡기기, 줄이 차면 닫힘) / 밤 = 창문 닫힘·손거울(즉시) (§5.11-2)
+    const cap = this.state.defense.cap;
+    this.portals.happy.setClosed(!s.portalOpen('happy') || s.defense.isFull);
+    this.portals.unhappy.setClosed(!s.portalOpen('unhappy') || (s.isReserve('unhappy') ? s.nightParty.length >= cap : s.abyss.isFull));
+    this.portals.happy.setLabel(s.phase === 'night' ? '닫힘' : '창문');
+    this.portals.unhappy.setLabel(s.phase === 'day' ? '맡기기' : '손거울');
+    const q = s.returnQueue.length;
+    this.queueLabel.setVisible(q > 0);
+    if (q > 0) this.queueLabel.setText(`대기 ${q}`);
+    this.sleepBtn.setShown(s.canSleep && this.canAct());
     const block = s.spawnBlock;
-    const canAct = s.phase === 'waves' && !this.dayUi.blocking;
+    const canAct = this.canAct();
     this.spawnBtn
       .setLabel(block === 'full' ? '칸 가득' : block === 'noJoy' ? `기쁨 부족 (${s.spawnCost})` : `조각 생성 (${s.spawnCost})`)
       .setEnabled(block === null && canAct);
   }
 
   private onSpawn(): void {
-    if (this.state.phase !== 'waves' || this.dayUi.blocking) return;
+    if (!this.canAct()) return;
     if (this.state.spawn()) this.gridView.refresh();
     this.syncUi();
   }
@@ -231,41 +283,33 @@ export class GameScene extends Phaser.Scene {
     this.weatherText = text(this, VIEW_W - 8, midY, '', { fontSize: '12px', color: '#9fb4e0' }).setOrigin(1, 0.5);
   }
 
-  /** 왼쪽 = 양. 걱정이 위에서 내려와 아래(거점)로 다가온다 */
-  private drawDefenseLane(): void {
-    const r = REGION.defenseLane;
-    this.fill(r, COLOR.defense);
-    const cx = r.x + r.w / 2;
-    text(this, cx, WORRY_SPAWN_Y, '걱정 ↓', { fontSize: '10px', color: '#c9b98a' }).setOrigin(0.5, 0);
-    text(this, r.x + 6, r.y + r.h / 2, '방어 레인\n(양)', { fontSize: '10px', color: '#8f835f' }).setOrigin(0, 0.5);
-    this.add.line(0, 0, r.x, DEFENSE_LINE_Y, r.x + r.w, DEFENSE_LINE_Y, COLOR.line).setOrigin(0).setLineWidth(1);
-    this.character(PORTAL.happy.x, HOME_Y, COLOR.happy, 'Happy', '#f2c94c');
-  }
-
-  /** 오른쪽 = 음 (거울 속). 추억이 아래(거점)에서 위의 그림자 벽으로 멀어진다 */
-  private drawAbyssLane(): void {
-    const r = REGION.abyssLane;
-    this.fill(r, COLOR.abyss);
-    // 그림자 벽·Unhappy는 AbyssLaneView가 core 상태로 그린다
-    text(this, r.x + r.w / 2, SHADOW_WALL.y + SHADOW_WALL.h + 6, '추억 ↑', { fontSize: '10px', color: '#8796c2' }).setOrigin(0.5, 0);
-    text(this, r.x + r.w - 6, r.y + r.h / 2, '심연 레인\n(음)', { fontSize: '10px', color: '#5d6a91', align: 'right' }).setOrigin(1, 0.5);
-  }
-
-  /** 이름은 머리 위에 작게 (옆은 방어선 슬롯이 쓴다) */
-  private character(x: number, y: number, color: number, name: string, textColor: string): void {
-    this.add.circle(x, y, 10, color).setDepth(2);
-    text(this, x, y - 17, name, { fontSize: '8px', color: textColor }).setOrigin(0.5).setDepth(2);
-  }
-
-  /** 가운데 세로 거울 → 아래 끝이 포탈 받침으로 이어진다 */
-  private drawMirrorAndBase(): void {
+  /** 포탈 받침 + 귀환 대기 표시 (창문 왼쪽) */
+  private drawPortalBase(): void {
     const base = REGION.portalBase;
     this.fill(base, COLOR.grid);
-    this.fill(REGION.mirror, COLOR.mirror);
-    const pedestalW = (PORTAL.unhappy.x - PORTAL.happy.x) + PORTAL_RADIUS * 2 + 16;
-    this.add
-      .rectangle(VIEW_W / 2, base.y, pedestalW, 10, COLOR.mirror)
-      .setOrigin(0.5, 0);
+    const pedestalW = PORTAL.unhappy.x - PORTAL.happy.x + PORTAL_RADIUS * 2 + 16;
+    this.add.rectangle(VIEW_W / 2, base.y, pedestalW, 10, COLOR.mirror).setOrigin(0.5, 0);
+    this.queueLabel = text(this, PORTAL.happy.x - PORTAL_RADIUS - 6, PORTAL.happy.y, '', {
+      fontSize: '9px',
+      color: '#cfd6ea',
+      backgroundColor: '#1b1d24',
+      padding: { x: 3, y: 1 },
+    })
+      .setOrigin(1, 0.5)
+      .setDepth(6)
+      .setVisible(false);
+  }
+
+  /** [잠들기]: 밤 + 심연 유닛 0기 + 맡긴 추억 0일 때 (남은 시간 × 멈춤 그림자를 한 번에, §5.11-4) */
+  private drawSleepButton(): void {
+    const sky = REGION.sky;
+    this.sleepBtn = new Button(this, sky.x + sky.w - 52, sky.y + sky.h - 16, 88, 24, '잠들기', () => {
+      if (!this.canAct()) return;
+      this.state.sleep();
+      this.syncUi();
+    }, '11px');
+    this.sleepBtn.container.setDepth(8);
+    this.sleepBtn.setShown(false);
   }
 
   private drawPortals(): void {

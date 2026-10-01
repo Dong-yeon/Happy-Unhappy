@@ -1,4 +1,5 @@
 // 봇 정책 (스펙 §8.1 최소 세트). M4: 손거울(Unhappy) 사용, alwaysUnhappy 추가, balanced는 위/아래 배분.
+// M8 (§5.11-8): summon(cell,'unhappy')는 낮 = 맡기기, 밤 = 즉시 소환. 밤에는 창문이 닫히고 sleep()이 있다.
 import { isWildcard } from '../../src/core/grid';
 import type { Action, Policy } from '../types';
 import {
@@ -44,11 +45,12 @@ const random: Policy = {
   },
 };
 
-/** 합칠 수 있으면 합치고, 나머지는 전부 창문으로 (= greedy). 퇴화 전략 검사: 역류가 반복돼야 함 */
+/** 낮: 합칠 수 있으면 합치고, 나머지는 전부 창문으로 (맡기지 않음) / 밤: 아무것도 안 함 (가능하면 잠들기) */
 const alwaysHappy: Policy = {
   name: 'alwaysHappy',
   milestone: (_ctx, choices) => choices.find((c) => c.id === 'happy')?.id ?? choices[0].id,
   decide({ state }) {
+    if (state.phase === 'night') return state.canSleep ? { type: 'sleep' } : null;
     return (
       bestMerge(state) ??
       summonHappy(state, bestSummonCell(state)) ??
@@ -57,23 +59,24 @@ const alwaysHappy: Policy = {
   },
 };
 
-/** 합칠 수 있으면 합치고, 나머지는 전부 손거울로. 퇴화 전략 검사: 방어가 무너져야 함 */
+/** 낮: 전부 맡김 (가득이면 머지) / 밤: 전부 손거울. 퇴화 전략 검사: 방어가 무너져야 함 */
 const alwaysUnhappy: Policy = {
   name: 'alwaysUnhappy',
   milestone: (_ctx, choices) => choices.find((c) => c.id === 'unhappy')?.id ?? choices[0].id,
   decide({ state }) {
     return (
-      bestMerge(state) ??
       summonUnhappy(state, bestSummonCell(state)) ??
+      bestMerge(state) ??
       (canSpawn(state) ? { type: 'spawn' } : null)
     );
   },
 };
 
-/** 최고 단계까지 합친 뒤에만 보냄 (창문). 막히면 가장 낮은 조각을 놓아준다 (사람 쌓아두기의 대리) */
+/** 낮: 최고 단계까지 합친 뒤에만 창문으로. 막히면 가장 낮은 조각을 놓아준다 (사람 쌓아두기의 대리) / 밤: 아무것도 안 함 */
 const hoarder: Policy = {
   name: 'hoarder',
   decide({ state }) {
+    if (state.phase === 'night') return null;
     const maxTier = state.grid.maxTier;
     const merge = bestMerge(state);
     if (merge) return merge;
@@ -94,9 +97,10 @@ const hoarder: Policy = {
  * 1) 위험(방어선 근처 걱정)하면 창문으로 가장 좋은 조각
  * 2) 방어 유닛이 minUnits 미만이면 창문으로
  * 3) 합칠 수 있으면 합침 (높은 단계 우선)
- * 4) 방어가 안전하면 abyssMinTier 이상 조각을 손거울로 (정화 → 단계 +1 귀환)
+ * 4) 방어가 안전하면 abyssMinTier 이상 조각을 손거울로 맡김 (밤에 정화 → 단계 +1 귀환)
  * 5) proactiveSummonTier 이상 조각을 창문으로 미리
  * 6) 생성 → 7) 칸이 막히면 보내거나 가장 낮은 조각을 놓아줌
+ * 밤: 머지 우선, 남은 조각 중 abyssMinTier 이상을 손거울로 (§5.11-8)
  */
 const balanced: Policy = {
   name: 'balanced',
@@ -104,6 +108,7 @@ const balanced: Policy = {
   milestone: (_ctx, choices) => choices.find((c) => c.id === 'unhappy')?.id ?? choices[0].id,
   decide({ state, cfg }) {
     const p = cfg.balanced;
+    if (state.phase === 'night') return bestMerge(state) ?? summonUnhappy(state, bestSummonCell(state, p.abyssMinTier));
     const lane = state.defense;
     const lineY = lane.geo.lineY;
     const danger = lane.worries.some((w) => w.state === 'stopped' || lineY - w.y < p.dangerDistance);

@@ -6,12 +6,14 @@ import simJson from './sim.json';
 
 export type SimConfig = typeof simJson;
 
-/** 봇이 할 수 있는 행동 = 사람과 같은 core API (spawn / drop / summon / release). 치트 API 없음 */
+/** 봇이 할 수 있는 행동 = 사람과 같은 core API (spawn / drop / summon / release / sleep). 치트 API 없음 */
 export type Action =
   | { type: 'spawn' }
   | { type: 'drop'; from: number; to: number }
   | { type: 'summon'; cell: number; side: Side }
-  | { type: 'release'; cell: number };
+  | { type: 'release'; cell: number }
+  /** 밤의 [잠들기] (§5.11-4) */
+  | { type: 'sleep' };
 
 export interface PolicyContext {
   /** 읽기 전용으로만 본다. 상태 변경은 Action으로만 */

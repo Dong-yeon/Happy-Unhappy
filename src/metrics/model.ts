@@ -32,8 +32,14 @@ export interface DayMetrics {
   summons: SummonRecord[];
   dropFails: DropFails;
   dragDistance: number;
-  /** 그날 waves 단계의 실제 경과 시간(초, 배속·백그라운드 제외) */
+  /** 그날 낮 + 밤의 실제 경과 시간(초, 배속·백그라운드 제외) = dayRealSeconds + nightRealSeconds */
   realSeconds: number;
+  /** 낮(day 단계) 실제 시간 (v0.8) */
+  dayRealSeconds: number;
+  /** 밤(night 단계) 실제 시간 (v0.8) */
+  nightRealSeconds: number;
+  /** 낮에 손거울로 맡긴 수 (v0.8, = dayStats.reserved) */
+  reserved: number;
   /** 그날 ×1이 아닌 배속을 쓴 실제 시간(초) */
   speedUsed: number;
   /** 그날 gating 우회 상태로 시작했는지 */

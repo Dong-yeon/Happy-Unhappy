@@ -213,10 +213,10 @@ describe('resolveDrop / applyDrop — §4.1.1 결과표', () => {
     for (const [x, y] of [
       [PORTAL.happy.x, PORTAL.happy.y],
       [PORTAL.unhappy.x, PORTAL.unhappy.y],
-      [20, REGION.defenseLane.y + 50],
-      [340, REGION.abyssLane.y + 50],
+      [20, REGION.ground.y + 50],
+      [340, REGION.ground.y + 50],
     ]) {
-      expect(dropTarget(g, x, y).kind).toBe('summon');
+      expect(dropTarget(g, x, y, 'happy').kind).toBe('summon');
       expect(cellAt(g.cols, g.rows, x, y)).toBeNull();
       expect(applyDrop(g, 0, null)).toBe('none');
     }

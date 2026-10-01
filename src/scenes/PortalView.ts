@@ -9,6 +9,7 @@ export class PortalView {
   private readonly container: Phaser.GameObjects.Container;
   private readonly circle: Phaser.GameObjects.Arc;
   private readonly cross: Phaser.GameObjects.Text;
+  private readonly label: Phaser.GameObjects.Text;
   private look: PortalLook = 'normal';
   private hovered = false;
   private closed = false;
@@ -24,7 +25,8 @@ export class PortalView {
   ) {
     this.circle = scene.add.circle(0, 0, PORTAL_RADIUS, color).setStrokeStyle(2, COLOR.mirror);
     const i = text(scene, 0, -5, icon, { fontSize: '16px', color: textColor }).setOrigin(0.5);
-    const l = text(scene, 0, 12, label, { fontSize: '8px', color: textColor }).setOrigin(0.5);
+    this.label = text(scene, 0, 12, label, { fontSize: '8px', color: textColor }).setOrigin(0.5);
+    const l = this.label;
     this.cross = text(scene, 0, 0, '✕', { fontSize: '26px', color: '#ff8a8a', fontStyle: 'bold' }).setOrigin(0.5).setVisible(false);
     this.container = scene.add.container(x, y, [this.circle, i, l, this.cross]).setDepth(5);
   }
@@ -35,7 +37,12 @@ export class PortalView {
     this.apply();
   }
 
-  /** 드래그 중 이 포탈(또는 레인) 위 */
+  /** 단계별 역할 이름 (낮: 창문·맡기기 / 밤: 손거울) */
+  setLabel(label: string): void {
+    if (this.label.text !== label) this.label.setText(label);
+  }
+
+  /** 드래그 중 이 포탈(또는 땅 띠) 위 */
   setHovered(hovered: boolean): void {
     this.hovered = hovered;
     this.apply();

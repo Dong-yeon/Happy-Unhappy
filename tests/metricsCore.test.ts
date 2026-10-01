@@ -24,6 +24,13 @@ function game(edit: (d: GameData) => void = () => {}, cols = 4, rows = 4): GameS
   return g;
 }
 
+/** 밤으로 (심연 레인은 밤에만 돈다, §5.11). 테스트 동안 밤이 끝나지 않게 */
+function toNight(g: GameState): GameState {
+  g.debugToNight();
+  g.nightTimer = 1e6;
+  return g;
+}
+
 /** 칸 index에 조각을 직접 놓는다 */
 function put(g: GameState, index: number, chain: string, tier: number): void {
   g.grid.cells[index] = g.newPiece(chain, tier);
@@ -72,7 +79,7 @@ describe('DayStats 입력 집계', () => {
   });
 
   it('layerClearTimes: 층 돌파 시각(playTime), layersCleared와 개수 같음', () => {
-    const g = game();
+    const g = toNight(game());
     g.debugBreakLayer();
     g.tick(FIXED_DT);
     const t1 = g.playTime;
@@ -88,6 +95,7 @@ describe('DayStats 입력 집계', () => {
       d.balance.lane.abyssAdvanceSpeed = 0;
       d.balance.grid.returnQueueCap = 0;
     });
+    toNight(g);
     // 귀환 소실: 그리드 가득 + 대기열 상한 0 → 층 돌파 귀환 조각 소실
     g.summon(g.debugGrant(DOG, 1)!, 'unhappy');
     for (let i = 0; i < g.grid.cells.length; i++) if (!g.grid.cells[i]) put(g, i, BLANKET, 1);
@@ -109,6 +117,7 @@ describe('DayStats 입력 집계', () => {
     const g = game();
     g.joy = 100;
     g.spawn();
+    toNight(g);
     g.debugBreakLayer();
     g.tick(FIXED_DT);
     g.debugEndDay();

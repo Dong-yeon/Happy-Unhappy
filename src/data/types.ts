@@ -43,7 +43,13 @@ export interface Balance {
     counterRange: number;
     abyssDeathShadow: number;
     layerClearShadowReduce: number;
-    unhappyStallShadowPerSec: number;
+  };
+  /** 밤 (§5.11-7, D-027) */
+  night: {
+    /** 밤 길이(초, 달이 질 때까지) */
+    nightSeconds: number;
+    /** 밤 동안 심연 유닛 0기이면 그림자 + 이 값 × dt (Unhappy 멈춤, 외면의 대가) */
+    stallShadowPerSec: number;
   };
   shadow: {
     shadowMax: number;
@@ -160,7 +166,10 @@ export interface Days {
 }
 
 export interface Diary {
-  result: { backflow: string[]; layerCleared: string[]; manySunk: string[]; default: string[] };
+  /** 낮 결과 문장 (층 돌파 계열은 v0.8에서 night로 이동) */
+  result: { backflow: string[]; manySunk: string[]; default: string[] };
+  /** 밤 문장 (§5.11-6) */
+  night: { layerCleared: string[]; tried: string[]; none: string[] };
   forgottenDay: string;
 }
 

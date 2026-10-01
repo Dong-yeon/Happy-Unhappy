@@ -120,7 +120,7 @@ function checkCombat(c: Checker, v: unknown, path: string, extra: string[] = [])
 
 function checkBalance(c: Checker, v: unknown): { maxTier?: number; lifeLengthDays?: number } {
   const p = 'balance';
-  const b = c.obj(v, p, ['version', 'start', 'grid', 'lane', 'happy', 'wave', 'abyss', 'shadow', 'days', 'diary']);
+  const b = c.obj(v, p, ['version', 'start', 'grid', 'lane', 'happy', 'wave', 'abyss', 'night', 'shadow', 'days', 'diary']);
   if (!b) return {};
   if (b.version !== 2) c.fail(`${p}.version`, `2여야 함 (현재 ${String(b.version)})`);
   c.nums(b.start, `${p}.start`, ['joy', 'shadow'], { min: 0 });
@@ -176,12 +176,16 @@ function checkBalance(c: Checker, v: unknown): { maxTier?: number; lifeLengthDay
 
   const a = c.nums(b.abyss, `${p}.abyss`, [
     'layerHpBase', 'layerHpGrowth', 'counterAtk', 'counterAtkInterval', 'counterRange', 'abyssDeathShadow',
-    'layerClearShadowReduce', 'unhappyStallShadowPerSec',
+    'layerClearShadowReduce',
   ], { min: 0 });
   if (a) {
     c.num(a.layerHpBase, `${p}.abyss.layerHpBase`, { min: 1 });
     c.num(a.counterAtkInterval, `${p}.abyss.counterAtkInterval`, { min: 0.01 });
   }
+
+  // 밤 (v0.8, D-027): abyss.unhappyStallShadowPerSec → night.stallShadowPerSec
+  const n = c.nums(b.night, `${p}.night`, ['nightSeconds', 'stallShadowPerSec'], { min: 0 });
+  if (n) c.num(n.nightSeconds, `${p}.night.nightSeconds`, { min: 1 });
 
   const shadowKeys = ['shadowMax', 'sinkShadow', 'sinkLayerHp', 'shadowAfterBossWin', 'shadowAfterBossLose'];
   const s = c.obj(b.shadow, `${p}.shadow`, [...shadowKeys, 'weatherThresholds']);
@@ -418,10 +422,12 @@ function checkDays(c: Checker, v: unknown, eventIds: EventIds, lifeLengthDays: n
 }
 
 function checkDiary(c: Checker, v: unknown): void {
-  const d = c.obj(v, 'diary', ['result', 'forgottenDay']);
+  const d = c.obj(v, 'diary', ['result', 'night', 'forgottenDay']);
   if (!d) return;
-  const r = c.obj(d.result, 'diary.result', ['backflow', 'layerCleared', 'manySunk', 'default']);
-  if (r) for (const k of ['backflow', 'layerCleared', 'manySunk', 'default']) if (k in r) c.strList(r[k], `diary.result.${k}`);
+  const r = c.obj(d.result, 'diary.result', ['backflow', 'manySunk', 'default']);
+  if (r) for (const k of ['backflow', 'manySunk', 'default']) if (k in r) c.strList(r[k], `diary.result.${k}`);
+  const n = c.obj(d.night, 'diary.night', ['layerCleared', 'tried', 'none']);
+  if (n) for (const k of ['layerCleared', 'tried', 'none']) if (k in n) c.strList(n[k], `diary.night.${k}`);
   c.str(d.forgottenDay, 'diary.forgottenDay');
 }
 

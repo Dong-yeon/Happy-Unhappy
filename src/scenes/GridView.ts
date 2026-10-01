@@ -1,9 +1,8 @@
 // 그리드 조각 표시 + 드래그 입력. 규칙 판정은 core(GameState), 드롭 위치 판정은 layout.dropTarget.
-// 모든 조작은 드래그 하나: 칸(이동·머지·교환) / 놓아주기 영역 / 포탈·레인(소환) (v0.3.2, D-019, §4.3.1).
+// 모든 조작은 드래그 하나: 칸(이동·머지·교환) / 놓아주기 영역 / 포탈·땅 띠(소환·맡기기) (v0.3.2, D-019, §4.3.1, §5.11-2).
 import Phaser from 'phaser';
-import type { GameState, SummonBlock } from '../core/game';
+import type { GameState, SummonBlock, SummonResult } from '../core/game';
 import { isWildcard, type Piece } from '../core/grid';
-import type { Unit } from '../core/lane';
 import type { Chain } from '../data/types';
 import { CELL_H, CELL_W, DRAG_THRESHOLD, cellAt, cellCenter, dropTarget, type PortalId } from './layout';
 import { releaseHoverLabel, type ReleaseHover } from './ReleaseZoneView';
@@ -28,15 +27,21 @@ export interface GridViewHooks {
   onChange(): void;
   /** 드래그 중 놓아주기 영역·포탈 위 여부 */
   onHover(hover: DragHover): void;
-  /** 소환 성공: 드롭 지점에서 연출 시작 (core는 이미 유닛 생성) */
-  onSummon(unit: Unit, fromX: number, fromY: number): void;
+  /** 소환·맡기기 성공: 드롭 지점에서 연출 시작 (core는 이미 유닛 생성 / nightParty에 넣음) */
+  onSummon(result: Extract<SummonResult, { ok: true }>, fromX: number, fromY: number): void;
+  /** 지금 단계에서 땅 띠가 맡는 포탈 (낮 창문 / 밤 손거울, 아니면 null) */
+  groundPortal(): PortalId | null;
   /** 지금 그리드를 만질 수 있는지 (하루 단계가 waves이고 모달이 없을 때) */
   canInteract(): boolean;
   /** metrics: 드래그를 놓은 결과 (실패 사유 없으면 null) + 시작 → 놓은 점 거리 (논리 px) */
   onDropResult?(fail: 'invalid' | 'laneFull' | 'wildcard' | null, distance: number): void;
 }
 
-const SUMMON_BLOCKED_LABEL = '보낼 수 없음';
+const SUMMON_BLOCKED_LABEL: Partial<Record<SummonBlock, string>> = {
+  wildcard: '보낼 수 없음',
+  closed: '밤에는 닫힘',
+  partyFull: '맡길 자리 없음',
+};
 
 /** 놓아주기 연출: 위로 떠오르며 사라짐 */
 const RELEASE_FLOAT_PX = 36;
@@ -130,7 +135,7 @@ export class GridView {
     press.dragging = true;
     this.views[press.from]?.setPosition(w.x, w.y).setDepth(10).setScale(1.1);
 
-    const target = dropTarget(this.state.grid, w.x, w.y);
+    const target = dropTarget(this.state.grid, w.x, w.y, this.hooks.groundPortal());
     let hover: DragHover = null;
     if (target.kind === 'release') {
       const refund = this.state.releasePreview(press.from);
@@ -149,9 +154,9 @@ export class GridView {
     if (hover?.kind === 'release') {
       label = releaseHoverLabel(hover.hover);
       blocked = hover.hover === 'blocked';
-    } else if (hover?.kind === 'summon' && hover.block === 'wildcard') {
+    } else if (hover?.kind === 'summon' && hover.block && SUMMON_BLOCKED_LABEL[hover.block]) {
       // laneFull은 닫힌 포탈로 보여 주므로 태그 없음
-      label = SUMMON_BLOCKED_LABEL;
+      label = SUMMON_BLOCKED_LABEL[hover.block]!;
       blocked = true;
     }
     if (label === null) {
@@ -174,7 +179,7 @@ export class GridView {
     if (!press.dragging) return;
 
     const w = this.world(p);
-    const target = dropTarget(this.state.grid, w.x, w.y);
+    const target = dropTarget(this.state.grid, w.x, w.y, this.hooks.groundPortal());
     const distance = Math.hypot(w.x - press.startX, w.y - press.startY);
     const report = (fail: 'invalid' | 'laneFull' | 'wildcard' | null) => this.hooks.onDropResult?.(fail, distance);
     switch (target.kind) {
@@ -191,15 +196,15 @@ export class GridView {
         this.hooks.onChange();
         return;
       case 'summon': {
-        // ◐ 손거울은 M4 전까지 canSummon이 'unavailable' → 원위치
         const r = this.state.summon(press.from, target.portal);
-        report(r.ok ? null : r.reason === 'empty' ? 'invalid' : r.reason);
+        // metrics: 닫힌 포탈(밤의 창문)·맡길 자리 없음도 "닫힌 포탈(정원)"으로 센다
+        report(r.ok ? null : r.reason === 'empty' ? 'invalid' : r.reason === 'wildcard' ? 'wildcard' : 'laneFull');
         if (!r.ok) break;
         const v = this.views[press.from];
         this.views[press.from] = null;
-        v?.destroy(); // 소환 연출은 레인 쪽에서 새 표시로
+        v?.destroy(); // 소환·맡기기 연출은 레인·맡긴 추억 줄 쪽에서 새 표시로
         this.refresh(); // 귀환 대기열이 그 칸을 채웠을 수 있음
-        this.hooks.onSummon(r.unit, w.x, w.y);
+        this.hooks.onSummon(r, w.x, w.y);
         this.hooks.onChange();
         return;
       }

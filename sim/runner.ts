@@ -31,8 +31,15 @@ export interface RunResult {
   /** 각 날이 끝났을 때의 기쁨·그림자 */
   joyByDay: number[];
   shadowByDay: number[];
-  /** 각 날의 길이(×1 게임 시간, 초) = dayStats.realSeconds */
+  /** 각 날의 길이(×1 게임 시간, 초) = dayStats.realSeconds (낮 + 밤) */
   dayLengths: number[];
+  /** 각 날의 낮·밤 길이 (§5.11-8) */
+  dayLengthsDay: number[];
+  dayLengthsNight: number[];
+  /** 낮에 손거울로 맡긴 수 (일생 합) */
+  reserved: number;
+  /** 잠들기 횟수 */
+  sleeps: number;
   dayStartJoy: number[];
   dayEndJoy: number[];
   /** 1일차 일반 걱정 수·가라앉은 수 */
@@ -102,6 +109,9 @@ export function runLife(data: GameData, cfg: SimConfig, policy: Policy, opt: Run
   const joyByDay: number[] = [];
   const shadowByDay: number[] = [];
   const dayLengths: number[] = [];
+  const dayLengthsDay: number[] = [];
+  const dayLengthsNight: number[] = [];
+  let reserved = 0;
   const dayStartJoy: number[] = [];
   const dayEndJoy: number[] = [];
   let firstSinkWave: number | null = null;
@@ -111,7 +121,7 @@ export function runLife(data: GameData, cfg: SimConfig, policy: Policy, opt: Run
   let fullTicks = 0;
   let ticks = 0;
   let maxShadow = state.shadow;
-  const counts = { spawns: 0, merges: 0, releases: 0, mistakes: 0, staleActions: 0 };
+  const counts = { spawns: 0, merges: 0, releases: 0, mistakes: 0, staleActions: 0, sleeps: 0 };
 
   let nextDecision = 0;
   let pending: { action: Action; at: number } | null = null;
@@ -119,7 +129,7 @@ export function runLife(data: GameData, cfg: SimConfig, policy: Policy, opt: Run
 
   const execute = (a: Action) => {
     // 실수: 드래그 행동(드롭·소환·놓아주기)을 엉뚱한 곳에 놓아 원위치 → 아무 일도 없음
-    if (a.type !== 'spawn' && botRng() < cfg.mistakeRate) {
+    if (a.type !== 'spawn' && a.type !== 'sleep' && botRng() < cfg.mistakeRate) {
       counts.mistakes += 1;
       return;
     }
@@ -136,6 +146,10 @@ export function runLife(data: GameData, cfg: SimConfig, policy: Policy, opt: Run
       }
       case 'summon':
         if (!state.summon(a.cell, a.side).ok) counts.staleActions += 1;
+        break;
+      case 'sleep':
+        if (state.sleep()) counts.sleeps += 1;
+        else counts.staleActions += 1;
         break;
       case 'release':
         if (state.release(a.cell) !== null) counts.releases += 1;
@@ -165,6 +179,9 @@ export function runLife(data: GameData, cfg: SimConfig, policy: Policy, opt: Run
       joyByDay[i] = state.joy;
       shadowByDay[i] = state.shadow;
       dayLengths[i] = st.realSeconds;
+      dayLengthsDay[i] = st.daySeconds;
+      dayLengthsNight[i] = st.nightSeconds;
+      reserved += st.reserved;
       state.nextDay();
       continue;
     }
@@ -219,6 +236,9 @@ export function runLife(data: GameData, cfg: SimConfig, policy: Policy, opt: Run
     joyByDay,
     shadowByDay,
     dayLengths,
+    dayLengthsDay,
+    dayLengthsNight,
+    reserved,
     dayStartJoy,
     dayEndJoy,
     day1Worries,

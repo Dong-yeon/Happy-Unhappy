@@ -29,7 +29,7 @@ describe('키 경로', () => {
   it('parseSet / parseSweep', () => {
     expect(parseSet('shadow.shadowAfterBossWin=50')).toMatchObject({ value: 50, path: ['balance', 'shadow', 'shadowAfterBossWin'] });
     expect(() => parseSet('noequals')).toThrow(/key=value/);
-    const sw = parseSweep('abyss.unhappyStallShadowPerSec=0.1, 0.2,0.3');
+    const sw = parseSweep('night.stallShadowPerSec=0.1, 0.2,0.3');
     expect(sw.values.map((v) => v.value)).toEqual([0.1, 0.2, 0.3]);
     expect(() => parseSweep('happy.atk=')).toThrow();
   });
@@ -72,7 +72,7 @@ describe('applyOverrides', () => {
     const cfg = simJson as SimConfig;
     const opt = { seed: 1, grid: { cols: 5, rows: 4 } };
     const plain = runOne(data, cfg, POLICIES.idle, opt);
-    const calm = runOne(applyOverrides(data, [parseSet('abyss.unhappyStallShadowPerSec=0'), parseSet('shadow.sinkShadow=0')]), cfg, POLICIES.idle, opt);
+    const calm = runOne(applyOverrides(data, [parseSet('night.stallShadowPerSec=0'), parseSet('shadow.sinkShadow=0')]), cfg, POLICIES.idle, opt);
     expect(plain.backflows).toBeGreaterThan(0);
     expect(calm.backflows).toBe(0); // 그림자 증가원을 끄면 역류 없음
   });

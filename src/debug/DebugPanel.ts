@@ -54,7 +54,7 @@ export function createDebugPanel(
   current: GridSize,
   controls: DebugControls,
 ): void {
-  const lane = REGION.defenseLane;
+  const lane = REGION.debugPanel;
   const x0 = lane.x + 8;
   const top = lane.y + 4;
   const pages = new Map<Tab, { buttons: Button[]; items: Phaser.GameObjects.GameObject[] }>();
@@ -210,11 +210,16 @@ export function createDebugPanel(
       controls.onChange();
     }, '10px');
     y += 26;
-    btn('하루', scene, x0 + 40, y, 80, 20, '하루 끝', () => {
+    // 낮 → 밤(해질녘) / 하루 끝(그림일기까지) / 일기장
+    btn('하루', scene, x0 + 27, y, 52, 20, '밤으로', () => {
+      state.debugToNight();
+      controls.onChange();
+    }, '10px');
+    btn('하루', scene, x0 + 82, y, 52, 20, '하루 끝', () => {
       state.debugEndDay();
       controls.onChange();
     }, '10px');
-    btn('하루', scene, x0 + 124, y, 80, 20, '일기장', () => controls.openDiary(), '10px');
+    btn('하루', scene, x0 + 137, y, 52, 20, '일기장', () => controls.openDiary(), '10px');
     y += 26;
     const ids = allEventIds(data);
     let evIdx = 0;

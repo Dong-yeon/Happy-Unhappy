@@ -165,6 +165,8 @@ export const METRICS: { key: string; label: string; get: (r: RunResult) => numbe
   { key: 'firstSinkWave', label: '첫 가라앉음 웨이브', get: (r) => r.firstSinkWave },
   { key: 'firstSinkDay', label: '첫 가라앉음 일차', get: (r) => r.firstSinkDay },
   { key: 'dayLength', label: '하루 길이(초, ×1)', get: (r) => median(r.dayLengths) },
+  { key: 'dayLengthDay', label: '낮 길이(초)', get: (r) => median(r.dayLengthsDay ?? []) },
+  { key: 'dayLengthNight', label: '밤 길이(초)', get: (r) => median(r.dayLengthsNight ?? []) },
   { key: 'earlySunk', label: '1~2일차 가라앉음', get: (r) => (r.sunkByDay[0] ?? 0) + (r.sunkByDay[1] ?? 0) },
   { key: 'sunk', label: '가라앉은 수', get: (r) => r.sunk },
   { key: 'kills', label: '처치 수', get: (r) => r.kills },
@@ -174,11 +176,14 @@ export const METRICS: { key: string; label: string; get: (r: RunResult) => numbe
   { key: 'meanSummonTier', label: '소환 평균 단계', get: (r) => r.meanSummonTier },
   { key: 'upRatio', label: '창문(Happy) 비율', get: (r) => r.upRatio },
   { key: 'downRatio', label: '손거울(Unhappy) 비율', get: (r) => r.downRatio },
-  { key: 'layersCleared', label: '층 돌파', get: (r) => r.layersCleared },
+  { key: 'reserved', label: '맡긴 수 (낮 손거울)', get: (r) => r.reserved ?? null },
+  { key: 'reservedRatio', label: '맡긴 비율 (소환 중)', get: (r) => (r.summons ? (r.reserved ?? 0) / r.summons : null) },
+  { key: 'layersCleared', label: '밤 층 돌파', get: (r) => r.layersCleared },
   { key: 'backflows', label: '역류', get: (r) => r.backflows },
   { key: 'bossWins', label: '역류 보스 처치', get: (r) => r.bossWins },
   { key: 'maxShadow', label: '최대 그림자', get: (r) => r.maxShadow },
-  { key: 'stallSeconds', label: 'Unhappy 멈춤(초)', get: (r) => r.stallSeconds },
+  { key: 'stallSeconds', label: '밤 멈춤(초, 잠들기 포함)', get: (r) => r.stallSeconds },
+  { key: 'sleeps', label: '잠들기', get: (r) => r.sleeps ?? null },
   { key: 'abyssDeaths', label: '심연 유닛 사망', get: (r) => r.abyssDeaths },
   { key: 'lostReturns', label: '귀환 소실', get: (r) => r.lostReturns },
   { key: 'releases', label: '놓아주기 수', get: (r) => r.releases },
@@ -369,7 +374,7 @@ export function formatBossDiag(r: PolicyReport): string {
 
 /** 정책 간 비교 표 (중앙값 중심) */
 export function formatComparison(reports: PolicyReport[]): string {
-  const keys = ['firstSinkDay', 'sunk', 'layersCleared', 'backflows', 'bossWins', 'downRatio', 'finalJoy', 'dayLength', 'meanSummonTier'];
+  const keys = ['firstSinkDay', 'sunk', 'layersCleared', 'backflows', 'bossWins', 'downRatio', 'reservedRatio', 'finalJoy', 'dayLengthDay', 'dayLengthNight', 'meanSummonTier'];
   const header = [
     '정책',
     ...keys.map((k) => METRICS.find((m) => m.key === k)!.label + ' (중앙값)'),
@@ -625,7 +630,9 @@ export function checkM5Goals(reports: PolicyReport[], goals: SimConfig['m5Goals'
     out.push({
       label: `하루 길이: 측정값 보고 (목표 ${fmt(lo / 60, 0)}~${fmt(hi / 60, 0)}분은 수치 조정 후 판정)`,
       pass: null,
-      detail: `balanced 하루 길이 중앙값 ${fmt(len.median, 0)}초 (${fmt(len.median / 60, 1)}분) [p10 ${fmt(len.p10, 0)} ~ p90 ${fmt(len.p90, 0)}]`,
+      detail:
+        `balanced 하루 길이 중앙값 ${fmt(len.median, 0)}초 (${fmt(len.median / 60, 1)}분) [p10 ${fmt(len.p10, 0)} ~ p90 ${fmt(len.p90, 0)}]` +
+        ` · 낮 ${fmt(bal.summary.dayLengthDay?.median, 0)}초 + 밤 ${fmt(bal.summary.dayLengthNight?.median, 0)}초`,
     });
   } else out.push({ label: 'balanced', pass: null, detail: '실행하지 않음' });
 

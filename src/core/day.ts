@@ -1,11 +1,12 @@
-// 하루 구조 (스펙 §5.1~5.3, §5.7). Phaser 의존 없음.
-// 상태 흐름: dayStart ──(카드 닫기/이정표 선택)──▶ waves ──(저녁 종료)──▶ dayEnd ──▶ diary ──([다음 날])──▶ 다음 dayStart
-//                                                                          14일째 diary 후 → lifeEnd
+// 하루 구조 (스펙 §5.1~5.3, §5.7, §5.11). Phaser 의존 없음.
+// 상태 흐름 (v0.8, D-027): dayStart ──(카드 닫기/이정표 선택)──▶ day(낮: 방어) ──(저녁 종료 → 해질녘)──▶ night(밤: 심연)
+//                          ──(달이 짐·잠들기 → 새벽)──▶ diary ──([다음 날])──▶ 다음 dayStart   14일째 diary 후 → lifeEnd
 
 import type { DailyEvent, EventEffects, GameData, Milestone, SeasonalEvent } from '../data/types';
 import { weightedPick, type Rng } from './rng';
 
-export type DayPhase = 'dayStart' | 'waves' | 'dayEnd' | 'diary' | 'lifeEnd';
+/** 해질녘(dusk)·새벽(dawn)은 단계가 아니라 즉시 처리 (§5.11-1) */
+export type DayPhase = 'dayStart' | 'day' | 'night' | 'diary' | 'lifeEnd';
 
 /** 그날 무슨 날인지 (카드 표시·효과·그림일기 문장) */
 export type DayEvent =
@@ -27,8 +28,14 @@ export interface DayStats {
   sentDown: number;
   joyStart: number;
   joyEnd: number;
-  /** ×1 기준 하루 길이(초) = waves 단계에서 흐른 게임 시간 */
+  /** ×1 기준 하루 길이(초) = 낮 + 밤에 흐른 게임 시간 */
   realSeconds: number;
+  /** 낮(day 단계) 게임 시간(초) */
+  daySeconds: number;
+  /** 밤(night 단계) 게임 시간(초). 잠들기로 건너뛴 시간은 들어가지 않는다 */
+  nightSeconds: number;
+  /** 낮에 손거울로 맡긴 수 (§5.11-3) */
+  reserved: number;
   // ── M7 metrics (§5.10-1). 관찰만 한다: 게임 규칙은 이 값을 읽지 않는다 ──
   /** 조각 생성 수 */
   spawns: number;
@@ -41,7 +48,7 @@ export interface DayStats {
   abyssDeaths: number;
   /** Unhappy 멈춤 시간(초) */
   stallSeconds: number;
-  /** waves 단계에서 그리드에 빈칸이 없던 게임 시간(초) */
+  /** 낮·밤에 그리드에 빈칸이 없던 게임 시간(초) */
   gridFullSeconds: number;
   /** 그날 층 돌파 시각 (playTime) */
   layerClearTimes: number[];
@@ -59,6 +66,9 @@ export function emptyDayStats(joy: number, maxTier: number): DayStats {
     joyStart: joy,
     joyEnd: joy,
     realSeconds: 0,
+    daySeconds: 0,
+    nightSeconds: 0,
+    reserved: 0,
     spawns: 0,
     merges: 0,
     releases: 0,

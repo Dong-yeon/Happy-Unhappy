@@ -37,10 +37,13 @@ function dayMetrics(day: number, summons = 0): DayMetrics {
     realDate: '2026-10-01',
     eventId: 'plain',
     dayStats: { ...emptyDay() },
-    summons: Array.from({ length: summons }, (_, i) => ({ t: i, day, side: 'happy' as const, chain: 'companion_animal', tier: 1, cell: { col: 0, row: 0 }, heldFor: 0 })),
+    summons: Array.from({ length: summons }, (_, i) => ({ t: i, day, side: 'happy' as const, chain: 'companion_animal', tier: 1, cell: { col: 0, row: 0 }, heldFor: 0, reserved: false })),
     dropFails: { invalid: 0, laneFull: 0, wildcard: 0 },
     dragDistance: 0,
     realSeconds: 60,
+    dayRealSeconds: 40,
+    nightRealSeconds: 20,
+    reserved: 0,
     speedUsed: 0,
     bypass: false,
     rating: null,
@@ -274,7 +277,7 @@ describe('MetricsRecorder', () => {
     const rec = new MetricsRecorder(s, SIZE);
     s.confirmDay();
     expect(() => rec.beginDay(false)).not.toThrow();
-    expect(s.phase).toBe('waves');
+    expect(s.phase).toBe('day');
   });
 });
 

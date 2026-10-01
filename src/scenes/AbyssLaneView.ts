@@ -1,18 +1,18 @@
-// 심연 레인 표시: 추억 유닛(위로 전진), 그림자 벽(HP·층), Unhappy 멈춤, 귀환 대기열 + 흐름 연출 (§4.3.2, §4.2.1).
-// 상태는 항상 core에서 읽는다. 이벤트는 연출(귀환 빛 조각, 벽 흡수, 소멸)에만 쓴다.
+// 밤의 심연 레인 표시 (§4.3.2, §5.11-2): 가로 레인. Unhappy 출발점은 왼쪽, 그림자 벽은 오른쪽 끝.
+// 상태는 항상 core에서 읽고 layout.toScreen()으로 화면에 옮긴다. 이벤트는 연출(해질녘 하강, 귀환 빛 조각, 소멸)에만 쓴다.
 import Phaser from 'phaser';
 import type { CoreEvent, GameState } from '../core/game';
 import { isWildcard, type Piece } from '../core/grid';
 import type { Unit } from '../core/lane';
 import type { Chain } from '../data/types';
-import { HOME_Y, PORTAL, PORTAL_RADIUS, SHADOW_WALL, cellCenter } from './layout';
+import { CORE, HOME, PORTAL, REGION, cellCenter, progressX, toScreen } from './layout';
 import { COLOR, text } from './ui';
 
 const UNIT_SIZE = 16;
 const HP_BAR_W = 16;
 const SUMMON_MS = 250; // 조각 → 손거울 → 출발선
+const DUSK_MS = 600; // 해질녘: 맡긴 추억 줄 → 손거울 → 출발선
 const RETURN_MS = 450; // 유닛 자리 → 손거울 → 그리드 칸
-const PULSE_MS = 120;
 
 interface UnitView {
   container: Phaser.GameObjects.Container;
@@ -22,96 +22,78 @@ interface UnitView {
 }
 
 export class AbyssLaneView {
+  /** 밤 레인 전체 (낮에는 숨김) */
+  readonly root: Phaser.GameObjects.Container;
   private readonly units = new Map<number, UnitView>();
   private readonly chainColor = new Map<string, number>();
-  private readonly wall: Phaser.GameObjects.Container;
   private readonly wallLabel: Phaser.GameObjects.Text;
   private readonly wallBar: Phaser.GameObjects.Rectangle;
+  private readonly wallX: number;
   private readonly unhappy: Phaser.GameObjects.Arc;
   private readonly unhappyLabel: Phaser.GameObjects.Text;
-  private readonly queueLabel: Phaser.GameObjects.Text;
   private stalledShown = false;
 
   constructor(
     private readonly scene: Phaser.Scene,
     private readonly state: GameState,
     chains: Chain[],
+    /** 해질녘 연출 시작점: 맡긴 추억 줄의 i번째 칸 */
+    private readonly partySlot: (i: number) => { x: number; y: number },
   ) {
     for (const c of chains) this.chainColor.set(c.archetypeId, parseInt(c.color.slice(1), 16));
-
-    // 그림자 벽: 배경 + 남은 HP 막대 + "N층 hp/max"
-    const w = SHADOW_WALL;
-    const bg = scene.add.rectangle(0, 0, w.w, w.h, COLOR.wall);
-    this.wallBar = scene.add.rectangle(-w.w / 2, w.h / 2 - 2, w.w, 3, COLOR.unhappy).setOrigin(0, 0.5);
-    this.wallLabel = text(scene, 0, -1, '', { fontSize: '9px', color: '#8796c2' }).setOrigin(0.5);
-    this.wall = scene.add.container(w.x + w.w / 2, w.y + w.h / 2, [bg, this.wallBar, this.wallLabel]).setDepth(2);
-
-    // Unhappy: 손거울 포탈 바로 위. 멈추면 흐려지고 "멈춤"
-    this.unhappy = scene.add.circle(PORTAL.unhappy.x, HOME_Y, 10, COLOR.unhappy).setDepth(2);
-    this.unhappyLabel = text(scene, PORTAL.unhappy.x, HOME_Y - 17, 'Unhappy', { fontSize: '8px', color: '#9fb0e0' })
-      .setOrigin(0.5)
-      .setDepth(2);
-
-    // 귀환 대기열: 손거울 옆 작은 표시
-    this.queueLabel = text(scene, PORTAL.unhappy.x + PORTAL_RADIUS + 6, PORTAL.unhappy.y, '', {
-      fontSize: '9px',
-      color: '#cfd6ea',
-      backgroundColor: '#1b1d24',
-      padding: { x: 3, y: 1 },
-    })
-      .setOrigin(0, 0.5)
-      .setDepth(6)
+    const g = REGION.ground;
+    const bg = scene.add.rectangle(g.x, g.y, g.w, g.h, COLOR.abyss).setOrigin(0);
+    // 그림자 벽: 진행 축 끝(오른쪽) 세로 띠 + 남은 HP 막대(세로) + "N층 hp/max"
+    this.wallX = progressX(CORE.wallY);
+    const wall = scene.add.rectangle(this.wallX, g.y, g.x + g.w - this.wallX, g.h, COLOR.wall).setOrigin(0);
+    this.wallBar = scene.add.rectangle(this.wallX + 2, g.y + g.h, 3, g.h, COLOR.unhappy).setOrigin(0, 1);
+    this.wallLabel = text(scene, this.wallX - 4, g.y + 4, '', { fontSize: '9px', color: '#8796c2' }).setOrigin(1, 0);
+    const startX = progressX(CORE.lineY);
+    const start = scene.add.line(0, 0, startX, g.y + 6, startX, g.y + g.h - 6, COLOR.portalUnhappy, 0.4).setOrigin(0).setLineWidth(1);
+    const label = text(scene, g.x + g.w / 2, g.y + g.h - 4, '밤 · 꿈속 심연 →', { fontSize: '9px', color: '#5d6a91' }).setOrigin(0.5, 1);
+    const home = HOME.abyss;
+    this.unhappy = scene.add.circle(home.x, home.y, 10, COLOR.unhappy);
+    this.unhappyLabel = text(scene, 2, home.y - 17, 'Unhappy', { fontSize: '8px', color: '#9fb0e0' }).setOrigin(0, 0.5) // 화면 왼쪽 끝이라 왼쪽 정렬;
+    this.root = scene.add
+      .container(0, 0, [bg, wall, this.wallBar, this.wallLabel, start, label, this.unhappy, this.unhappyLabel])
+      .setDepth(1)
       .setVisible(false);
   }
 
-  /** 소환 연출: 드롭 지점 → ◐ 손거울 포탈 → 출발선 슬롯. core에서는 이미 전진 시작 */
+  setShown(shown: boolean): void {
+    this.root.setVisible(shown);
+  }
+
+  /** 밤의 즉시 소환 연출: 드롭 지점 → ◐ 손거울 포탈 → 출발선 슬롯. core에서는 이미 전진 시작 */
   onSummon(unit: Unit, fromX: number, fromY: number): void {
-    const v = this.makeUnit(unit);
-    v.tweening = true;
-    v.container.setPosition(fromX, fromY).setDepth(15);
-    this.scene.tweens.chain({
-      targets: v.container,
-      tweens: [
-        { x: PORTAL.unhappy.x, y: PORTAL.unhappy.y, scale: 0.6, duration: SUMMON_MS / 2, ease: 'Sine.easeIn' },
-        { x: unit.x, y: unit.y, scale: 1, duration: SUMMON_MS / 2, ease: 'Sine.easeOut' },
-      ],
-      onComplete: () => {
-        v.tweening = false;
-        v.container.setDepth(3);
-      },
-    });
+    this.flyIn(unit, [{ x: fromX, y: fromY }, PORTAL.unhappy], SUMMON_MS);
   }
 
   /** core 이벤트 → 연출. sync() 전에 호출 */
   handle(events: CoreEvent[]): void {
     for (const e of events) {
       if (e.type === 'abyssUnitDie') this.removeUnit(e.unitId, true);
-      else if (e.type === 'layerClear' || (e.type === 'dayReturn' && e.side === 'unhappy')) {
+      else if (e.type === 'dusk') {
+        // 해질녘: 맡긴 추억이 줄에서 손거울을 지나 출발선으로 내려간다
+        e.units.forEach((u, i) => this.flyIn(u, [this.partySlot(i), PORTAL.unhappy], DUSK_MS));
+      } else if (e.type === 'layerClear' || (e.type === 'dayReturn' && e.side === 'unhappy')) {
         for (const r of e.returns) {
+          const v = this.units.get(r.unitId);
+          const from = v ? { x: v.container.x, y: v.container.y } : toScreen('abyss', r.x, r.y);
           this.removeUnit(r.unitId, false);
-          this.returnFlow(r.piece, r.x, r.y, r.placedAt, r.lost);
+          this.returnFlow(r.piece, from.x, from.y, r.placedAt, r.lost);
         }
       }
     }
-  }
-
-  /** 가라앉은 걱정이 거울을 지나 벽에 흡수됨 (DefenseLaneView가 연출 끝에 호출) */
-  pulseWall(): void {
-    this.scene.tweens.add({ targets: this.wall, scaleY: 1.35, scaleX: 1.02, duration: PULSE_MS, yoyo: true });
-  }
-
-  /** 벽 중심 (가라앉음 흐름의 도착점) */
-  get wallCenter(): { x: number; y: number } {
-    return { x: this.wall.x, y: this.wall.y };
   }
 
   /** 표시를 core 상태에 맞춘다 (매 프레임) */
   sync(): void {
     const s = this.state;
     const w = s.abyss.wall;
-    const label = `▓ 그림자 벽 ${w.layer}층  ${Math.max(0, Math.ceil(w.hp))}/${Math.ceil(w.maxHp)} ▓`;
+    const label = `▓ 그림자 벽 ${w.layer}층  ${Math.max(0, Math.ceil(w.hp))}/${Math.ceil(w.maxHp)}`;
     if (this.wallLabel.text !== label) this.wallLabel.setText(label);
-    this.wallBar.width = SHADOW_WALL.w * Math.max(0, Math.min(1, w.hp / w.maxHp));
+    this.wallBar.height = REGION.ground.h * Math.max(0, Math.min(1, w.hp / w.maxHp));
 
     if (s.unhappyStalled !== this.stalledShown) {
       this.stalledShown = s.unhappyStalled;
@@ -119,24 +101,52 @@ export class AbyssLaneView {
       this.unhappyLabel.setText(s.unhappyStalled ? 'Unhappy · 멈춤' : 'Unhappy').setColor(s.unhappyStalled ? '#ff9e9e' : '#9fb0e0');
     }
 
-    const q = s.returnQueue.length;
-    this.queueLabel.setVisible(q > 0);
-    if (q > 0) this.queueLabel.setText(`대기 ${q}`);
-
     const live = new Set<number>();
     for (const u of s.abyss.units) {
       live.add(u.id);
       const v = this.units.get(u.id) ?? this.makeUnit(u);
-      if (!v.tweening) v.container.setPosition(u.x, u.y);
+      if (!v.tweening) {
+        const p = toScreen('abyss', u.x, u.y);
+        v.container.setPosition(p.x, p.y);
+      }
       v.bar.width = HP_BAR_W * Math.max(0, Math.min(1, u.hp / u.maxHp));
     }
     for (const id of [...this.units.keys()]) if (!live.has(id)) this.removeUnit(id, true);
   }
 
+  /** 경유점들을 지나 유닛 자리로 (도착 전에는 core 위치를 따라가지 않는다) */
+  private flyIn(unit: Unit, via: { x: number; y: number }[], ms: number): void {
+    const v = this.units.get(unit.id) ?? this.makeUnit(unit);
+    v.tweening = true;
+    this.root.remove(v.container);
+    v.container.setPosition(via[0].x, via[0].y).setDepth(15).setScale(0.6);
+    const live = () => this.state.abyss.units.find((u) => u.id === unit.id) ?? unit;
+    const steps = via.slice(1).map((p) => ({ x: p.x, y: p.y, duration: ms / via.length, ease: 'Sine.easeIn' }));
+    this.scene.tweens.chain({
+      targets: v.container,
+      tweens: [
+        ...steps,
+        {
+          x: { getEnd: () => toScreen('abyss', live().x, live().y).x },
+          y: { getEnd: () => toScreen('abyss', live().x, live().y).y },
+          scale: 1,
+          duration: ms / via.length,
+          ease: 'Sine.easeOut',
+        },
+      ],
+      onComplete: () => {
+        v.tweening = false;
+        if (!v.container.active) return;
+        v.container.setDepth(0);
+        this.root.add(v.container);
+      },
+    });
+  }
+
   private makeUnit(u: Unit): UnitView {
     const maxTier = this.state.grid.maxTier;
     const fill = this.chainColor.get(u.chain) ?? 0x999999;
-    // 거울 속 = 차가운 팔레트: 같은 체인 색에 차가운 테두리
+    // 꿈속 = 차가운 팔레트: 같은 체인 색에 차가운 테두리
     const body = this.scene.add.rectangle(0, 0, UNIT_SIZE, UNIT_SIZE, fill).setStrokeStyle(2, COLOR.portalUnhappy);
     const label = text(this.scene, 0, 0, u.tier >= maxTier ? '★' : String(u.tier), {
       fontSize: '10px',
@@ -145,7 +155,9 @@ export class AbyssLaneView {
     }).setOrigin(0.5);
     const bg = this.scene.add.rectangle(-HP_BAR_W / 2, UNIT_SIZE / 2 + 3, HP_BAR_W, 3, 0x1b1d24).setOrigin(0, 0.5);
     const bar = this.scene.add.rectangle(-HP_BAR_W / 2, UNIT_SIZE / 2 + 3, HP_BAR_W, 3, 0x9fc3ff).setOrigin(0, 0.5);
-    const container = this.scene.add.container(u.x, u.y, [body, label, bg, bar]).setDepth(3);
+    const p = toScreen('abyss', u.x, u.y);
+    const container = this.scene.add.container(p.x, p.y, [body, label, bg, bar]);
+    this.root.add(container);
     const v = { container, bar, tweening: false };
     this.units.set(u.id, v);
     return v;
@@ -163,7 +175,7 @@ export class AbyssLaneView {
     this.scene.tweens.add({ targets: v.container, alpha: 0, duration: 150, onComplete: () => v.container.destroy() });
   }
 
-  /** 층 돌파 귀환: 빛 조각이 ◐ 손거울 포탈을 지나 그리드 칸으로 (대기열이면 손거울 옆, 소실이면 포탈에서 사라짐) */
+  /** 층 돌파·새벽 귀환: 빛 조각이 ◐ 손거울 포탈을 지나 그리드 칸으로 (대기열이면 귀환 대기 표시, 소실이면 포탈에서 사라짐) */
   private returnFlow(piece: Piece, x: number, y: number, placedAt: number | null, lost: boolean): void {
     const fill = isWildcard(piece) ? COLOR.wildcard : (this.chainColor.get(piece.chain) ?? 0xffffff);
     const light = this.scene.add.rectangle(x, y, 12, 12, fill).setStrokeStyle(1, 0xffffff).setDepth(40);
@@ -173,7 +185,7 @@ export class AbyssLaneView {
         ? cellCenter(cols, rows, placedAt)
         : lost
           ? { x: PORTAL.unhappy.x, y: PORTAL.unhappy.y }
-          : { x: this.queueLabel.x + 10, y: this.queueLabel.y };
+          : { x: PORTAL.happy.x - 40, y: PORTAL.happy.y };
     this.scene.tweens.chain({
       targets: light,
       tweens: [

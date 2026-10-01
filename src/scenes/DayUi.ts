@@ -115,7 +115,7 @@ export class DayUi {
     private readonly hooks: DayUiHooks,
   ) {
     // 역류 준비 시간 경고 띠: 방어 레인 위쪽
-    const r = REGION.defenseLane;
+    const r = REGION.ground;
     const band = scene.add.rectangle(0, 0, r.w, 22, 0x7a2e3e, 0.92).setOrigin(0);
     this.prepText = text(scene, r.w / 2, 11, '', { fontSize: '11px', color: '#ffd6de', fontStyle: 'bold' }).setOrigin(0.5);
     this.prepBand = scene.add.container(r.x, r.y + 2, [band, this.prepText]).setDepth(45).setVisible(false);
@@ -145,7 +145,7 @@ export class DayUi {
       const t = this.waitLabel();
       if (this.waitText.text !== t) this.waitText.setText(t);
     }
-    const prep = s.phase === 'waves' && s.wave.inBossPrep;
+    const prep = s.phase === 'day' && s.wave.inBossPrep;
     this.prepBand.setVisible(prep);
     if (prep) this.prepText.setText(`⚠ 역류가 다가온다 · ${Math.ceil(s.wave.timer)}초`);
   }

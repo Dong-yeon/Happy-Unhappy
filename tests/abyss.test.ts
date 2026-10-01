@@ -23,6 +23,14 @@ function game(edit: (d: GameData) => void = () => {}, seed = 1, cols = 4, rows =
   g.confirmDay();
   return g;
 }
+/** 밤 (§5.11): 낮을 건너뛰고 해질녘 → 심연 레인만 진행. 테스트 동안 밤이 끝나지 않게 시간을 넉넉히 */
+function night(edit: (d: GameData) => void = () => {}, seed = 1, cols = 4, rows = 4): GameState {
+  const g = game(edit, seed, cols, rows);
+  g.debugToNight();
+  g.nightTimer = 1e6;
+  g.tick(0); // 해질녘 이벤트 비우기
+  return g;
+}
 function ticks(g: GameState, n: number): CoreEvent[] {
   const out: CoreEvent[] = [];
   for (let i = 0; i < n; i++) out.push(...g.tick(FIXED_DT));
@@ -125,8 +133,7 @@ describe('벽의 반격', () => {
 
 describe('층 돌파', () => {
   it('전진 중 유닛 포함 전원 귀환: 1·2단계 → +1, 3단계 → 와일드카드 + heroFirstPurify (중복 없음)', () => {
-    const g = game();
-    g.wave.paused = true;
+    const g = night();
     for (const [c, t] of [[DOG, 1], [BLANKET, 2], [DOG, 3]] as const) g.summon(g.debugGrant(c, t)!, 'unhappy');
     ticks(g, 30); // 모두 아직 전진 중
     expect(g.abyss.units.every((u) => !u.arrived)).toBe(true);
@@ -153,8 +160,7 @@ describe('층 돌파', () => {
   });
 
   it('extraHp는 현재 층에만 누적, 돌파하면 0 / 다음 층 HP = 기본 공식', () => {
-    const g = game();
-    g.wave.paused = true;
+    const g = night();
     g.abyss.addExtraHp(15);
     expect(g.abyss.wall).toMatchObject({ extraHp: 15, maxHp: base.balance.abyss.layerHpBase + 15 });
     g.debugBreakLayer();
@@ -165,8 +171,7 @@ describe('층 돌파', () => {
   });
 
   it('그림자 감소량 = shadowPurified 증가량 (0 미만 불가)', () => {
-    const g = game();
-    g.wave.paused = true;
+    const g = night((d) => (d.balance.night.stallShadowPerSec = 0)); // 돌파 후 0기 → 멈춤 그림자 제외
     g.debugSetShadow(40);
     g.debugBreakLayer();
     ticks(g, 1);
@@ -185,8 +190,7 @@ describe('층 돌파', () => {
 describe('귀환 칸 부족 → 대기열 → 상한 초과 소실', () => {
   it('그리드가 가득이면 대기열, returnQueueCap을 넘으면 소실', () => {
     const cap = base.balance.grid.returnQueueCap;
-    const g = game();
-    g.wave.paused = true;
+    const g = night();
     for (let k = 0; k < 5; k++) g.summon(g.debugGrant(DOG, 1)!, 'unhappy');
     while (g.debugGrant(BLANKET, 1) !== null); // 그리드 가득
     for (let k = 0; k < cap - 2; k++) g.enqueueReturn(g.newPiece(BLANKET, 1)); // 대기열에 cap-2개
@@ -206,8 +210,7 @@ describe('귀환 칸 부족 → 대기열 → 상한 초과 소실', () => {
 
 describe('심연 유닛 사망', () => {
   it('조각 소실 + 그림자 +abyssDeathShadow, 슬롯이 빈다', () => {
-    const g = game();
-    g.wave.paused = true;
+    const g = night((d) => (d.balance.night.stallShadowPerSec = 0)); // 사망 뒤 멈춤 그림자 제외
     g.summon(g.debugGrant(DOG, 2)!, 'unhappy');
     const gridBefore = structuredClone(g.grid.cells);
     g.debugKillAbyssUnits();
@@ -220,36 +223,31 @@ describe('심연 유닛 사망', () => {
   });
 });
 
-describe('Unhappy 멈춤', () => {
-  const rate = base.balance.abyss.unhappyStallShadowPerSec;
+describe('Unhappy 멈춤 (밤에만, §5.11-4)', () => {
+  const rate = base.balance.night.stallShadowPerSec;
 
-  it('심연 유닛 0기 + 웨이브 진행 중에만 그림자 증가 (stallStart / stallEnd)', () => {
-    const g = game();
-    g.wave.startNext(); // 대기 건너뛰기 → 다음 틱에 아침 웨이브 시작
-    const es = ticks(g, 1);
-    g.wave.paused = true; // 이후 걱정은 더 안 나오게
-    expect(g.wave.active).toBe(true);
-    es.push(...ticks(g, 59));
+  it('밤 + 심연 유닛 0기면 그림자 +stallShadowPerSec × dt (stallStart / stallEnd)', () => {
+    const g = night();
     expect(g.unhappyStalled).toBe(true);
-    expect(ofType(es, 'stallStart')).toHaveLength(1);
+    const es = ticks(g, 60);
     expect(g.shadow).toBeCloseTo(rate * 1, 9);
     expect(g.stats.stallSeconds).toBeCloseTo(1, 9);
 
     g.summon(g.debugGrant(DOG, 1)!, 'unhappy');
     const es2 = ticks(g, 60);
-    expect(ofType(es2, 'stallEnd')).toHaveLength(1);
+    expect(ofType([...es, ...es2], 'stallEnd')).toHaveLength(1);
     expect(g.shadow).toBeCloseTo(rate * 1, 9); // 더 늘지 않음
   });
 
-  it('waiting·gap에는 증가 없음', () => {
+  it('낮에는 심연 유닛이 없어도 멈춤 없음 (웨이브 진행 중에도)', () => {
     const g = game();
-    ticks(g, 60); // waiting (첫 웨이브 전)
-    expect(g.shadow).toBe(0);
-    expect(g.unhappyStalled).toBe(false);
-    g.wave.phase = 'gap';
-    g.wave.timer = 100;
+    g.wave.startNext();
+    ticks(g, 1);
+    g.wave.paused = true;
+    expect(g.wave.active).toBe(true);
     ticks(g, 120);
     expect(g.shadow).toBe(0);
+    expect(g.unhappyStalled).toBe(false);
   });
 });
 
@@ -259,7 +257,6 @@ describe('가라앉음 → 그림자·층 HP', () => {
       d.balance.happy.atk = 0; // Happy가 걱정을 치지 않게
       d.balance.lane.abyssAdvanceSpeed = 0; // 심연 유닛은 제자리 (멈춤 방지용)
     });
-    g.summon(g.debugGrant(DOG, 1)!, 'unhappy');
     g.wave.startNext();
     let sink: CoreEvent | undefined;
     let shadowBefore = 0;
@@ -348,8 +345,7 @@ describe('마음 날씨', () => {
   });
 
   it('그림자가 바뀐 틱에 shadowChange { value, weather }', () => {
-    const g = game();
-    g.wave.paused = true;
+    const g = night((d) => (d.balance.night.stallShadowPerSec = 0));
     g.summon(g.debugGrant(DOG, 1)!, 'unhappy');
     g.debugKillAbyssUnits();
     const [ch] = ofType(ticks(g, 1), 'shadowChange');
@@ -380,8 +376,9 @@ function scenario(seed: number, advance: (g: GameState, s: number) => string[]) 
   const ev: string[] = [];
   ev.push(...advance(g, 3));
   g.summon(g.debugGrant(DOG, 3)!, 'happy');
-  g.summon(g.debugGrant(BLANKET, 2)!, 'unhappy');
+  g.summon(g.debugGrant(BLANKET, 2)!, 'unhappy'); // 낮: 맡기기
   g.summon(g.debugGrant(DOG, 3)!, 'unhappy');
+  g.debugToNight(); // 해질녘: 맡긴 두 조각이 심연 출발선에
   ev.push(...advance(g, 10));
   g.summon(g.debugGrant(BLANKET, 1)!, 'unhappy');
   ev.push(...advance(g, 20));

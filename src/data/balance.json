@@ -33,8 +33,11 @@
     "counterAtkInterval": 1.5,
     "counterRange": 60,
     "abyssDeathShadow": 5,
-    "layerClearShadowReduce": 15,
-    "unhappyStallShadowPerSec": 0.3
+    "layerClearShadowReduce": 15
+  },
+  "night": {
+    "nightSeconds": 60,
+    "stallShadowPerSec": 0.3
   },
   "shadow": {
     "shadowMax": 100,
