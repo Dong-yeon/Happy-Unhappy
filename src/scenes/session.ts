@@ -71,7 +71,7 @@ export class SaveSession {
 
   /**
    * 지급 확인 (앱 부팅·visibilitychange → visible·[다시 확인]·디버그 날짜 오프셋). gating만 즉시 저장.
-   * atDay: 다음에 플레이할 게임 일차 (dayStart면 그날, diary·lifeEnd면 다음 날)
+   * atDay: 다음에 플레이할 게임 일차 (dayStart면 그날, diary·chapterComplete면 다음 날)
    */
   checkGrant(state: GameState): { granted: number; forgotten: number } {
     const atDay = state.phase === 'dayStart' ? state.day : state.day + 1;
@@ -82,7 +82,7 @@ export class SaveSession {
     return { granted: r.granted, forgotten: r.forgotten };
   }
 
-  /** dayStart·lifeEnd 진입: game 저장 */
+  /** dayStart·chapterComplete 진입: game 저장 */
   saveGame(state: GameState): void {
     this.game = serializeGame(state);
     this.write();

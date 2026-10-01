@@ -1,13 +1,12 @@
 // 저장 데이터 (스펙 §5.8-2, §7). Phaser·브라우저 의존 없음 (localStorage는 platform/storage.ts).
-// 하루 경계(dayStart·diary·lifeEnd)에서만 게임을 저장한다. 웨이브 진행 중 상태(레인 유닛·걱정·웨이브 타이머)는 저장하지 않는다.
+// 하루 경계(dayStart·diary·chapterComplete)에서만 게임을 저장한다. 웨이브 진행 중 상태(레인 유닛·걱정·웨이브 타이머)는 저장하지 않는다.
 // 파싱은 알 수 없는 키도 오류로 본다 (data/validate.ts의 Checker 재사용).
 
-import type { EndingId, GameData } from '../data/types';
+import type { GameData } from '../data/types';
 import { Checker } from '../data/validate';
 import type { DailyUse, DayStats } from './day';
 import { eventById } from './day';
 import type { DiaryCategory, DiaryEntry, NightCategory } from './diary';
-import { BREAKDOWN_KEYS, type EndingResult } from './ending';
 import type { BossRecord, GameState, SummonRecord } from './game';
 import { isValidDate, type GatingState } from './gating';
 import { BRANCHES, type GrowthResult, type GrowthState, type Traits } from './growth';
@@ -17,8 +16,8 @@ import { GAME_STATS_KEYS, type GameStats } from './stats';
 
 export const SAVE_VERSION = 2;
 
-export type SavePhase = 'dayStart' | 'diary' | 'lifeEnd';
-const SAVE_PHASES: readonly SavePhase[] = ['dayStart', 'diary', 'lifeEnd'];
+export type SavePhase = 'dayStart' | 'diary' | 'chapterComplete';
+const SAVE_PHASES: readonly SavePhase[] = ['dayStart', 'diary', 'chapterComplete'];
 
 export interface SaveGame {
   seed: number;
@@ -57,12 +56,15 @@ export interface SaveGame {
   lastDayStats: DayStats | null;
   bossLog: BossRecord[];
   summonLog: SummonRecord[];
-  /** lifeEnd일 때만 */
-  ending: EndingResult | null;
+  /** chapterComplete일 때만: 완성 true / 미완성 false (§5.15-7) */
+  completed: boolean | null;
+  /** 갈림길 대기: 1-turningPoint를 정화함 → 다음 dayStart에 자라기 + 갈림길 */
+  pendingCrossroad: boolean;
+  /** 1-length를 정화함 → [다음] = 자라기 + 챕터 완성 */
+  chapterCleared: boolean;
   /** 자라기 누적 (§5.14-6) */
   growth: GrowthState;
   traits: Traits;
-  age: number;
   /** 자라기마다의 결과 (리포트·metrics) */
   growthLog: GrowthResult[];
 }
@@ -118,10 +120,11 @@ export function serializeGame(s: GameState): SaveGame {
     lastDayStats: s.lastDayStats,
     bossLog: s.bossLog,
     summonLog: s.summonLog,
-    ending: s.phase === 'lifeEnd' ? s.ending : null,
+    completed: s.phase === 'chapterComplete' ? s.completed : null,
+    pendingCrossroad: s.pendingCrossroad,
+    chapterCleared: s.chapterCleared,
     growth: s.growth,
     traits: s.traits,
-    age: s.age,
     growthLog: s.growthLog,
   });
 }
@@ -152,12 +155,11 @@ const BOSS_KEYS: (keyof BossRecord)[] = [
   'day', 'slot', 'prep', 'defenseUnits', 'defenseAvgTier', 'abyssUnits', 'gridPieces', 'joy', 'shadowBefore', 'win',
 ];
 const SUMMON_KEYS: (keyof SummonRecord)[] = ['t', 'day', 'side', 'chain', 'tier', 'cell', 'heldFor', 'reserved'];
-const ENDING_IDS: EndingId[] = ['hidden', 'solid', 'mask', 'quiet', 'rainy'];
 const GAME_KEYS: (keyof SaveGame)[] = [
   'seed', 'rngState', 'day', 'phase', 'todayId', 'playTime', 'tickCount', 'nextPieceId', 'nextUnitId', 'spawnedToday',
   'joy', 'shadow', 'pendingBackflow', 'carryBackflow', 'grid', 'returnQueue', 'lostReturns', 'abyss', 'happyCd',
   'nextWorryId', 'waveDay', 'stats', 'heroFirstPurify', 'legendPurified', 'diary', 'flags', 'dailyUsed', 'lastDayStats', 'bossLog',
-  'summonLog', 'ending', 'growth', 'traits', 'age', 'growthLog',
+  'summonLog', 'completed', 'pendingCrossroad', 'chapterCleared', 'growth', 'traits', 'growthLog',
 ];
 
 class SaveChecker extends Checker {
@@ -252,16 +254,6 @@ class SaveChecker extends Checker {
     }
   }
 
-  ending(v: unknown, path: string): void {
-    const o = this.obj(v, path, ['id', 'happy', 'unhappy', 'total', 'share', 'branches', 'breakdown']);
-    if (!o) return;
-    this.oneOf(o.id, `${path}.id`, ENDING_IDS);
-    for (const k of ['happy', 'unhappy', 'total']) this.num(o[k], `${path}.${k}`, { min: 0 });
-    this.num(o.share, `${path}.share`, { min: 0, max: 1 });
-    this.list(o.branches, `${path}.branches`, (it, pp) => this.oneOf(it, pp, BRANCHES));
-    this.nums(o.breakdown, `${path}.breakdown`, [...BREAKDOWN_KEYS]);
-  }
-
   recipeId(v: unknown, path: string): void {
     this.oneOf(v, path, this.data.recipes.recipes.map((r) => r.id));
   }
@@ -294,10 +286,10 @@ class SaveChecker extends Checker {
   }
 
   growthResult(v: unknown, path: string): void {
-    const keys = ['day', 'index', 'age', 'consumed', 'happyCount', 'purifiedCount', 'pairs', 'branch', 'gained', 'traitsUp', 'traits'];
+    const keys = ['day', 'index', 'consumed', 'happyCount', 'purifiedCount', 'pairs', 'branch', 'gained', 'traitsUp', 'traits'];
     const o = this.obj(v, path, keys);
     if (!o) return;
-    for (const k of ['day', 'index', 'age', 'happyCount', 'purifiedCount', 'pairs']) this.num(o[k], `${path}.${k}`, { int: true, min: 0 });
+    for (const k of ['day', 'index', 'happyCount', 'purifiedCount', 'pairs']) this.num(o[k], `${path}.${k}`, { int: true, min: 0 });
     this.oneOf(o.branch, `${path}.branch`, BRANCHES);
     this.nums(o.gained, `${path}.gained`, ['happy', 'unhappy'], { min: 0 });
     this.traits(o.traitsUp, `${path}.traitsUp`);
@@ -317,9 +309,8 @@ class SaveChecker extends Checker {
     if (!o) return;
     this.growth(o.growth, `${path}.growth`);
     this.traits(o.traits, `${path}.traits`);
-    this.num(o.age, `${path}.age`, { int: true, min: 0 });
     this.list(o.growthLog, `${path}.growthLog`, (it, pp) => this.growthResult(it, pp));
-    const lifeDays = this.data.balance.days.lifeLengthDays;
+    const lifeDays = this.data.balance.chapter.maxDays;
     const p = (k: string) => `${path}.${k}`;
     for (const k of ['seed', 'rngState', 'tickCount', 'nextPieceId', 'nextUnitId', 'spawnedToday', 'lostReturns', 'nextWorryId']) {
       this.num(o[k], p(k), { int: true, min: 0 });
@@ -396,11 +387,11 @@ class SaveChecker extends Checker {
       this.nums(r.cell, `${pp}.cell`, ['col', 'row'], { int: true, min: 0 });
     });
 
-    if (o.ending === null) {
-      if (o.phase === 'lifeEnd') this.fail(p('ending'), 'lifeEnd인데 결말이 없음');
-    } else {
-      this.ending(o.ending, p('ending'));
-    }
+    this.bool(o.pendingCrossroad, p('pendingCrossroad'));
+    this.bool(o.chapterCleared, p('chapterCleared'));
+    if (o.phase === 'chapterComplete') {
+      if (typeof o.completed !== 'boolean') this.fail(p('completed'), 'chapterComplete인데 완성 여부가 없음');
+    } else if (o.completed !== null) this.fail(p('completed'), 'chapterComplete가 아니면 null이어야 함');
     if (o.phase === 'diary' && o.lastDayStats === null) this.fail(p('lastDayStats'), 'diary인데 그날 기록이 없음');
   }
 }

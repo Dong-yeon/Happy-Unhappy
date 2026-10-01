@@ -141,23 +141,25 @@ describe('validateGameData', () => {
     expectIssue(issues, 'days.fixed.3', /일상 이벤트/);
   });
 
-  it('days.fixed 일차가 일생 길이를 넘음', () => {
+  it('days.fixed 일차가 chapter.maxDays를 넘음', () => {
     const issues = issuesAfter((d) => {
-      (d.days.fixed as Record<string, string>)['15'] = 'birthday';
+      (d.days.fixed as Record<string, string>)['21'] = 'first_tooth';
     });
-    expectIssue(issues, 'days.fixed.15', /lifeLengthDays/);
+    expectIssue(issues, 'days.fixed.21', /maxDays/);
   });
 
   it('freePieces.chain이 chains.json에 없음', () => {
     const issues = issuesAfter((d) => {
-      d.events.seasonal[0].effects.freePieces[0].chain = 'no_chain';
+(d.events.seasonal as unknown[]).push({ id: 'gift', world: d.chapter.world, archetypeId: 'gift', title: '선물', text: '', effects: { freePieces: [{ chain: 'companion_animal', tier: 2 }] }, diaryLine: '선물.' });
+      (d.events.seasonal as unknown as { effects: { freePieces: { chain: string }[] } }[])[0].effects.freePieces[0].chain = 'no_chain';
     });
     expectIssue(issues, 'events.seasonal[0].effects.freePieces[0].chain', /없는 체인/);
   });
 
   it('freePieces.tier가 maxTier 초과', () => {
     const issues = issuesAfter((d) => {
-      d.events.seasonal[0].effects.freePieces[0].tier = 4;
+(d.events.seasonal as unknown[]).push({ id: 'gift', world: d.chapter.world, archetypeId: 'gift', title: '선물', text: '', effects: { freePieces: [{ chain: 'companion_animal', tier: 2 }] }, diaryLine: '선물.' });
+      (d.events.seasonal as unknown as { effects: { freePieces: { tier: number }[] } }[])[0].effects.freePieces[0].tier = 4;
     });
     expectIssue(issues, 'events.seasonal[0].effects.freePieces[0].tier', /이하/);
   });
@@ -178,7 +180,7 @@ describe('validateGameData', () => {
 
   it('이벤트 id 중복 (종류가 달라도)', () => {
     const issues = issuesAfter((d) => {
-      d.events.daily[0].id = 'birthday';
+      d.events.daily[0].id = 'first_tooth';
     });
     expectIssue(issues, 'events', /중복/);
   });
@@ -187,38 +189,35 @@ describe('validateGameData', () => {
     const issues = issuesAfter((d) => {
       d.chains[0].world = 'fantasy';
     });
-    expectIssue(issues, 'chains[0].world', /days\.world/);
+    expectIssue(issues, 'chains[0].world', /chapter\.world/);
+    expectIssue(issuesAfter((d) => (d.events.daily[0].world = 'modern')), 'events.daily[0].world', /chapter\.world/);
   });
 
-  it('결말 5종 중 누락', () => {
-    const issues = issuesAfter((d) => {
-      delete (d.endings.endings as Partial<Raw['endings']['endings']>).hidden;
-    });
-    expectIssue(issues, 'endings.endings.hidden', /필수 키/);
+  it('M8.8: balance.chapter (turningPoint < length), days.lifeLengthDays·growthDays·world·age 는 알 수 없는 키', () => {
+    expectIssue(issuesAfter((d) => (d.balance.chapter.turningPoint = 10)), 'balance.chapter.turningPoint', /length보다 작아야/);
+    expectIssue(issuesAfter((d) => delete (d.balance as Record<string, unknown>).chapter), 'balance.chapter', /필수 키/);
+    expectIssue(issuesAfter((d) => (d.balance.chapter.maxDays = 0)), 'balance.chapter.maxDays', /이상/);
+    expectIssue(issuesAfter((d) => ((d.balance.days as Record<string, unknown>).lifeLengthDays = 14)), 'balance.days.lifeLengthDays', /알 수 없는 키/);
+    for (const k of ['growthDays', 'world', 'age']) {
+      expectIssue(issuesAfter((d) => ((d.days as Record<string, unknown>)[k] = 1)), `days.${k}`, /알 수 없는 키/);
+    }
   });
 
-  it('M8.7: endings.totalThreshold·shareBand·hiddenMinMemories (옛 weights·thresholds·balanceRatio는 알 수 없는 키)', () => {
-    const issues = issuesAfter((d) => {
-      const e = d.endings as Record<string, unknown>;
-      e.weights = {};
-      e.thresholds = {};
-      e.balanceRatio = 0.2;
-      delete e.hiddenMinMemories;
-      e.shareBand = [0.8, 0.2];
-      e.totalThreshold = -1;
-    });
-    expectIssue(issues, 'endings.weights', /알 수 없는 키/);
-    expectIssue(issues, 'endings.thresholds', /알 수 없는 키/);
-    expectIssue(issues, 'endings.balanceRatio', /알 수 없는 키/);
-    expectIssue(issues, 'endings.hiddenMinMemories', /필수 키/);
-    expectIssue(issues, 'endings.shareBand', /하한 ≤ 상한/);
-    expectIssue(issues, 'endings.totalThreshold', /이상/);
-    expectIssue(issuesAfter((d) => ((d.endings as Record<string, unknown>).shareBand = [0.3])), 'endings.shareBand', /두 값/);
+  it('M8.8: chapter.json (갈림길 id = 이정표, 장면 이름 length개)·chapter_complete.json (learnedRecipes)', () => {
+    expectIssue(issuesAfter((d) => (d.chapter.crossroad = 'scraped_knee')), 'chapter.crossroad', /없는 갈림길/);
+    expectIssue(issuesAfter((d) => d.chapter.sceneNames.pop()), 'chapter.sceneNames', /length/);
+    expectIssue(issuesAfter((d) => d.chapter.dayScenes.push('하나 더')), 'chapter.dayScenes', /length/);
+    expectIssue(issuesAfter((d) => ((d.chapterComplete.learnedRecipes[0] as Record<string, unknown>).side = 'noon')), 'chapterComplete.learnedRecipes[0].side', /day 또는 night/);
+    expectIssue(issuesAfter((d) => ((d.chapterComplete as Record<string, unknown>).companions = [])), 'chapterComplete.companions', /알 수 없는 키/);
   });
 
-  it('M8.7: days.growthDays (2..lifeLengthDays 오름차순 정수), balance.growth 필수, recipes kind', () => {
-    expectIssue(issuesAfter((d) => (d.days.growthDays = [10, 5])), 'days.growthDays', /.+/);
-    expectIssue(issuesAfter((d) => (d.days.growthDays = [5, 99])), 'days.growthDays[1]', /이하/);
+  it('M8.8: endings.json 삭제 (rawGameData에 없음), 조합법 카드는 조합표에 없다 (표시만, D-043)', () => {
+    expect('endings' in rawGameData).toBe(false);
+    const recipeIds = rawGameData.recipes.recipes.map((r) => r.id);
+    for (const r of rawGameData.chapterComplete.learnedRecipes) expect(recipeIds).not.toContain(r.id);
+  });
+
+  it('M8.7: balance.growth 필수, recipes kind', () => {
     expectIssue(issuesAfter((d) => delete (d.balance as Record<string, unknown>).growth), 'balance.growth', /필수 키/);
     expectIssue(issuesAfter((d) => ((d.recipes.recipes[0] as Record<string, unknown>).kind = 'sad')), 'recipes.recipes[0].kind', /.+/);
   });

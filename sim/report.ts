@@ -1,6 +1,4 @@
-// 리포트: 시드 N개 결과 → 요약 통계, 콘솔 표, 비교 (스펙 §8.1). M6: 결말 분포·점수 백분위·항목별 기여 (§5.8-4)
-import { BREAKDOWN_KEYS, type BreakdownKey } from '../src/core/ending';
-import type { EndingId } from '../src/data/types';
+// 리포트: 시드 N개 결과 → 요약 통계, 콘솔 표, 비교 (스펙 §8.1). M8.8: 챕터 완성률·완성 일차·1-5 도달·자라기 (§5.15-6)
 import type { OverrideValue } from './overrides';
 import type { RunResult } from './runner';
 import type { SimConfig } from './types';
@@ -21,14 +19,15 @@ export interface PolicyReport {
   options: {
     seeds: number;
     grid: string;
-    /** M5부터 실제 하루 구조 (14일 일생)만 */
+    /** 실제 하루 구조만 (한 판 = 1챕터, 최대 maxDays일) */
     mode: 'life';
+    /** chapter.maxDays */
     days: number;
     wavesPerDay: number;
     /** --set으로 덮어쓴 값 (전체 경로 → 값). 없으면 JSON 그대로 */
     overrides?: Record<string, OverrideValue>;
   };
-  sim: Omit<SimConfig, 'm3Goals' | 'm4Goals' | 'm5Goals' | 'm6Goals'>;
+  sim: Omit<SimConfig, 'm3Goals' | 'm4Goals' | 'm5Goals' | 'm88Goals'>;
   summary: Record<string, Summary>;
   /** 첫 가라앉음이 없었던 시드 비율 */
   neverSankRatio: number;
@@ -47,46 +46,48 @@ export interface PolicyReport {
   bossDiag: BossDiag;
   /** 소환 단계 분포 (전 시드 합산 비율) */
   tierShare: Record<string, number>;
-  /** 결말 분포·점수 (M6, §5.8-4) */
-  endings: EndingStats;
+  /** 챕터 진행 (M8.8, §5.15-6) */
+  chapter: ChapterStats;
   runs: RunResult[];
 }
 
-export const ENDING_IDS: EndingId[] = ['hidden', 'solid', 'mask', 'quiet', 'rainy'];
-
-export interface EndingStats {
-  /** 결말이 난 판 수 (14일을 다 산 판) */
+/** 챕터 진행 요약 (§5.15-6) */
+export interface ChapterStats {
+  /** 판 수 */
   n: number;
-  /** 결말별 비율 (n 기준) */
-  dist: Record<EndingId, number>;
-  /** 성장치 (§5.14-3): growth.happy / growth.unhappy / 합 */
-  happy: Summary;
-  unhappy: Summary;
-  /** happy + unhappy */
-  total: Summary;
-  /** 행복한 추억 비율 */
-  share: Summary;
-  /** 평균: 준 전설 수(행복/정화)·기억 수 */
-  breakdown: Record<BreakdownKey, number>;
+  /** 1-length를 정화해 완성한 판 비율 */
+  completedRate: number;
+  /** maxDays 미완성 비율 (나머지는 시간 상한 중단) */
+  unfinishedRate: number;
+  /** 완성 일차 (완성한 판만) */
+  completeDay: Summary;
+  /** 1-turningPoint 도달 일차 (도달한 판만) / 도달 비율 */
+  turningPointReachedDay: Summary;
+  turningPointReachedRate: number;
+  /** 1-turningPoint 정화 일차 (정화한 판만) */
+  turningPointClearedDay: Summary;
+  /** 끝났을 때 스테이지 */
+  stage: Summary;
 }
 
-export function endingStats(runs: RunResult[]): EndingStats {
-  const ends = runs.flatMap((r) => (r.ending ? [r.ending] : []));
-  const n = ends.length;
-  const dist = Object.fromEntries(ENDING_IDS.map((id) => [id, n ? ends.filter((e) => e.id === id).length / n : 0])) as Record<EndingId, number>;
-  const breakdown = Object.fromEntries(
-    BREAKDOWN_KEYS.map((k) => [k, n ? ends.reduce((s, e) => s + e.breakdown[k], 0) / n : NaN]),
-  ) as Record<BreakdownKey, number>;
+export function chapterStats(runs: RunResult[]): ChapterStats {
+  const n = runs.length;
+  const done = runs.filter((r) => r.completed === true);
+  const reached = runs.filter((r) => r.turningPointReachedDay !== null);
   return {
     n,
-    dist,
-    happy: summarize(ends.map((e) => e.happy)),
-    unhappy: summarize(ends.map((e) => e.unhappy)),
-    total: summarize(ends.map((e) => e.total)),
-    share: summarize(ends.map((e) => e.share)),
-    breakdown,
+    completedRate: n ? done.length / n : 0,
+    unfinishedRate: n ? runs.filter((r) => r.completed === false).length / n : 0,
+    completeDay: summarize(done.map((r) => r.endDay)),
+    turningPointReachedDay: summarize(reached.map((r) => r.turningPointReachedDay)),
+    turningPointReachedRate: n ? reached.length / n : 0,
+    turningPointClearedDay: summarize(runs.map((r) => r.turningPointClearedDay)),
+    stage: summarize(runs.map((r) => r.stage)),
   };
 }
+
+/** 중반 가라앉음 구간 (§5.15-6): 6~12일차 */
+export const MID_DAYS: [number, number] = [6, 12];
 
 export interface BossDiagRow {
   n: number;
@@ -172,6 +173,11 @@ export const METRICS: { key: string; label: string; get: (r: RunResult) => numbe
   { key: 'dayLengthDay', label: '낮 길이(초)', get: (r) => median(r.dayLengthsDay ?? []) },
   { key: 'dayLengthNight', label: '밤 길이(초)', get: (r) => median(r.dayLengthsNight ?? []) },
   { key: 'earlySunk', label: '1~2일차 가라앉음', get: (r) => (r.sunkByDay[0] ?? 0) + (r.sunkByDay[1] ?? 0) },
+  {
+    key: 'midSunk',
+    label: `중반(${MID_DAYS[0]}~${MID_DAYS[1]}일차) 가라앉음`,
+    get: (r) => (r.days >= MID_DAYS[0] ? r.sunkByDay.slice(MID_DAYS[0] - 1, MID_DAYS[1]).reduce((a, b) => a + b, 0) : null),
+  },
   { key: 'sunk', label: '가라앉은 수', get: (r) => r.sunk },
   { key: 'kills', label: '처치 수', get: (r) => r.kills },
   { key: 'finalJoy', label: '최종 기쁨', get: (r) => r.finalJoy },
@@ -243,7 +249,7 @@ export function buildReport(
   const tierShare: Record<string, number> = {};
   for (const [t, c] of Object.entries(tierCount)) tierShare[t] = total === 0 ? 0 : c / total;
 
-  const { m3Goals: _m3, m4Goals: _m4, m5Goals: _m5, m6Goals: _m6, ...sim } = cfg;
+  const { m3Goals: _m3, m4Goals: _m4, m5Goals: _m5, m88Goals: _m88, ...sim } = cfg;
   return {
     version: 1,
     policy,
@@ -255,7 +261,7 @@ export function buildReport(
     curves,
     bossDiag: bossDiagnostics(runs),
     tierShare,
-    endings: endingStats(runs),
+    chapter: chapterStats(runs),
     runs,
   };
 }
@@ -316,7 +322,7 @@ export function formatReport(r: PolicyReport): string {
     '일차별 (하루 끝 기쁨 중앙값 [p10~p90] / 가라앉음 평균 / 그림자 중앙값 [p90] / 하루 길이 중앙값):',
     curveLine(r),
     formatBossDiag(r),
-    formatEndings(r),
+    formatChapter(r),
     formatGrowth(r),
     heroLine(r),
   ];
@@ -334,30 +340,23 @@ function heroLine(r: PolicyReport): string {
   return `영웅 규칙: 전설 종류(전 시드 합) ${kindText} / 보스 층 도달한 판 ${fmt(reached * 100, 1)}% · 돌파한 판 ${fmt(cleared * 100, 1)}%`;
 }
 
-const BREAKDOWN_LABEL: Record<BreakdownKey, string> = {
-  happyLegends: '준 행복한 추억',
-  purifiedLegends: '준 정화된 추억',
-  memories: '기억',
-};
-
 function pctOf(x: number): string {
   return `${fmt(x * 100, 1)}%`;
 }
 
-/** 결말 분포 + 성장치 백분위 + 준 전설·기억 평균 (§5.14-3) */
-export function formatEndings(r: PolicyReport): string {
-  const e = r.endings;
-  if (!e || e.n === 0) return '결말: 없음 (14일을 다 산 판이 없음)';
-  const score = (label: string, s: Summary, d = 0) => [label, fmt(s.p10, d), fmt(s.median, d), fmt(s.p90, d), fmt(s.mean, d + 1)];
+/** 챕터 진행 (§5.15-6): 완성률·완성 일차·1-5 도달·끝난 스테이지 + 성장 기록 */
+export function formatChapter(r: PolicyReport): string {
+  const c = r.chapter;
+  if (!c || c.n === 0) return '챕터: 판 없음';
+  const q = (s: Summary, d = 1) => (s.n ? `p10 ${fmt(s.p10, d)} / p50 ${fmt(s.median, d)} / p90 ${fmt(s.p90, d)} (n=${s.n})` : '—');
+  const growths = r.runs.flatMap((x) => (x.growths ?? []));
+  const memories = r.runs.reduce((a, x) => a + (x.growths ?? []).reduce((b, g) => b + g.pairs, 0), 0) / Math.max(1, r.runs.length);
   return [
-    `결말 분포 (n=${e.n}): ${ENDING_IDS.map((id) => `${id} ${pctOf(e.dist[id])}`).join(' / ')}`,
-    table(['성장치', 'p10', 'p50', 'p90', '평균'], [
-      score('행복(☀)', e.happy),
-      score('정화(☾)', e.unhappy),
-      score('합 total', e.total),
-      score('행복 비율 share', e.share, 2),
-    ]),
-    `일생 평균: ${BREAKDOWN_KEYS.map((k) => `${BREAKDOWN_LABEL[k]} ${fmt(e.breakdown[k], 2)}`).join(' · ')}`,
+    `챕터 완성률 ${pctOf(c.completedRate)} · 미완성 ${pctOf(c.unfinishedRate)}${c.completedRate + c.unfinishedRate < 1 - 1e-9 ? ` · 중단 ${pctOf(1 - c.completedRate - c.unfinishedRate)}` : ''}`,
+    `  완성 일차: ${q(c.completeDay)}`,
+    `  1-5 도달 일차: ${q(c.turningPointReachedDay)} · 도달 ${pctOf(c.turningPointReachedRate)}  / 1-5 정화 일차: ${q(c.turningPointClearedDay)}`,
+    `  끝난 스테이지: ${q(c.stage)}`,
+    `  판당 기억 ${fmt(memories, 2)} (자라기 ${growths.length}회 합)`,
   ].join('\n');
 }
 
@@ -390,7 +389,7 @@ export function formatGrowth(r: PolicyReport): string {
   return [
     table(['자라기', 'n', '행복 전설', '정화 전설', '기억', '갈래 happy / unhappy / together / slow'], rows),
     `특성 스택 평균 (일생 끝): ${traitText}`,
-    `모든 자라기가 together인 판: ${pctOf(allTogether / n)}`,
+    `모든 자라기가 together인 판: ${pctOf(allTogether / n)} (기록용)`,
   ].join('\n');
 }
 
@@ -427,26 +426,22 @@ export function formatBossDiag(r: PolicyReport): string {
 
 /** 정책 간 비교 표 (중앙값 중심) */
 export function formatComparison(reports: PolicyReport[]): string {
-  const keys = ['sunk', 'layersCleared', 'backflows', 'downRatio', 'reservedRatio', 'dayLengthDay', 'injuriesDay', 'injuriesNight', 'shiningMade', 'legendsMade', 'bossFloorsCleared', 'wildcardsGained'];
+  const keys = ['sunk', 'earlySunk', 'midSunk', 'layersCleared', 'backflows', 'downRatio', 'reservedRatio', 'dayLengthDay', 'injuriesDay', 'injuriesNight', 'shiningMade', 'legendsMade', 'bossFloorsCleared', 'wildcardsGained'];
   const header = [
     '정책',
     ...keys.map((k) => METRICS.find((m) => m.key === k)!.label + ' (중앙값)'),
     '무가라앉음%',
-    'solid%',
-    'hidden%',
-    'mask%',
-    '☀ p50',
-    '☾ p50',
+    '완성%',
+    '완성일 p50',
+    '1-5 도달 p50',
   ];
   const rows = reports.map((r) => [
     r.policy,
     ...keys.map((k) => fmt(r.summary[k].median) + (r.summary[k].n < r.runs.length ? ` (n=${r.summary[k].n})` : '')),
     fmt(r.neverSankRatio * 100, 1),
-    fmt(r.endings.dist.solid * 100, 1),
-    fmt(r.endings.dist.hidden * 100, 1),
-    fmt(r.endings.dist.mask * 100, 1),
-    fmt(r.endings.happy.median, 0),
-    fmt(r.endings.unhappy.median, 0),
+    fmt(r.chapter.completedRate * 100, 1),
+    fmt(r.chapter.completeDay.median, 1),
+    fmt(r.chapter.turningPointReachedDay.median, 1),
   ]);
   return table(header, rows);
 }
@@ -533,17 +528,14 @@ export function checkM3Goals(reports: PolicyReport[], goals: SimConfig['m3Goals'
   return out;
 }
 
-/**
- * hoarder: balanced보다 나쁨 = 결말 점수 합(happy + unhappy) 중앙값이 더 낮음 (v0.6.1 §5.9-5).
- * 가라앉은 수 비교는 버렸다 (난이도를 올리면 balanced가 아래 투자로 가라앉음이 더 많을 수 있다).
- */
+/** hoarder: balanced보다 나쁨 = 챕터 완성률이 더 낮음 (§5.15-6, 결말 점수 비교 대체) */
 function hoarderCheck(hoard: PolicyReport, bal: PolicyReport): GoalCheck {
   return {
     id: 'hoarder<B',
-    label: 'hoarder: balanced보다 나쁨 (성장치 합 total 중앙값)',
-    pass: hoard.endings.total.median < bal.endings.total.median,
+    label: 'hoarder: balanced보다 나쁨 (챕터 완성률)',
+    pass: hoard.chapter.completedRate < bal.chapter.completedRate,
     detail:
-      `성장치 합 중앙값 hoarder ${fmt(hoard.endings.total.median, 0)} vs balanced ${fmt(bal.endings.total.median, 0)}` +
+      `완성률 hoarder ${pctOf(hoard.chapter.completedRate)} vs balanced ${pctOf(bal.chapter.completedRate)}` +
       ` (참고: 가라앉은 수 중앙값 ${fmt(hoard.summary.sunk.median)} vs ${fmt(bal.summary.sunk.median)})`,
   };
 }
@@ -713,116 +705,82 @@ export interface RoundTripCheck {
 }
 
 /**
- * §8.2 M6 목표 (--until life). M6에서는 판정 출력만 하고 통과를 요구하지 않는다 (통과는 M6.5 완료 조건).
- * roundTrip이 주어지면 --saveRoundTrip 일치(M6 완료 조건)도 판정한다.
+ * §8.2 M8.8 진행 목표 (§5.15-6, 잠정). 판정 출력만 하고 통과는 M8.7 (b) 튜닝에서.
+ * roundTrip이 주어지면 --saveRoundTrip 일치도 판정한다.
  */
-export function checkM6Goals(
-  reports: PolicyReport[],
-  goals: SimConfig['m6Goals'],
-  m5: SimConfig['m5Goals'],
-  roundTrip: RoundTripCheck[] | null,
-): GoalCheck[] {
+export function checkM88Goals(reports: PolicyReport[], goals: SimConfig['m88Goals'], roundTrip: RoundTripCheck[] | null): GoalCheck[] {
   const out: GoalCheck[] = [];
   const get = (name: string) => reports.find((r) => r.policy === name);
-  const d = (r: PolicyReport) => r.endings.dist;
   const inRange = (x: number, [lo, hi]: number[]) => x >= lo - 1e-12 && x <= hi + 1e-12;
-  const distLine = (r: PolicyReport) => ENDING_IDS.map((id) => `${id} ${pctOf(d(r)[id])}`).join(' / ');
+  const pct0 = (x: number) => fmt(x * 100, 0);
 
   const bal = get('balanced');
   if (bal) {
-    const [sl, sh] = goals.balancedSolid;
-    const [hl, hh] = goals.balancedHidden;
+    const c = bal.chapter;
     out.push({
-      id: 'B solid',
-      label: `balanced: 단단한 어른 ${fmt(sl * 100, 0)}~${fmt(sh * 100, 0)}%`,
-      pass: inRange(d(bal).solid, goals.balancedSolid),
-      detail: distLine(bal),
+      id: 'B 완성률',
+      label: `balanced: 챕터 완성률 ${pct0(goals.balancedCompleteRate[0])}~${pct0(goals.balancedCompleteRate[1])}%`,
+      pass: inRange(c.completedRate, goals.balancedCompleteRate),
+      detail: `완성 ${pctOf(c.completedRate)} · 미완성 ${pctOf(c.unfinishedRate)}`,
     });
     out.push({
-      id: 'B hidden',
-      label: `balanced: 히든 ${fmt(hl * 100, 0)}~${fmt(hh * 100, 0)}%`,
-      pass: inRange(d(bal).hidden, goals.balancedHidden),
-      detail: `hidden ${pctOf(d(bal).hidden)}`,
+      id: 'B 완성일',
+      label: `balanced: 완성 일차 중앙값 ${goals.balancedCompleteDay[0]}~${goals.balancedCompleteDay[1]}일`,
+      pass: c.completeDay.n > 0 ? inRange(c.completeDay.median, goals.balancedCompleteDay) : false,
+      detail: c.completeDay.n ? `중앙값 ${fmt(c.completeDay.median, 1)} [p10 ${fmt(c.completeDay.p10, 1)} ~ p90 ${fmt(c.completeDay.p90, 1)}]` : '완성한 판 없음',
+    });
+    const mid = bal.summary.midSunk;
+    out.push({
+      id: 'B 중반',
+      label: `balanced: 중반(${MID_DAYS[0]}~${MID_DAYS[1]}일) 가라앉음 중앙값 ≥ ${goals.balancedMidSunkMin} (긴장)`,
+      pass: mid.n > 0 ? mid.median >= goals.balancedMidSunkMin : false,
+      detail: mid.n ? `중앙값 ${fmt(mid.median)} [p10 ${fmt(mid.p10)} ~ p90 ${fmt(mid.p90)}] (n=${mid.n}, ${MID_DAYS[0]}일 전에 끝난 판 제외)` : `${MID_DAYS[0]}일까지 간 판 없음`,
+    });
+    const early = bal.summary.earlySunk;
+    out.push({
+      id: 'B 초반',
+      label: `balanced: 1~2일차 가라앉음 0~${goals.balancedEarlySinkMax} (중앙값, 초반은 쉽게)`,
+      pass: early.median <= goals.balancedEarlySinkMax,
+      detail: `중앙값 ${fmt(early.median)} [p90 ${fmt(early.p90)}]`,
+    });
+    const bf = bal.summary.backflows;
+    out.push({
+      id: 'B 역류',
+      label: `balanced: 역류 중앙값 ${goals.balancedBackflows[0]}~${goals.balancedBackflows[1]}`,
+      pass: inRange(bf.median, goals.balancedBackflows),
+      detail: `중앙값 ${fmt(bf.median)} [p10 ${fmt(bf.p10)} ~ p90 ${fmt(bf.p90)}]`,
     });
   } else out.push({ label: 'balanced', pass: null, detail: '실행하지 않음' });
 
-  const hap = get('alwaysHappy');
-  if (hap) {
+  for (const name of ['alwaysHappy', 'alwaysUnhappy', 'random', 'idle']) {
+    const r = get(name);
+    if (!r) {
+      out.push({ label: name, pass: null, detail: '실행하지 않음' });
+      continue;
+    }
     out.push({
-      id: 'H mask',
-      label: `alwaysHappy: 웃는 가면 ≥ ${fmt(goals.alwaysHappyMaskMin * 100, 0)}%`,
-      pass: d(hap).mask >= goals.alwaysHappyMaskMin,
-      detail: distLine(hap),
+      id: `${name} 0%`,
+      label: `${name}: 챕터 완성률 0%`,
+      pass: r.chapter.completedRate === 0,
+      detail: `완성 ${pctOf(r.chapter.completedRate)} · 끝난 스테이지 중앙값 1-${fmt(r.chapter.stage.median, 0)}`,
     });
-    out.push({
-      id: 'H best0',
-      label: 'alwaysHappy: 단단한 어른·히든 0%',
-      pass: d(hap).solid + d(hap).hidden === 0,
-      detail: `solid ${pctOf(d(hap).solid)} + hidden ${pctOf(d(hap).hidden)}`,
-    });
-  } else out.push({ label: 'alwaysHappy', pass: null, detail: '실행하지 않음' });
-
-  const unh = get('alwaysUnhappy');
-  if (unh) {
-    out.push({
-      id: 'U best0',
-      label: 'alwaysUnhappy: 단단한 어른·히든 0%',
-      pass: d(unh).solid + d(unh).hidden === 0,
-      detail: distLine(unh),
-    });
-  } else out.push({ label: 'alwaysUnhappy', pass: null, detail: '실행하지 않음' });
-
-  const rnd = get('random');
-  if (rnd) {
-    const best = d(rnd).solid + d(rnd).hidden;
-    out.push({
-      id: 'R best<5',
-      label: `random: 단단한 어른 + 히든 < ${fmt(goals.randomBestMax * 100, 0)}%`,
-      pass: best < goals.randomBestMax,
-      detail: `${pctOf(best)} (${distLine(rnd)})`,
-    });
-  } else out.push({ label: 'random', pass: null, detail: '실행하지 않음' });
+  }
 
   const hoard = get('hoarder');
-  if (hoard && bal) {
-    out.push({
-      id: 'hoarder<B',
-      label: 'hoarder: 성장치 합(total 중앙값)이 balanced보다 낮음 (§5.14 결말 기준)',
-      pass: hoard.endings.total.median < bal.endings.total.median,
-      detail: `hoarder ${fmt(hoard.endings.total.median, 0)} vs balanced ${fmt(bal.endings.total.median, 0)}`,
-    });
-  } else out.push({ label: 'hoarder', pass: null, detail: 'hoarder와 balanced를 함께 실행해야 비교 가능' });
+  if (hoard && bal) out.push(hoarderCheck(hoard, bal));
+  else out.push({ label: 'hoarder', pass: null, detail: 'hoarder와 balanced를 함께 실행해야 비교 가능' });
 
   if (roundTrip) {
     const all = roundTrip.every((r) => r.matched === r.total);
     out.push({
       id: 'roundTrip',
-      label: '--saveRoundTrip: 끈 실행과 결과 완전 일치 (M6 완료 조건)',
+      label: '--saveRoundTrip: 끈 실행과 결과 완전 일치',
       pass: all,
       detail: roundTrip
         .map((r) => `${r.policy} ${r.matched}/${r.total}${r.mismatchSeeds.length ? ` (어긋난 시드 ${r.mismatchSeeds.join(',')})` : ''}`)
         .join(' · '),
     });
   } else out.push({ label: '--saveRoundTrip', pass: null, detail: '--saveRoundTrip으로 실행하지 않음' });
-
-  // 기존 M5 목표 회귀 없음 (1~2일차 가라앉음 0~2, alwaysHappy 역류 ≥ 3)
-  if (bal) {
-    const early = bal.summary.earlySunk;
-    out.push({
-      id: 'M5 초반',
-      label: `M5 회귀: balanced 1~${m5.earlyDays}일차 가라앉음 0~${m5.balancedEarlySinkMax} (중앙값)`,
-      pass: early.median <= m5.balancedEarlySinkMax,
-      detail: `중앙값 ${fmt(early.median)} [p90 ${fmt(early.p90)}]`,
-    });
-  }
-  if (hap) {
-    out.push({
-      id: 'M5 H역류',
-      label: `M5 회귀: alwaysHappy 역류 ≥ ${m5.alwaysHappyBackflowsMin} (중앙값)`,
-      pass: hap.summary.backflows.median >= m5.alwaysHappyBackflowsMin,
-      detail: `역류 중앙값 ${fmt(hap.summary.backflows.median)}`,
-    });
-  }
   return out;
 }
 
@@ -870,42 +828,40 @@ export function formatSweep(key: string, rows: SweepRow[]): string {
       ...goalIds.map(mark),
     ];
   });
-  // 결말 열 (정책별 solid / hidden / mask %)
+  // 챕터 열 (정책별 완성률 / 완성 일차 중앙값)
   const policies = [...new Set(rows.flatMap((r) => r.reports.map((p) => p.policy)))];
-  const endHeader = ['값', ...policies.map((p) => `${p} s/h/m%`)];
+  const endHeader = ['값', ...policies.map((p) => `${p} 완성%/일`)];
   const endBody = rows.map((row) => [
     JSON.stringify(row.value),
     ...policies.map((p) => {
       const r = row.reports.find((x) => x.policy === p);
       if (!r) return '—';
-      const e = r.endings.dist;
-      return `${fmt(e.solid * 100, 0)}/${fmt(e.hidden * 100, 0)}/${fmt(e.mask * 100, 0)}`;
+      return `${fmt(r.chapter.completedRate * 100, 0)}/${fmt(r.chapter.completeDay.median, 0)}`;
     }),
   ]);
-  // 정책별 상세 (§5.12-4): 결말 분포·가라앉음·1~2일차·역류·밤 층 돌파·맡긴 비율·낮/밤 길이·점수 p50 (중앙값)
-  const detailHeader = ['값', '정책', 'hid/sol/mask/qui/rainy %', '가라앉음', '1~2일차', '역류', '밤 층', '맡긴%', '낮(초)', '밤(초)', '☀ p50', '☾ p50'];
+  // 정책별 상세 (§5.15-6): 완성률·가라앉음(전체·1~2일차·중반)·역류·밤 층 돌파·맡긴 비율·낮/밤 길이 (중앙값)
+  const detailHeader = ['값', '정책', '완성%', '완성일', '가라앉음', '1~2일차', '중반', '역류', '밤 층', '맡긴%', '낮(초)', '밤(초)'];
   const detailBody = rows.flatMap((row) =>
     row.reports.map((r) => {
-      const e = r.endings.dist;
       const m = (k: string, d = 1) => fmt(r.summary[k]?.median ?? NaN, d);
       return [
         JSON.stringify(row.value),
         r.policy,
-        [e.hidden, e.solid, e.mask, e.quiet, e.rainy].map((x) => fmt(x * 100, 0)).join('/'),
+        fmt(r.chapter.completedRate * 100, 0),
+        fmt(r.chapter.completeDay.median, 1),
         m('sunk'),
         m('earlySunk'),
+        m('midSunk'),
         m('backflows'),
         m('layersCleared'),
         fmt((r.summary.reservedRatio?.median ?? NaN) * 100, 0),
         m('dayLengthDay', 0),
         m('dayLengthNight', 0),
-        fmt(r.endings.happy.median, 0),
-        fmt(r.endings.unhappy.median, 0),
       ];
     }),
   );
   return (
-    `■ --sweep ${key}\n${table(header, body)}\n\n결말 분포 (solid / hidden / mask %)\n${table(endHeader, endBody)}` +
+    `■ --sweep ${key}\n${table(header, body)}\n\n챕터 완성 (완성률 % / 완성 일차 중앙값)\n${table(endHeader, endBody)}` +
     `\n\n정책별 상세 (중앙값)\n${table(detailHeader, detailBody)}`
   );
 }

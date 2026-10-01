@@ -2,7 +2,6 @@ import Phaser from 'phaser';
 import type { GameData } from '../data/types';
 import type { CoreEvent, GameState } from '../core/game';
 import type { GridSize } from '../core/grid';
-import type { SlotId } from '../core/wave';
 import { createDebugPanel } from '../debug/DebugPanel';
 import { showDebugUi } from '../debug/gridPreset';
 import { MetricsRecorder } from '../metrics/recorder';
@@ -15,12 +14,12 @@ import { PortalView } from './PortalView';
 import { ReleaseZoneView } from './ReleaseZoneView';
 import { SaveSession } from './session';
 import { SkyView } from './SkyView';
+import { stageLabel } from './growthText';
 import { PORTAL, PORTAL_RADIUS, REGION, VIEW_W, gridLayout, type PortalId, type Rect } from './layout';
 import { Button, COLOR, setupCamera, text } from './ui';
 
 /** HUD 시간대 이름 (표시 텍스트) */
 /** HUD 시간대 이름 (표시 텍스트). v0.8에서 "낮"은 낮 전체를 뜻하므로 가운데 칸은 "점심" */
-const SLOT_NAMES: Record<SlotId, string> = { morning: '아침', noon: '점심', evening: '저녁' };
 
 /** 한 프레임에 넘기는 시간 상한 (백그라운드 복귀 직후 몰아서 처리하지 않도록) */
 const MAX_FRAME_MS = 100;
@@ -77,8 +76,8 @@ export class GameScene extends Phaser.Scene {
     this.drawGrid(size);
     this.drawPortals();
     this.drawBottomBar(data);
-    this.laneView = new DefenseLaneView(this, this.state, data.chains, { x: this.joyText.x, y: this.joyText.y });
-    this.abyssView = new AbyssLaneView(this, this.state, data.chains, partySlot, data.balance.abyss);
+    this.laneView = new DefenseLaneView(this, this.state, data.chains, { x: this.joyText.x, y: this.joyText.y }, data.monsters.worry.name);
+    this.abyssView = new AbyssLaneView(this, this.state, data.chains, partySlot, data.balance.abyss, (n) => stageLabel(data, n, 'night'));
     this.party = new PartyView(this, this.state, data.chains, data.balance.lane.laneCap);
     this.drawSleepButton();
     this.drawRecipeButton();
@@ -120,7 +119,6 @@ export class GameScene extends Phaser.Scene {
         setSpeed: (s) => (this.speed = s),
         onChange: () => this.onDebugChange(),
         openDiary: () => this.dayUi.showDiaryList(),
-        previewEnding: (r) => this.dayUi.showResult(r, true),
         reboot: () => this.scene.start('Boot'),
         metrics: this.metrics,
       });
@@ -136,18 +134,18 @@ export class GameScene extends Phaser.Scene {
   }
 
   /**
-   * 하루 경계 저장 (§5.8-2): dayStart 진입 → game / diary 진입 → gating 소비 + game (한 번의 쓰기) / lifeEnd 진입 → game.
+   * 하루 경계 저장 (§5.8-2): dayStart 진입 → game / diary 진입 → gating 소비 + game (한 번의 쓰기) / chapterComplete 진입 → game.
    * 이벤트를 처리하는 시점에 경계 단계가 아니면(같은 프레임에 다음 단계로 넘어간 경우) 건너뛴다.
    */
   private persist(events: CoreEvent[]): void {
-    const boundary = this.state.phase === 'dayStart' || this.state.phase === 'diary' || this.state.phase === 'lifeEnd';
+    const boundary = this.state.phase === 'dayStart' || this.state.phase === 'diary' || this.state.phase === 'chapterComplete';
     for (const e of events) {
       if (e.type === 'dayEnd') {
         if (boundary) this.session.endDay(this.state);
         this.metrics.endDay();
-      } else if (e.type === 'dayStart' || e.type === 'lifeEnd') {
+      } else if (e.type === 'dayStart' || e.type === 'chapterComplete') {
         if (boundary) this.session.saveGame(this.state);
-        if (e.type === 'lifeEnd') this.metrics.lifeEnd();
+        if (e.type === 'chapterComplete') this.metrics.chapterEnd();
       } else if (e.type === 'dayBegin') {
         this.metrics.beginDay(this.session.bypass);
       }
@@ -234,12 +232,11 @@ export class GameScene extends Phaser.Scene {
     const joy = `기쁨 ${s.joy}`;
     if (this.joyText.text !== joy) this.joyText.setText(joy);
     const w = s.wave;
-    // HUD: "8살 · n일째 · 아침/낮/저녁" (보스 웨이브면 시간대 옆에 "역류")
-    // dayStart에서는 아직 웨이브가 시작되지 않았으므로 전날 마지막 칸 대신 아침
-    const slot =
-      s.phase === 'night' ? '밤' : s.phase === 'diary' ? '새벽' : s.phase === 'dayStart' ? SLOT_NAMES.morning : SLOT_NAMES[w.slotId];
+    // HUD (§5.15-2): "1-3 고갯마루 들꽃 · 낮" / "1-3 셋째 고개 · 밤" (보스 웨이브면 뒤에 "역류")
+    const night = s.phase === 'night';
+    const when = night ? '밤' : s.phase === 'diary' ? '새벽' : s.phase === 'chapterComplete' ? '끝' : '낮';
     const tag = s.bossActive ? ' 역류' : w.inBossPrep ? ' 역류 준비' : s.pendingBackflow ? ' · 역류 예약' : w.paused ? ' (정지)' : '';
-    const phase = `${s.age}살 · ${s.day}일째 · ${slot}${tag}`;
+    const phase = `${stageLabel(this.registry.get('data') as GameData, s.stage, night ? 'night' : 'day')} · ${when}${tag}`;
     if (this.phaseText.text !== phase) this.phaseText.setText(phase).setColor(s.shadowLocked ? '#ff9e9e' : '#e8e8e8');
     const weather = `마음 날씨 ${s.weather}`;
     if (this.weatherText.text !== weather) this.weatherText.setText(weather);

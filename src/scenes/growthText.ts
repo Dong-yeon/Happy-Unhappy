@@ -33,6 +33,15 @@ export function traitsLine(data: GameData, traits: Record<string, number>, max?:
   return parts.length ? parts.join(' · ') : '없음';
 }
 
+/** 스테이지 이름 (§5.15-2): 밤 = 층 장면 (보스 층은 bossName), 낮 = 낮 배경. "1-3 셋째 고개" */
+export function stageLabel(data: GameData, stage: number, side: 'day' | 'night'): string {
+  const ch = data.chapter;
+  const i = Math.max(0, Math.min(stage, ch.sceneNames.length) - 1);
+  const boss = stage === data.balance.chapter.length;
+  const name = side === 'day' ? ch.dayScenes[i] : boss ? ch.bossName : ch.sceneNames[i];
+  return `1-${stage} ${name}`;
+}
+
 export function recipeName(data: GameData, id: string): string {
   return data.recipes.recipes.find((r) => r.id === id)?.name ?? id;
 }

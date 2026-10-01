@@ -62,8 +62,8 @@
     "shadowAfterBossLose": 40,
     "weatherThresholds": [25, 50, 75]
   },
+  "chapter": { "length": 10, "turningPoint": 5, "turningPointHpMult": 1.5, "maxDays": 20 },
   "days": {
-    "lifeLengthDays": 14,
     "dailyLimit": 2,
     "storeCap": 4,
     "morningJoyFloor": 20

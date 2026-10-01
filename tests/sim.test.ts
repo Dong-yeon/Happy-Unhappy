@@ -6,14 +6,14 @@ import { GameState } from '../src/core/game';
 import { mulberry32 } from '../src/core/rng';
 import { gameGeometry } from '../src/scenes/layout';
 import { POLICIES } from '../sim/policies';
-import { bossDiagnostics, buildReport, checkM3Goals, checkM5Goals, checkM6Goals, endingStats, quantile, summarize } from '../sim/report';
+import { bossDiagnostics, buildReport, checkM3Goals, checkM5Goals, checkM88Goals, chapterStats, quantile, summarize } from '../sim/report';
 import { runOne, type RunOptions, type RunResult } from '../sim/runner';
 import simJson from '../sim/sim.json';
 import type { SimConfig } from '../sim/types';
 
 const data = structuredClone(rawGameData) as unknown as GameData;
 const cfg = simJson as SimConfig;
-const DAYS = data.balance.days.lifeLengthDays;
+const DAYS = data.balance.chapter.maxDays;
 const opt = (seed: number): RunOptions => ({ seed, grid: { cols: 5, rows: 4 } });
 const options = { seeds: 1, grid: '5x4', mode: 'life' as const, days: DAYS, wavesPerDay: data.balance.wave.wavesPerDay };
 
@@ -36,19 +36,31 @@ describe('재현성', () => {
 });
 
 describe('실제 하루 구조 (--until life)', () => {
-  it('14일을 다 산다: 일차별 기록 길이 = 14, 하루 길이 > 0', () => {
-    const r = run('balanced', 1);
-    expect(r.days).toBe(DAYS);
-    for (const k of ['sunkByDay', 'joyByDay', 'shadowByDay', 'dayLengths', 'dayStartJoy', 'dayEndJoy'] as const) {
-      expect(r[k]).toHaveLength(DAYS);
+  it('한 판 = 1챕터: 완성하면 그날 끝, 못 하면 maxDays일 (일차별 기록 길이 = 끝난 날 수)', () => {
+    const done = run('balanced', 1);
+    expect(done.completed).toBe(true);
+    expect(done.stage).toBe(data.balance.chapter.length);
+    expect(done.days).toBe(done.endDay);
+    expect(done.days).toBeLessThan(DAYS + 1);
+    const idle = run('idle', 1);
+    expect(idle.completed).toBe(false);
+    expect(idle.days).toBe(DAYS);
+    for (const r of [done, idle]) {
+      for (const k of ['sunkByDay', 'joyByDay', 'shadowByDay', 'dayLengths', 'dayStartJoy', 'dayEndJoy'] as const) {
+        expect(r[k]).toHaveLength(r.days);
+      }
+      expect(Math.min(...r.dayLengths)).toBeGreaterThan(20);
     }
-    expect(Math.min(...r.dayLengths)).toBeGreaterThan(20);
   });
 
-  it('7일째 이정표에서 정책이 고른다 (balanced = 마주함, alwaysHappy = 웃어넘김)', () => {
-    expect(run('balanced', 1).flags).toEqual(['face']);
-    expect(run('alwaysHappy', 1).flags).toEqual(['avoid']);
-    expect(run('idle', 1).flags).toHaveLength(1); // 기본 = 첫 선택지
+  it('1-5를 정화한 다음 날 갈림길에서 정책이 고른다 (balanced = 달이 맡음), 1-5에 못 가면 갈림길 없음', () => {
+    const b = run('balanced', 1);
+    expect(b.turningPointClearedDay).not.toBeNull();
+    expect(b.flags).toEqual(['face']);
+    expect(run('alwaysHappy', 1).flags).toEqual([]);
+    expect(run('idle', 1).flags).toEqual([]);
+    // 자라기 = 1-5 다음 날 + 챕터 완성
+    expect(b.growths.map((g) => g.day)).toEqual([b.turningPointClearedDay! + 1, b.endDay]);
   });
 
   it('보스 진단 기록이 역류 수와 같고, 결과(win)가 채워진다', () => {
@@ -134,7 +146,7 @@ describe('통계·리포트', () => {
   it('리포트: 곡선 길이 = 일차 수, 소환 단계 비율 합 = 1, 하루 길이 곡선', () => {
     const runs = [1, 2].map((s) => run('balanced', s));
     const rep = buildReport('balanced', runs, { ...options, seeds: 2 }, cfg);
-    expect(rep.curves).toHaveLength(DAYS);
+    expect(rep.curves).toHaveLength(Math.max(...runs.map((r) => r.days)));
     expect(rep.curves.every((c) => c.lengthMedian > 0)).toBe(true);
     const share = Object.values(rep.tierShare).reduce((s, v) => s + v, 0);
     expect(share).toBeCloseTo(1, 10);
@@ -169,40 +181,41 @@ describe('통계·리포트', () => {
   });
 });
 
-describe('M6: 결말 리포트 (§5.8-4)', () => {
-  it('판마다 결말이 있고, 분포 합 = 1, 항목별 평균 기여의 합 = 점수 평균', () => {
-    // 0 하한이 걸리지 않는 판들로 (random은 가라앉음 감점으로 happy가 0에 막힌다)
-    const runs = [run('balanced', 1), run('alwaysHappy', 1), run('random', 1)];
-    for (const r of runs) expect(r.ending).not.toBeNull();
-    expect(run('random', 1).ending?.happy).toBe(0);
-    expect(Object.values(endingStats(runs).dist).reduce((a, b) => a + b, 0)).toBeCloseTo(1);
-    // 성장치 = 준 전설 × growthPerLegend + 기억 × memoryBonus (§5.14-2)
-    for (const r of runs) {
-      const gr = data.balance.growth;
-      const b = r.ending!.breakdown;
-      expect(r.ending!.happy).toBe(b.happyLegends * gr.growthPerLegend + b.memories * gr.memoryBonus);
-      expect(r.ending!.unhappy).toBe(b.purifiedLegends * gr.growthPerLegend + b.memories * gr.memoryBonus);
-      expect(r.growths.length).toBe(data.days.growthDays.length + 1);
-    }
+describe('M8.8: 챕터 진행 리포트 (§5.15-6)', () => {
+  it('완성률·완성 일차·1-5 도달 일차', () => {
+    const runs = [run('balanced', 1), run('alwaysHappy', 1), run('idle', 1)];
+    const c = chapterStats(runs);
+    expect(c.n).toBe(3);
+    expect(c.completedRate).toBeCloseTo(1 / 3);
+    expect(c.unfinishedRate).toBeCloseTo(2 / 3);
+    expect(c.completeDay.n).toBe(1);
+    expect(c.completeDay.median).toBe(runs[0].endDay);
+    expect(c.turningPointReachedDay.n).toBe(runs.filter((r) => r.turningPointReachedDay !== null).length);
+    // 1-5 도달 ≤ 1-5 정화
+    expect(runs[0].turningPointReachedDay!).toBeLessThanOrEqual(runs[0].turningPointClearedDay!);
   });
 
-  it('alwaysHappy는 보스 승리분이 unhappy 점수에 들어가지 않는다 (D-023)', () => {
+  it('alwaysHappy는 층을 넘지 않아 미완성, 정화된 추억 0', () => {
     const r = run('alwaysHappy', 1);
     expect(r.bossWins).toBeGreaterThan(0);
     expect(r.layersCleared).toBe(0);
-    expect(r.ending!.unhappy).toBe(0);
+    expect(r.completed).toBe(false);
+    expect(r.growths).toHaveLength(1); // maxDays 미완성 자라기 1회
+    expect(r.growths[0].purified).toBe(0);
   });
 
-  it('checkM6Goals: 판정 출력 (roundTrip 없으면 미판정, 있으면 일치 여부)', () => {
-    const reports = ['balanced', 'alwaysHappy', 'alwaysUnhappy', 'random', 'hoarder'].map((p) => buildReport(p, [run(p, 1)], options, cfg));
-    const none = checkM6Goals(reports, cfg.m6Goals, cfg.m5Goals, null);
+  it('checkM88Goals: 판정 출력 (roundTrip 없으면 미판정, 있으면 일치 여부), hoarder는 완성률 비교', () => {
+    const reports = ['balanced', 'alwaysHappy', 'alwaysUnhappy', 'random', 'idle', 'hoarder'].map((p) => buildReport(p, [run(p, 1)], options, cfg));
+    const none = checkM88Goals(reports, cfg.m88Goals, null);
     expect(none.find((c) => c.label.startsWith('--saveRoundTrip'))?.pass).toBeNull();
-    for (const id of ['B solid', 'B hidden', 'H mask', 'H best0', 'U best0', 'R best<5', 'hoarder<B', 'M5 초반', 'M5 H역류']) {
+    for (const id of ['B 완성률', 'B 완성일', 'B 중반', 'B 초반', 'B 역류', 'alwaysHappy 0%', 'alwaysUnhappy 0%', 'random 0%', 'idle 0%', 'hoarder<B']) {
       expect(none.find((c) => c.id === id), id).toBeDefined();
     }
-    const ok = checkM6Goals(reports, cfg.m6Goals, cfg.m5Goals, [{ policy: 'balanced', matched: 1, total: 1, mismatchSeeds: [] }]);
+    expect(none.find((c) => c.id === 'idle 0%')?.pass).toBe(true);
+    expect(none.find((c) => c.id === 'hoarder<B')?.label).toContain('완성률');
+    const ok = checkM88Goals(reports, cfg.m88Goals, [{ policy: 'balanced', matched: 1, total: 1, mismatchSeeds: [] }]);
     expect(ok.find((c) => c.id === 'roundTrip')?.pass).toBe(true);
-    const ng = checkM6Goals(reports, cfg.m6Goals, cfg.m5Goals, [{ policy: 'balanced', matched: 0, total: 1, mismatchSeeds: [1] }]);
+    const ng = checkM88Goals(reports, cfg.m88Goals, [{ policy: 'balanced', matched: 0, total: 1, mismatchSeeds: [1] }]);
     expect(ng.find((c) => c.id === 'roundTrip')?.pass).toBe(false);
   });
 });

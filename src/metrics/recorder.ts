@@ -60,7 +60,7 @@ export class MetricsRecorder {
   private attach(): void {
     const s = this.state;
     const same = (l: LifeMetrics) => l.seed === s.seed && l.gridSize.cols === this.gridSize.cols && l.gridSize.rows === this.gridSize.rows;
-    const found = [...this.data.lives].reverse().find((l) => same(l) && (l.endedAt === null || s.phase === 'lifeEnd'));
+    const found = [...this.data.lives].reverse().find((l) => same(l) && (l.endedAt === null || s.phase === 'chapterComplete'));
     if (found) this.life = found;
     else {
       this.life = newLife(s.seed, this.gridSize, nowIso());
@@ -145,10 +145,10 @@ export class MetricsRecorder {
     this.write();
   }
 
-  /** lifeEnd 진입: 결말·일생 stats */
-  lifeEnd(): void {
+  /** chapterComplete 진입: 결말·일생 stats */
+  chapterEnd(): void {
     const s = this.state;
-    this.life.ending = s.ending ? structuredClone(s.ending) : null;
+    this.life.chapter = s.completed === null ? null : { completed: s.completed, day: s.day, stage: s.stage };
     this.life.stats = structuredClone(s.stats);
     this.life.growths = structuredClone(s.growthLog);
     this.life.endedAt = nowIso();

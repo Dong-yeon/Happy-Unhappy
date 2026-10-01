@@ -50,7 +50,6 @@ import {
   type Side,
   type Unit,
 } from './lane';
-import { judgeEnding, type EndingResult } from './ending';
 import { applyGrowth, emptyGrowth, kindOf, traitMult, type GrowthResult, type GrowthState, type Traits } from './growth';
 import { LEGEND_TIER, findRecipe, isHeroic } from './recipes';
 import type { SeededRng } from './rng';
@@ -146,9 +145,9 @@ export type CoreEvent =
   | { type: 'bossFloorClear'; layer: number; returns: LayerReturn[] }
   | { type: 'dayEnd'; day: number; entry: DiaryEntry; stats: DayStats }
   | { type: 'dayStart'; day: number; event: DayEvent }
-  /** 자라기 (§5.14-2): 5·10일 dayStart 앞 / 일생 끝 lifeEnd 앞 */
+  /** 자라기 (§5.15-1): 1-turningPoint 정화 다음 dayStart 앞 / 챕터 완성·미완성 chapterComplete 앞 */
   | { type: 'growth'; result: GrowthResult }
-  | { type: 'lifeEnd' };
+  | { type: 'chapterComplete'; completed: boolean };
 
 /** 즉시 소환이면 unit, 낮의 손거울(맡기기)이면 unit = null·reserved = 맡긴 조각 */
 export type SummonResult =
@@ -226,15 +225,18 @@ export class GameState {
   private forcedNext: string | null = null;
   /** 이정표 face의 층 HP 감소: 그날 해질녘에 적용 (§5.11-4) */
   private faceReduceTonight: number | null = null;
-  /** 결말 (14일째 nextDay → lifeEnd에서 1회 판정, §5.8-3) */
-  ending: EndingResult | null = null;
+  // ── 챕터 진행 (§5.15-1) ──
+  /** 1-turningPoint를 정화함 → 다음 dayStart에 자라기 + 갈림길 (저장: 갈림길 대기) */
+  pendingCrossroad = false;
+  /** 1-length(보스)를 정화함 → 그날 이야기 한 장 뒤 [다음] = 자라기 + 챕터 완성 */
+  chapterCleared = false;
+  /** 판의 끝 (chapterComplete): 완성 true / maxDays 미완성 false. 그 전에는 null */
+  completed: boolean | null = null;
 
   // ── 자라기 (§5.14) ──
   readonly growth: GrowthState = emptyGrowth();
   /** `${체인}:${종류}` → 스택 */
   readonly traits: Traits = {};
-  /** 아이 나이: days.age + 자란 횟수 */
-  age: number;
   /** 자라기마다의 결과 (리포트·metrics·연출) */
   readonly growthLog: GrowthResult[] = [];
 
@@ -254,7 +256,6 @@ export class GameState {
     readonly seed = 0,
   ) {
     const b = data.balance;
-    this.age = data.days.age;
     this.joy = b.start.joy;
     this.shadow = clampShadow(b.start.shadow, b.shadow.shadowMax);
     this.grid = createGrid(size, b.grid.maxTier);
@@ -269,7 +270,9 @@ export class GameState {
       speed: b.lane.defenseMoveSpeed,
       contact: b.lane.defenseContact,
     });
-    this.abyss = new Lane('abyss', geometry.abyss, { wall: b.abyss, advanceSpeed: b.lane.abyssAdvanceSpeed });
+    // 전환점 층 HP 배수 (§5.15-1, 보스 층 배수와 별개)
+    const wall = { ...b.abyss, turningPoint: b.chapter.turningPoint, turningPointHpMult: b.chapter.turningPointHpMult };
+    this.abyss = new Lane('abyss', geometry.abyss, { wall, advanceSpeed: b.lane.abyssAdvanceSpeed });
     this.wave = new DayWaves({ ...b.wave, hpBase: data.monsters.worry.hpBase });
     this.today = this.resolveToday();
     this.dayStats = emptyDayStats(this.joy, b.grid.maxTier);
@@ -298,8 +301,19 @@ export class GameState {
     return this.pendingBackflow || this.bossActive;
   }
 
-  get lifeLengthDays(): number {
-    return this.data.balance.days.lifeLengthDays;
+  /** 이 일차 이야기 한 장 뒤에도 1-length를 못 넘었으면 미완성으로 끝 (§5.15-1) */
+  get maxDays(): number {
+    return this.data.balance.chapter.maxDays;
+  }
+
+  /** 지금 스테이지 번호 (1-n의 n) = 심연 층 (챕터 길이에서 멈춤) */
+  get stage(): number {
+    return Math.min(this.abyss.wall.layer, this.data.balance.chapter.length);
+  }
+
+  /** 다음 [다음 날]에 자라기가 이어지는가 (갈림길·챕터 완성·미완성) — 이야기 한 장의 자라기 문장 */
+  get growsNext(): boolean {
+    return this.pendingCrossroad || this.chapterCleared || this.day >= this.maxDays;
   }
 
   /** 오늘 이벤트가 이정표면 선택지 */
@@ -352,7 +366,8 @@ export class GameState {
     if (this.grid.cells.every((c) => c !== null)) this.dayStats.gridFullSeconds += FIXED_DT;
 
     if (this.phase === 'day' && this.wave.phase === 'done') this.dusk(out);
-    else if (this.phase === 'night' && this.nightTimer <= TICK_EPS) this.endDay(out);
+    // 1-length를 정화하면 그 밤은 바로 끝난다 (11층 이상은 가지 않음, §5.15-1)
+    else if (this.phase === 'night' && (this.nightTimer <= TICK_EPS || this.chapterCleared)) this.endDay(out);
   }
 
   /** 낮: 웨이브 → 방어 레인 → 가라앉음 */
@@ -575,6 +590,13 @@ export class GameState {
     }
     this.stats.layersCleared += 1;
     this.dayStats.layersCleared += 1;
+    const ch = b.chapter;
+    if (layer === ch.turningPoint) {
+      this.pendingCrossroad = true;
+      if (!this.stats.turningPointClearedDay) this.stats.turningPointClearedDay = this.day;
+    }
+    if (layer + 1 === ch.turningPoint && !this.stats.turningPointReachedDay) this.stats.turningPointReachedDay = this.day;
+    if (layer === ch.length) this.chapterCleared = true;
     this.dayStats.layerClearTimes.push(this.playTime);
     out.push({ type: 'layerClear', layer, returns });
     if (boss) {
@@ -746,7 +768,7 @@ export class GameState {
     out.push({ type: 'dayReturn', side: 'unhappy', returns: back.map((u) => this.returnPiece(u.id, u.x, u.y, this.unitPiece(u))) });
     this.dayStats.joyEnd = this.joy;
     const prev = this.diary.length ? this.diary[this.diary.length - 1] : null;
-    const entry = writeDiary(this.data, this.day, this.today, this.dayStats, this.rng, prev, this.isGrowthDay(this.day));
+    const entry = writeDiary(this.data, this.day, this.today, this.dayStats, this.rng, prev, this.growsNext);
     this.diary.push(entry);
     this.lastDayStats = this.dayStats;
     this.dayStats = emptyDayStats(this.joy, this.data.balance.grid.maxTier);
@@ -754,25 +776,36 @@ export class GameState {
     out.push({ type: 'dayEnd', day: this.day, entry, stats: this.lastDayStats });
   }
 
-  /** [다음 날]. 14일째 일기 뒤면 마지막 자라기 + 결말 판정. 자라는 날이면 이벤트 카드보다 먼저 자라기 (§5.14-2) */
+  /**
+   * [다음 날] (§5.15-1):
+   * - 1-length를 정화한 날 → 자라기 → 챕터 완성 (completed true)
+   * - maxDays일째 → 자라기 → 미완성 (completed false)
+   * - 1-turningPoint를 정화했으면 → 다음 날 dayStart에 자라기 → 갈림길 카드 (이벤트 추첨 없음)
+   */
   nextDay(): boolean {
     if (this.phase !== 'diary') return false;
-    if (this.day >= this.lifeLengthDays) {
+    if (this.chapterCleared || this.day >= this.maxDays) {
       this.grow();
-      this.enterLifeEnd();
+      this.enterChapterComplete(this.chapterCleared);
       return true;
     }
     this.day += 1;
-    if (this.isGrowthDay(this.day)) this.grow();
-    this.today = this.resolveToday();
+    if (this.pendingCrossroad) {
+      this.pendingCrossroad = false;
+      this.grow();
+      this.today = this.crossroadCard();
+    } else {
+      this.today = this.resolveToday();
+    }
     this.phase = 'dayStart';
     this.pending.push({ type: 'dayStart', day: this.day, event: this.today });
     return true;
   }
 
-  /** 5·10일 (days.growthDays). 일생 끝 자라기는 별도 */
-  isGrowthDay(day: number): boolean {
-    return this.data.days.growthDays.includes(day);
+  private crossroadCard(): DayEvent {
+    const e = eventById(this.data, this.data.chapter.crossroad);
+    if (!e) throw new Error(`갈림길 이벤트 없음: ${this.data.chapter.crossroad}`);
+    return e;
   }
 
   /** 걱정 HP = 일차 HP × ageWorryMult^(자란 횟수) (§5.14-2). 역류 보스는 bossHp 그대로 */
@@ -783,7 +816,7 @@ export class GameState {
   /**
    * 자라기 (즉시, 레인·맡긴 추억이 빈 경계에서만 호출):
    * 그리드(칸 순) + 귀환 대기열(순서대로)의 전설 전부를 소진 (쉬는 전설 포함). 영웅·1~2단계·와일드카드는 남는다.
-   * 성장치·기억·특성·갈래 반영, 나이 +1. 빈 칸에 대기열을 채운다.
+   * 성장치·기억·특성·갈래 반영. 빈 칸에 대기열을 채운다.
    */
   grow(): GrowthResult {
     const recipes = this.data.recipes.recipes;
@@ -799,18 +832,17 @@ export class GameState {
       return false;
     });
     this.returnQueue.splice(0, this.returnQueue.length, ...keep);
-    this.age += 1;
-    const result = applyGrowth(this.growth, this.traits, consumed, this.data.balance.growth, this.day, this.age);
+    const result = applyGrowth(this.growth, this.traits, consumed, this.data.balance.growth, this.day);
     this.growthLog.push(result);
     this.flushReturnQueue();
     this.pending.push({ type: 'growth', result });
     return result;
   }
 
-  private enterLifeEnd(): void {
-    this.ending = judgeEnding(this.growth, this.data.endings);
-    this.phase = 'lifeEnd';
-    this.pending.push({ type: 'lifeEnd' });
+  private enterChapterComplete(completed: boolean): void {
+    this.completed = completed;
+    this.phase = 'chapterComplete';
+    this.pending.push({ type: 'chapterComplete', completed });
   }
 
   /**
@@ -854,10 +886,11 @@ export class GameState {
     g.lastDayStats = copy(save.lastDayStats);
     refill(g.bossLog, save.bossLog);
     refill(g.summonLog, save.summonLog);
-    g.ending = copy(save.ending);
+    g.completed = save.completed;
+    g.pendingCrossroad = save.pendingCrossroad;
+    g.chapterCleared = save.chapterCleared;
     Object.assign(g.growth, copy(save.growth));
     Object.assign(g.traits, copy(save.traits));
-    g.age = save.age;
     refill(g.growthLog, save.growthLog);
     g.dayStats = emptyDayStats(g.joy, data.balance.grid.maxTier);
     g.pending = [];
@@ -1186,11 +1219,20 @@ export class GameState {
     this.debugEndNight();
   }
 
-  /** 즉시 결말 판정: 지금까지의 성장치로 판정 → lifeEnd (레인은 비움, 자라기는 하지 않음) */
-  debugJudgeEnding(): void {
-    if (this.phase === 'lifeEnd') return;
+  /** 즉시 챕터 완성(true)·미완성(false): 레인을 비우고 자라기 → chapterComplete */
+  debugCompleteChapter(completed: boolean): void {
+    if (this.phase === 'chapterComplete') return;
     this.clearLanes();
-    this.enterLifeEnd();
+    this.pendingCrossroad = false;
+    this.chapterCleared = completed;
+    this.grow();
+    this.enterChapterComplete(completed);
+  }
+
+  /** 심연 층(스테이지)을 바로 바꾼다. 경계(dayStart·diary)에서만 */
+  debugSetStage(layer: number): void {
+    if (this.phase !== 'dayStart' && this.phase !== 'diary') return;
+    this.abyss.debugSetLayer(Math.max(1, Math.min(this.data.balance.chapter.length, Math.floor(layer))));
   }
 
   private clearLanes(): void {
@@ -1219,9 +1261,9 @@ export class GameState {
 
   /** 특정 일차의 dayStart로 이동 (그리드·그림자·층은 유지, 레인은 비움) */
   debugGotoDay(day: number): void {
-    const d = Math.max(1, Math.min(this.lifeLengthDays, Math.floor(day)));
+    const d = Math.max(1, Math.min(this.maxDays, Math.floor(day)));
     this.clearLanes();
-    this.ending = null;
+    this.completed = null;
     this.day = d;
     this.today = this.resolveToday();
     this.dayStats = emptyDayStats(this.joy, this.data.balance.grid.maxTier);

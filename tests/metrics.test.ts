@@ -238,7 +238,7 @@ describe('MetricsRecorder', () => {
     expect(stored().lives[0].days[0].dropFails.invalid).toBe(0);
   });
 
-  it('평가·결말 납득·lifeEnd 기록, 저장(게임) 초기화와 무관하게 유지', () => {
+  it('평가·챕터 끝 납득·chapterComplete 기록, 저장(게임) 초기화와 무관하게 유지', () => {
     const s = fresh();
     const rec = new MetricsRecorder(s, SIZE);
     s.confirmDay();
@@ -248,11 +248,11 @@ describe('MetricsRecorder', () => {
     rec.rate(1, 'day', 'good');
     rec.rate(1, 'backflow', 'tense');
     expect(rec.rating(1)).toEqual({ day: 'good', backflow: 'tense' });
-    s.debugJudgeEnding();
-    rec.lifeEnd();
+    s.debugCompleteChapter(true);
+    rec.chapterEnd();
     rec.setEndingAgree(false);
     const life = stored().lives[0];
-    expect(life.ending?.id).toBe(s.ending!.id);
+    expect(life.chapter).toEqual({ completed: true, day: s.day, stage: s.stage });
     expect(life.stats).toEqual(s.stats);
     expect(life.endedAt).not.toBeNull();
     expect(life.endingAgree).toBe(false);
@@ -351,8 +351,8 @@ describe('분석 스크립트 (fixture)', () => {
   it('주관·결과', () => {
     expect(sec('주관').rows.map((r) => r[1])).toEqual(['1/1/0 (1)', '1/0 (1)', '1/0 (0)']);
     expect(sec('결과').rows).toEqual([
-      ['111@2026-10-01', '5x4', '2', 'solid', '800', '120', '2', '2일 unhappy'],
-      ['222@2026-10-02', '4x4', '1', '(진행 중)', '—', '—', '3', '—'],
+      ['111@2026-10-01', '5x4', '2', '완성 (2일)', '1-10', '2', '2일 unhappy'],
+      ['222@2026-10-02', '4x4', '1', '(진행 중)', '—', '3', '—'],
     ]);
   });
 
@@ -371,12 +371,12 @@ describe('분석 스크립트 (fixture)', () => {
         sunk: { median: 47 },
       },
       tierShare: { '1': 0.25, '2': 0.25, '3': 0.5 },
-      endings: { dist: { hidden: 0.1, solid: 0.4, mask: 0, quiet: 0.5, rainy: 0 } },
+      chapter: { completedRate: 0.4 },
     } as unknown as PolicyReport;
     const s = compareWithBot(fx.data, bot);
     expect(s.header).toEqual(['지표', '사람', '봇']);
     expect(s.rows.find((r) => r[0] === 'H1 Unhappy 비율')).toEqual(['H1 Unhappy 비율', '50%', '50%']);
-    expect(s.rows.find((r) => r[0] === '결말 solid')).toEqual(['결말 solid', '100%', '40%']);
+    expect(s.rows.find((r) => r[0] === '챕터 완성률')).toEqual(['챕터 완성률', '100%', '40%']);
     expect(s.rows.find((r) => r[0] === 'H6 그리드 가득 참 비율')?.[1]).toBe('28.6%');
   });
 

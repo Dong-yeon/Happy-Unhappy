@@ -183,7 +183,7 @@ export function analyze(data: MetricsData): Section[] {
       title: 'H5 체인별 3단계 도달 · 영웅 첫 소환 일차',
       header: ['일생', '체인', '3단계 도달(머지)', '영웅 첫 소환'],
       rows,
-      note: '3단계 도달 수는 lifeEnd 때 일생 stats로 확정 (진행 중 일생은 영웅 첫 소환만 소환 기록에서 계산)',
+      note: '3단계 도달 수는 chapterComplete 때 판 stats로 확정 (진행 중 일생은 영웅 첫 소환만 소환 기록에서 계산)',
     });
   }
 
@@ -226,7 +226,7 @@ export function analyze(data: MetricsData): Section[] {
         else r.bfNone += 1;
       }
     }
-    const agree = data.lives.filter((l) => l.ending);
+    const agree = data.lives.filter((l) => l.chapter);
     out.push({
       title: '주관 평가',
       header: ['질문', '응답'],
@@ -234,7 +234,7 @@ export function analyze(data: MetricsData): Section[] {
         ['오늘은? 좋았다/그저/별로 (무응답)', `${r.good}/${r.meh}/${r.bad} (${r.none})`],
         ['역류는? 긴장/짜증 (무응답, 역류 있던 날만)', `${r.tense}/${r.annoyed} (${r.bfNone})`],
         [
-          '이 결말, 납득돼? 응/아니 (무응답)',
+          '이 챕터의 끝, 납득돼? 응/아니 (무응답)',
           `${agree.filter((l) => l.endingAgree === true).length}/${agree.filter((l) => l.endingAgree === false).length} (${agree.filter((l) => l.endingAgree === null).length})`,
         ],
       ],
@@ -244,14 +244,13 @@ export function analyze(data: MetricsData): Section[] {
   // 결과
   out.push({
     title: '결과',
-    header: ['일생', '그리드', '끝낸 날', '결말', 'Happy', 'Unhappy', '가라앉음', '이정표'],
+    header: ['판', '그리드', '끝낸 날', '챕터', '스테이지', '가라앉음', '갈림길'],
     rows: data.lives.map((l) => [
       shortId(l),
       gridKey(l),
       String(l.days.length),
-      l.ending?.id ?? '(진행 중)',
-      fmt(l.ending?.happy ?? null, 0),
-      fmt(l.ending?.unhappy ?? null, 0),
+      l.chapter ? (l.chapter.completed ? `완성 (${l.chapter.day}일)` : `미완성 (${l.chapter.day}일)`) : '(진행 중)',
+      l.chapter ? `1-${l.chapter.stage}` : '—',
       String(l.stats?.sunkCount ?? l.days.reduce((s, d) => s + d.dayStats.sunk, 0)),
       l.milestoneChoices.map((c) => `${c.day}일 ${c.choiceId}`).join(', ') || '—',
     ]),
@@ -277,8 +276,7 @@ export function compareWithBot(data: MetricsData, bot: PolicyReport): Section {
   const perLife = (f: (l: LifeMetrics) => number) => median(data.lives.map(f));
   const bs = bot.summary;
   const botPct = (x: number | null | undefined) => (x === null || x === undefined || !Number.isFinite(x) ? '—' : `${fmt(x * 100, 1)}%`);
-  const ended = data.lives.filter((l) => l.ending);
-  const endDist = (id: string) => pct(ended.filter((l) => l.ending!.id === id).length, ended.length);
+  const ended = data.lives.filter((l) => l.chapter);
   const rows: string[][] = [
     ['H1 Unhappy 비율', pct(down, ss.length), botPct(bs.downRatio?.median)],
     ...[1, 2, 3].map((t) => [`H2 ${t}단계 소환 비율`, tierShare(t), botPct(bot.tierShare[String(t)])]),
@@ -289,18 +287,14 @@ export function compareWithBot(data: MetricsData, bot: PolicyReport): Section {
     ['층 돌파 (일생당 중앙값)', fmt(perLife((l) => l.days.reduce((s, d) => s + d.dayStats.layersCleared, 0))), fmt(bs.layersCleared?.median)],
     ['역류 (일생당 중앙값)', fmt(perLife((l) => l.days.filter((d) => d.dayStats.backflow).length)), fmt(bs.backflows?.median)],
     ['가라앉음 (일생당 중앙값)', fmt(perLife((l) => l.days.reduce((s, d) => s + d.dayStats.sunk, 0))), fmt(bs.sunk?.median)],
-    ...['solid', 'hidden', 'mask', 'quiet', 'rainy'].map((id) => [
-      `결말 ${id}`,
-      ended.length ? endDist(id) : '—',
-      botPct(bot.endings?.dist[id as keyof typeof bot.endings.dist]),
-    ]),
+    ['챕터 완성률', ended.length ? pct(ended.filter((l) => l.chapter!.completed).length, ended.length) : '—', botPct(bot.chapter?.completedRate)],
   ];
   const daysPerLife = median(data.lives.map((l) => l.days.length));
   return {
     title: `봇 비교 (${bot.policy}, 시드 ${bot.options.seeds}, ${bot.options.days}일)`,
     header: ['지표', '사람', '봇'],
     rows,
-    note: `사람 일생은 끝낸 날 수 중앙값 ${fmt(daysPerLife)}일 기준 (14일 미만이면 일생당 합계는 봇보다 작게 나온다)`,
+    note: `사람 판은 끝낸 날 수 중앙값 ${fmt(daysPerLife)}일 기준 (봇보다 짧으면 판당 합계는 봇보다 작게 나온다)`,
   };
 }
 

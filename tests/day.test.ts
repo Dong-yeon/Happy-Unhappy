@@ -16,6 +16,19 @@ const DOG = 'companion_animal';
 const BLANKET = 'comfort_object';
 const W = base.balance.wave;
 
+/** 선물 이벤트 (birthday 삭제 뒤 freePieces 시험용, §5.15-3) */
+const WITH_GIFT = (d: GameData) => {
+  d.events.seasonal.push({
+    id: 'gift',
+    world: d.chapter.world,
+    archetypeId: 'gift',
+    title: '선물',
+    text: '선물이 왔다.',
+    effects: { freePieces: [{ chain: DOG, tier: 2 }] },
+    diaryLine: '선물을 받았다.',
+  });
+};
+
 /** dayStart 상태 그대로 (카드를 닫지 않음) */
 function fresh(edit: (d: GameData) => void = () => {}, seed = 1): GameState {
   const d = structuredClone(base);
@@ -78,14 +91,15 @@ describe('상태 흐름', () => {
     expect(g.confirmDay('happy')).toEqual({ ok: true });
   });
 
-  it('14일째 diary 뒤 → lifeEnd', () => {
+  it('maxDays일째 diary 뒤 → chapterComplete (1-10 미정화면 미완성, §5.15-1)', () => {
     const g = fresh();
-    g.debugGotoDay(14);
+    g.debugGotoDay(base.balance.chapter.maxDays);
     begin(g);
     runDay(g);
     expect(g.phase).toBe('diary');
     g.nextDay();
-    expect(g.phase).toBe('lifeEnd');
+    expect(g.phase).toBe('chapterComplete');
+    expect(g.completed).toBe(false);
     expect(g.nextDay()).toBe(false);
   });
 
@@ -142,18 +156,18 @@ describe('하루 시작 처리', () => {
     expect(g.joy).toBe(joy + 15);
   });
 
-  it('freePieces: 빈 칸 rng 배치 (생일: 강아지 2단계)', () => {
-    const g = fresh();
-    const es = begin(g, 'birthday');
+  it('freePieces: 빈 칸 rng 배치 (선물: 강아지 2단계)', () => {
+    const g = fresh(WITH_GIFT);
+    const es = begin(g, 'gift');
     const [fp] = ofType(es, 'freePiece');
     expect(fp.ret.piece).toMatchObject({ chain: DOG, tier: 2 });
     expect(g.grid.cells[fp.ret.placedAt!]).toBe(fp.ret.piece);
   });
 
   it('freePieces: 칸이 없으면 귀환 대기열 규칙', () => {
-    const g = fresh();
+    const g = fresh(WITH_GIFT);
     while (g.debugGrant(BLANKET, 1) !== null);
-    const es = begin(g, 'birthday');
+    const es = begin(g, 'gift');
     expect(ofType(es, 'freePiece')[0].ret).toMatchObject({ placedAt: null, queued: true });
     expect(g.returnQueue).toHaveLength(1);
   });
@@ -440,31 +454,35 @@ describe('그림일기', () => {
   });
 
   it('직전 날과 같은 결과 문장은 피한다 (후보가 둘 이상이면)', () => {
-    const lines = base.diary.result.default;
+    const lines = ['가', '나'];
     for (let s = 1; s <= 50; s++) expect(pickAvoiding(mulberry32(s), lines, lines[0])).toBe(lines[1]);
     expect(pickAvoiding(mulberry32(1), ['하나'], '하나')).toBe('하나');
   });
 
   it('문장 = 이벤트 문장 + 낮 결과 문장 + 밤 문장, 직전 밤 문장은 피한다', () => {
     const plain = { kind: 'plain' as const, id: 'plain' as const, title: '평범한 하루', text: '', effects: {} };
-    const e = writeDiary(base, 3, plain, stats({}), mulberry32(2), null);
+    const two = structuredClone(base);
+    two.diary.night.none = ['달 하나.', '달 둘.'];
+    const e = writeDiary(two, 3, plain, stats({}), mulberry32(2), null);
     expect(base.events.plainDay.diaryLines).toContain(e.eventLine);
     expect(base.diary.result.default).toContain(e.resultLine);
-    expect(base.diary.night.none).toContain(e.nightLine);
+    expect(two.diary.night.none).toContain(e.nightLine);
     expect(e.line).toBe(`${e.eventLine} ${e.resultLine} ${e.nightLine}`);
     expect(e).toMatchObject({ day: 3, eventTitle: '평범한 하루', category: 'default', nightCategory: 'none' });
     for (let s = 1; s <= 20; s++) {
-      const next = writeDiary(base, 4, plain, stats({}), mulberry32(s), e);
+      const next = writeDiary(two, 4, plain, stats({}), mulberry32(s), e);
       expect(next.nightLine).not.toBe(e.nightLine);
     }
   });
 });
 
 describe('캘린더', () => {
-  it('7일째 이정표, 10일째 생일', () => {
-    const rng = mulberry32(1);
-    expect(resolveDayEvent(base, 7, rng, [])).toMatchObject({ kind: 'milestone', id: 'first_tooth' });
-    expect(resolveDayEvent(base, 10, rng, [])).toMatchObject({ kind: 'seasonal', id: 'birthday' });
+  it('고정 일차 이벤트 없음 (§5.15-3): 갈림길은 일차로 나오지 않고, birthday는 삭제', () => {
+    expect(base.days.fixed).toEqual({});
+    expect(base.events.seasonal.map((e) => e.id)).not.toContain('birthday');
+    for (let day = 1; day <= base.balance.chapter.maxDays; day++) {
+      for (let s = 1; s <= 5; s++) expect(['plain', 'daily']).toContain(resolveDayEvent(base, day, mulberry32(s), []).kind);
+    }
   });
 
   it('일상 이벤트 쿨다운: dailyEventCooldownDays일 안에 반복하지 않음', () => {
@@ -486,19 +504,19 @@ describe('캘린더', () => {
     expect(resolveDayEvent(d, 6, mulberry32(1), all).kind).toBe('plain');
   });
 
-  it('14일 동안 GameState가 7일째 이정표·10일째 생일을 띄운다', () => {
+  it('층을 넘지 않으면 maxDays일 동안 갈림길이 나오지 않고, 미완성으로 끝난다', () => {
     const g = fresh();
     const kinds: string[] = [];
-    for (let day = 1; day <= 14; day++) {
-      kinds.push(g.today.id);
+    for (let day = 1; day <= base.balance.chapter.maxDays; day++) {
+      kinds.push(g.today.kind);
       g.confirmDay(g.today.kind === 'milestone' ? 'unhappy' : undefined);
       g.debugEndDay();
       g.nextDay();
     }
-    expect(kinds[6]).toBe('first_tooth');
-    expect(kinds[9]).toBe('birthday');
-    expect(g.phase).toBe('lifeEnd');
-    expect(g.diary).toHaveLength(14);
+    expect(kinds).not.toContain('milestone');
+    expect(g.phase).toBe('chapterComplete');
+    expect(g.completed).toBe(false);
+    expect(g.diary).toHaveLength(base.balance.chapter.maxDays);
   });
 });
 
@@ -532,8 +550,9 @@ describe('조용한 날 (D-024)', () => {
 
   it('고정 이벤트가 조용한 날보다 먼저 (quietDays 안의 고정 일차는 고정 이벤트)', () => {
     const d = structuredClone(base);
-    d.days.fixed = { '1': 'birthday' };
-    expect(resolveDayEvent(d, 1, mulberry32(1), []).id).toBe('birthday');
+    WITH_GIFT(d);
+    d.days.fixed = { '1': 'gift' };
+    expect(resolveDayEvent(d, 1, mulberry32(1), []).id).toBe('gift');
   });
 
   it('GameState: 1~2일차 카드는 평범한 하루', () => {
@@ -570,7 +589,7 @@ describe('아침 기쁨 바닥 (D-024)', () => {
 
   it('순서: 이벤트 joy 가감 뒤에 바닥 → 그다음 이정표 선택 효과', () => {
     // 이벤트 joy 감소로 바닥 밑으로 내려가도 바닥에서 시작
-    const g = fresh((d) => d.events.daily.push({ id: 'bad_day', world: d.days.world, title: '나쁜 날', effects: { joy: -50 }, diaryLine: '나빴다.' }));
+    const g = fresh((d) => d.events.daily.push({ id: 'bad_day', world: d.chapter.world, title: '나쁜 날', effects: { joy: -50 }, diaryLine: '나빴다.' }));
     g.joy = 30;
     begin(g, 'bad_day');
     expect(g.joy).toBe(FLOOR);
@@ -585,11 +604,11 @@ describe('아침 기쁨 바닥 (D-024)', () => {
 });
 
 describe('결정성', () => {
-  /** 14일 일생: 간단한 입력 (매일 몇 번 생성·소환) */
+  /** 한 판: 간단한 입력 (매일 몇 번 생성·소환) */
   function life(seed: number) {
     const g = fresh(() => {}, seed);
     const log: string[] = [];
-    while (g.phase !== 'lifeEnd') {
+    while (g.phase !== 'chapterComplete') {
       if (g.phase === 'dayStart') g.confirmDay(g.today.kind === 'milestone' ? 'unhappy' : undefined);
       else if (g.timeFlows) {
         for (let k = 0; k < 600 && g.timeFlows; k++) {
@@ -604,10 +623,10 @@ describe('결정성', () => {
     return { log, diary: g.diary.map((d) => d.line), stats: { ...g.stats }, joy: g.joy, shadow: g.shadow, ticks: g.tickCount };
   }
 
-  it('같은 시드·같은 입력이면 14일 결과 동일', () => {
+  it('같은 시드·같은 입력이면 한 판 결과 동일', () => {
     const a = life(7);
     expect(life(7)).toEqual(a);
-    expect(a.diary).toHaveLength(14);
+    expect(a.diary.length).toBeGreaterThan(1);
   });
 });
 

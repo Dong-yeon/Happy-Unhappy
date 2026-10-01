@@ -16,7 +16,7 @@ export interface Override {
   value: OverrideValue;
 }
 
-const FILES: (keyof GameData)[] = ['balance', 'units', 'chains', 'monsters', 'events', 'days', 'diary', 'endings', 'recipes'];
+const FILES: (keyof GameData)[] = ['balance', 'units', 'chains', 'monsters', 'events', 'days', 'diary', 'chapter', 'chapterComplete', 'recipes'];
 
 export function resolvePath(key: string): string[] {
   const parts = key.split('.').filter((p) => p.length > 0);

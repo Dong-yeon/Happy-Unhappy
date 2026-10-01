@@ -30,7 +30,7 @@ export function dayProgress(s: GameState): number {
 
 /** 밤 진행도: 지난 시간 / nightSeconds */
 export function nightProgress(s: GameState): number {
-  if (s.phase !== 'night') return s.phase === 'diary' || s.phase === 'lifeEnd' ? 1 : 0;
+  if (s.phase !== 'night') return s.phase === 'diary' || s.phase === 'chapterComplete' ? 1 : 0;
   return 1 - Math.max(0, s.nightTimer) / s.nightSeconds;
 }
 

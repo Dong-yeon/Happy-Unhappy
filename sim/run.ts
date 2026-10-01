@@ -1,6 +1,6 @@
 // 자동 플레이 시뮬레이터 CLI (스펙 §8.1). Node 전용: core + data + layout 좌표만 import (Phaser 없음).
 //
-//   npm run sim -- --policy balanced --seeds 200 --grid 5x4 [--until life] [--out 파일]   (M5부터 실제 하루 구조, 14일 일생)
+//   npm run sim -- --policy balanced --seeds 200 --grid 5x4 [--until life] [--out 파일]   (실제 하루 구조, 한 판 = 1챕터)
 //   npm run sim -- --policy idle,random,alwaysHappy,hoarder,balanced ...   (여러 정책 + 비교 표)
 //   npm run sim -- --compare a.json b.json
 //   (--until wave:N · --dayReset · --dayMode m5는 M5에서 없어짐: 무한 웨이브가 하루 3웨이브로 바뀌었다)
@@ -24,7 +24,7 @@ import {
   checkM3Goals,
   checkM4Goals,
   checkM5Goals,
-  checkM6Goals,
+  checkM88Goals,
   formatComparison,
   formatCompare,
   formatGoals,
@@ -148,7 +148,7 @@ function runPolicies(args: Args, data: GameData, sets: Override[], cfg: SimConfi
         seeds: args.seeds,
         grid: `${args.grid.cols}x${args.grid.rows}`,
         mode: 'life',
-        days: data.balance.days.lifeLengthDays,
+        days: data.balance.chapter.maxDays,
         wavesPerDay: data.balance.wave.wavesPerDay,
         ...(sets.length ? { overrides: overridesRecord(sets) } : {}),
       },
@@ -177,7 +177,7 @@ function checkRoundTrip(args: Args, data: GameData, cfg: SimConfig): RoundTripCh
     for (let seed = 1; seed <= args.seeds; seed++) {
       const a = runLife(data, cfg, POLICIES[name], { seed, grid: args.grid });
       const b = runLife(data, cfg, POLICIES[name], { seed, grid: args.grid, saveRoundTrip: true });
-      const fin = (s: typeof a.state) => (s.phase === 'lifeEnd' ? JSON.stringify(serializeGame(s)) : '');
+      const fin = (s: typeof a.state) => (s.phase === 'chapterComplete' ? JSON.stringify(serializeGame(s)) : '');
       if (JSON.stringify(a.result) === JSON.stringify(b.result) && fin(a.state) === fin(b.state)) matched += 1;
       else if (mismatchSeeds.length < 5) mismatchSeeds.push(seed);
     }
@@ -225,7 +225,7 @@ function main(): void {
         value: v.value,
         reports,
         goals: [
-          ...checkM6Goals(reports, cfg.m6Goals, cfg.m5Goals, null).filter((g) => g.id && !g.id.startsWith('M5')),
+          ...checkM88Goals(reports, cfg.m88Goals, null).filter((g) => g.id && g.id !== 'roundTrip'),
           ...checkM5Goals(reports, cfg.m5Goals),
           ...checkM4Goals(reports, cfg.m4Goals),
         ],
@@ -245,7 +245,7 @@ function main(): void {
     const compact = rows.map((r) => ({
       value: r.value,
       goals: r.goals.map(({ id, label, pass, detail }) => ({ id, label, pass, detail })),
-      policies: Object.fromEntries(r.reports.map((p) => [p.policy, { summary: p.summary, tierShare: p.tierShare, endings: p.endings }])),
+      policies: Object.fromEntries(r.reports.map((p) => [p.policy, { summary: p.summary, tierShare: p.tierShare, chapter: p.chapter }])),
     }));
     writeFileSync(
       file,
@@ -288,7 +288,7 @@ function main(): void {
     );
     console.log();
   }
-  console.log(formatGoals(checkM6Goals(reports, cfg.m6Goals, cfg.m5Goals, roundTrip), '§8.2 M6 목표 (M6: 판정 출력만, 통과는 M6.5)'));
+  console.log(formatGoals(checkM88Goals(reports, cfg.m88Goals, roundTrip), '§8.2 M8.8 진행 목표 (판정 출력만, 통과는 M8.7 (b))'));
 }
 
 main();

@@ -1,9 +1,6 @@
 {
-  "world": "modern",
-  "age": 8,
-  "fixed": { "7": "first_tooth", "10": "birthday" },
+  "fixed": {},
   "dailyEventChance": 0.5,
   "dailyEventCooldownDays": 3,
-  "quietDays": 2,
-  "growthDays": [5, 10]
+  "quietDays": 2
 }

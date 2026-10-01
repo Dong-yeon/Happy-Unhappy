@@ -369,8 +369,11 @@ describe('저장·결정성 (새 Piece 필드 포함)', () => {
     const r = runLife(base, simJson as SimConfig, POLICIES.balanced, { seed: 4, grid: SIZE }).result;
     expect(r.shiningMade).toBeGreaterThan(0);
     expect(r.legendsMade).toBeGreaterThan(0);
-    // v0.10: 특성으로 유닛이 강해져 부상이 드물다 → 부상은 다른 시드로 확인
-    const r8 = runLife(base, simJson as SimConfig, POLICIES.balanced, { seed: 8, grid: SIZE }).result;
-    expect(r8.injuriesDay + r8.injuriesNight).toBeGreaterThan(0);
+    // v0.11: balanced는 특성·짧은 판(1챕터)으로 부상이 드물다 → 부상은 hoarder(영웅만 창문으로)로 확인
+    const injured = [1, 2, 3, 4].some((seed) => {
+      const r = runLife(base, simJson as SimConfig, POLICIES.hoarder, { seed, grid: SIZE }).result;
+      return r.injuriesDay + r.injuriesNight > 0;
+    });
+    expect(injured).toBe(true);
   });
 });

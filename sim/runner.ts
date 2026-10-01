@@ -1,8 +1,7 @@
-// 한 판(일생) 실행: 시드 하나 × 정책 하나 → 결과 (스펙 §8.1). M5부터 실제 하루 구조(--until life)만.
+// 한 판(1챕터) 실행: 시드 하나 × 정책 하나 → 결과 (스펙 §8.1). M5부터 실제 하루 구조(--until life)만.
 // 시간은 core의 고정 틱으로만, 하루 단계가 'waves'일 때만 흐른다. 봇은 decisionInterval마다 판단하고 반응 지연 뒤에 행동한다.
 // 하루 시작 카드는 봇이 닫고(이정표면 정책의 선택), 그림일기 뒤에는 바로 다음 날로 넘어간다.
 // --saveRoundTrip (§5.8-4): 경계(dayStart·diary)마다 serializeGame → JSON → fromSave로 상태를 갈아끼운다. 봇 rng는 그대로.
-import type { EndingResult } from '../src/core/ending';
 import type { Branch } from '../src/core/growth';
 import { GameState, type BossRecord } from '../src/core/game';
 import { FIXED_DT } from '../src/core/lane';
@@ -21,7 +20,7 @@ export interface RunOptions {
 
 export interface RunResult {
   seed: number;
-  /** 끝까지 산 날 수 (정상이면 lifeLengthDays) */
+  /** 이야기 한 장까지 끝낸 날 수 (완성한 날 또는 maxDays) */
   days: number;
   /** 첫 가라앉음이 일어난 웨이브 (일생 통산 번호: (일차-1) × wavesPerDay + 칸 + 1). 없으면 null */
   firstSinkWave: number | null;
@@ -90,8 +89,15 @@ export interface RunResult {
   /** 반응 지연 사이에 상태가 바뀌어 core가 거절한 행동 */
   staleActions: number;
   playTime: number;
-  /** 결말 (14일을 다 살았을 때). 없으면 null */
-  ending: EndingResult | null;
+  /** 판의 끝 (§5.15-1): 완성 true / maxDays 미완성 false / 시간 상한으로 중단 null */
+  completed: boolean | null;
+  /** 끝난 일차 (완성이면 완성 일차) */
+  endDay: number;
+  /** 끝났을 때 스테이지 (1-n의 n) */
+  stage: number;
+  /** 1-turningPoint 도달·정화 일차 (없으면 null) */
+  turningPointReachedDay: number | null;
+  turningPointClearedDay: number | null;
   /** 자라기마다 (§5.14-5): 소진한 행복/정화 전설 수·기억·갈래 */
   growths: { day: number; happy: number; purified: number; pairs: number; branch: Branch }[];
   /** 일생 끝(또는 중단 시점)의 특성 스택 */
@@ -113,12 +119,12 @@ function roundTrip(data: GameData, state: GameState, grid: RunOptions['grid']): 
   return GameState.fromSave(data, save, mulberry32(save.seed), gameGeometry(data.balance.lane.laneCap), grid);
 }
 
-/** 한 판 + 마지막 상태 (lifeEnd면 serializeGame으로 비교 가능) */
+/** 한 판 + 마지막 상태 (chapterComplete면 serializeGame으로 비교 가능) */
 export function runLife(data: GameData, cfg: SimConfig, policy: Policy, opt: RunOptions): { result: RunResult; state: GameState } {
   let state = new GameState(data, opt.grid, mulberry32(opt.seed), gameGeometry(data.balance.lane.laneCap), opt.seed);
   const botRng = mulberry32(botSeed(opt.seed));
   const wpd = data.balance.wave.wavesPerDay;
-  const days = data.balance.days.lifeLengthDays;
+  const days = data.balance.chapter.maxDays;
 
   const sunkByDay = new Array<number>(days).fill(0);
   const joyByDay: number[] = [];
@@ -174,7 +180,7 @@ export function runLife(data: GameData, cfg: SimConfig, policy: Policy, opt: Run
     }
   };
 
-  while (state.phase !== 'lifeEnd' && ticks < maxTicks) {
+  while (state.phase !== 'chapterComplete' && ticks < maxTicks) {
     if (state.phase === 'dayStart') {
       if (opt.saveRoundTrip) state = roundTrip(data, state, opt.grid);
       // 카드 닫기 (이정표면 정책이 고름. 기본은 첫 선택지)
@@ -279,7 +285,11 @@ export function runLife(data: GameData, cfg: SimConfig, policy: Policy, opt: Run
     flags: [...state.flags],
     ...counts,
     playTime: state.playTime,
-    ending: state.ending && structuredClone(state.ending),
+    completed: state.completed,
+    endDay: state.day,
+    stage: state.stage,
+    turningPointReachedDay: st.turningPointReachedDay || null,
+    turningPointClearedDay: st.turningPointClearedDay || null,
     injuriesDay: st.injuriesDay,
     injuriesNight: st.injuriesNight,
     shiningMade: st.shiningMade,

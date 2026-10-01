@@ -1,7 +1,7 @@
 {
-  "worry": { "name": "걱정", "hpBase": 18, "speed": 35, "atk": 3, "atkInterval": 1.2, "joyReward": 3 },
+  "worry": { "name": "줄무늬 그림자", "hpBase": 18, "speed": 35, "atk": 3, "atkInterval": 1.2, "joyReward": 3 },
   "backflowBoss": {
-    "name": "역류",
+    "name": "성난 호랑이 그림자",
     "hp": 350, "speed": 20, "atk": 8, "atkInterval": 1.0,
     "joyReward": 0, "joyPenalty": 30, "sinkLayerHp": 80, "hpGrowthPerDay": 1
   }

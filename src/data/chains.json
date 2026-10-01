@@ -1,18 +1,18 @@
 [
   {
     "archetypeId": "companion_animal",
-    "world": "modern",
+    "world": "tale_sun_moon",
     "spawnWeight": 1,
     "color": "#E8A15A",
-    "tierNames": ["강아지 발자국", "공놀이한 오후", "강아지"],
+    "tierNames": ["떡 한 조각", "떡 광주리", "떡 할미"],
     "hero": { "hp": 110, "atk": 20, "atkInterval": 0.8, "range": 50 }
   },
   {
     "archetypeId": "comfort_object",
-    "world": "modern",
+    "world": "tale_sun_moon",
     "spawnWeight": 1,
     "color": "#8FB8DE",
-    "tierNames": ["담요 한 조각", "낮잠 자던 오후", "담요 인형"],
+    "tierNames": ["지푸라기", "새끼줄", "하늘 동아줄"],
     "hero": { "hp": 150, "atk": 14, "atkInterval": 1.0, "range": 40 }
   }
 ]

@@ -89,8 +89,17 @@ export interface Balance {
     /** 마음 날씨 경계: [흐림, 비, 폭우]가 시작되는 그림자 값 (그 미만은 맑음) */
     weatherThresholds: [number, number, number];
   };
+  /** 챕터 진행 (§5.15-1, D-039): 1-1 ~ 1-length = 심연 1 ~ length층 */
+  chapter: {
+    length: number;
+    /** 이 층을 정화하면 다음 dayStart에 자라기 + 갈림길 */
+    turningPoint: number;
+    /** 전환점 층 HP 배수 */
+    turningPointHpMult: number;
+    /** 이 일차 이야기 한 장 뒤에도 1-length를 못 넘었으면 미완성으로 끝 */
+    maxDays: number;
+  };
   days: {
-    lifeLengthDays: number;
     dailyLimit: number;
     storeCap: number;
     /** 하루 시작(이벤트 효과 직후) 기쁨 바닥. 가산이 아니라 max (D-024) */
@@ -185,15 +194,11 @@ export interface Events {
 }
 
 export interface Days {
-  world: string;
-  age: number;
   fixed: Record<string, string>;
   dailyEventChance: number;
   dailyEventCooldownDays: number;
   /** 1 ~ quietDays일차는 고정 이벤트 외에 일상 이벤트 없음 (D-024) */
   quietDays: number;
-  /** 자라는 날 (§5.14-2): 이 일차 dayStart (+ 일생 끝 자동 1회) */
-  growthDays: number[];
 }
 
 export interface Diary {
@@ -201,22 +206,31 @@ export interface Diary {
   result: { backflow: string[]; manySunk: string[]; default: string[] };
   /** 밤 문장 (§5.11-6) */
   night: { layerCleared: string[]; tried: string[]; none: string[] };
-  /** 자라는 날 문장 (§5.14-2) */
+  /** 자라기 문장 (§5.14-2, §5.15-4): 자라기가 이어지는 날 */
   growth: string[];
   forgottenDay: string;
 }
 
-export type EndingId = 'hidden' | 'solid' | 'mask' | 'quiet' | 'rainy';
+/** 챕터 문구 (§5.15-2, chapter.json): 세계·갈림길·층 장면 이름 */
+export interface Chapter {
+  /** 이 챕터의 world 값 (체인·이벤트의 world와 같아야 함) */
+  world: string;
+  /** 1-turningPoint 정화 다음 dayStart에 나오는 갈림길 (events.milestones의 id) */
+  crossroad: string;
+  /** 1-length 보스 표시 이름 */
+  bossName: string;
+  /** 밤 층 장면 이름 (1-1 ~ 1-length) */
+  sceneNames: string[];
+  /** 낮 배경 이름 (현재 층 번호의 것) */
+  dayScenes: string[];
+}
 
-/** 결말 (§5.14-3, D-030): 양분으로 준 추억의 총량·비율·갈래로 판정 */
-export interface Endings {
-  /** total(= growth.happy + growth.unhappy) 미만이면 비 오는 어른 */
-  totalThreshold: number;
-  /** 행복한 추억 비율이 이 범위면 단단한 어른 (위 = 웃는 가면, 아래 = 조용한) */
-  shareBand: [number, number];
-  /** 히든: 자라기 갈래가 모두 together + 기억이 이 수 이상 */
-  hiddenMinMemories: number;
-  endings: Record<EndingId, { name: string; title: string; desc: string }>;
+/** 챕터 완성 화면 (§5.15-5, chapter_complete.json). learnedRecipes는 표시만 (조합표에 추가하지 않음, D-043) */
+export interface ChapterComplete {
+  title: string;
+  doneText: string;
+  notDoneText: string;
+  learnedRecipes: { id: string; name: string; side: 'day' | 'night' }[];
 }
 
 /** 조합표 (§5.13-5) */
@@ -250,6 +264,7 @@ export interface GameData {
   events: Events;
   days: Days;
   diary: Diary;
-  endings: Endings;
+  chapter: Chapter;
+  chapterComplete: ChapterComplete;
   recipes: Recipes;
 }

@@ -47,6 +47,8 @@ export class AbyssLaneView {
     private readonly partySlot: (i: number) => { x: number; y: number },
     /** 보스 층 판정용 (balance.abyss) */
     private readonly abyssStats: Balance['abyss'],
+    /** 벽 라벨 "1-3 셋째 고개" (§5.15-2) */
+    private readonly stageName: (stage: number) => string,
   ) {
     for (const c of chains) this.chainColor.set(c.archetypeId, parseInt(c.color.slice(1), 16));
     const g = REGION.ground;
@@ -106,7 +108,7 @@ export class AbyssLaneView {
     const w = s.abyss.wall;
     // 보스 층 (§5.13-4): 붉은 벽 + 굵은 테두리 + "보스 층"
     const boss = isBossFloor(this.abyssStats, w.layer);
-    const label = `${boss ? '◆ 보스 층' : '▓ 그림자 벽'} ${w.layer}층  ${Math.max(0, Math.ceil(w.hp))}/${Math.ceil(w.maxHp)}`;
+    const label = `${boss ? '◆ ' : '▓ '}${this.stageName(w.layer)}  ${Math.max(0, Math.ceil(w.hp))}/${Math.ceil(w.maxHp)}`;
     if (this.wallLabel.text !== label) this.wallLabel.setText(label).setColor(boss ? '#ff9e9e' : '#8796c2');
     if (boss !== this.bossShown) {
       this.bossShown = boss;

@@ -1,18 +1,18 @@
 {
   "recipes": [
-    { "id": "sunny_picnic", "name": "햇살 소풍", "kind": "happy",
+    { "id": "sunny_picnic", "name": "해를 닮은 떡", "kind": "happy",
       "inputs": [ {"chain": "companion_animal", "tier": 3, "shining": false}, {"chain": "comfort_object", "tier": 2} ],
       "legend": {"hp": 160, "atk": 34, "atkInterval": 0.7, "range": 55} },
-    { "id": "nap_friend", "name": "낮잠 친구", "kind": "happy",
+    { "id": "nap_friend", "name": "오두막의 등불", "kind": "happy",
       "inputs": [ {"chain": "comfort_object", "tier": 3, "shining": false}, {"chain": "companion_animal", "tier": 2} ],
       "legend": {"hp": 300, "atk": 18, "atkInterval": 0.9, "range": 45} },
-    { "id": "not_alone_night", "name": "혼자가 아닌 밤", "kind": "purified",
+    { "id": "not_alone_night", "name": "함께 오른 동아줄", "kind": "purified",
       "inputs": [ {"chain": "companion_animal", "tier": 3, "shining": true}, {"chain": "comfort_object", "tier": 3, "shining": true} ],
       "legend": {"hp": 260, "atk": 32, "atkInterval": 0.8, "range": 55} },
-    { "id": "park_walk", "name": "공원 산책", "kind": "purified",
+    { "id": "park_walk", "name": "줄무늬 노을", "kind": "purified",
       "inputs": [ {"chain": "companion_animal", "tier": 3, "shining": true}, {"chain": "comfort_object", "tier": 2} ],
       "legend": {"hp": 160, "atk": 34, "atkInterval": 0.7, "range": 55} },
-    { "id": "cozy_nap", "name": "포근한 낮잠", "kind": "purified",
+    { "id": "cozy_nap", "name": "달빛 장독대", "kind": "purified",
       "inputs": [ {"chain": "comfort_object", "tier": 3, "shining": true}, {"chain": "companion_animal", "tier": 2} ],
       "legend": {"hp": 300, "atk": 18, "atkInterval": 0.9, "range": 45} }
   ]

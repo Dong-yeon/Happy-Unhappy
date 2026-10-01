@@ -50,8 +50,6 @@ export interface GrowthResult {
   day: number;
   /** 몇 번째 자라기 (1부터) */
   index: number;
-  /** 자란 뒤 나이 */
-  age: number;
   /** 소진한 전설 (조합 id, 소진 순서: 그리드 칸 순 → 대기열 순) */
   consumed: { recipe: string; kind: LegendKind; chain: string; cell: number | null }[];
   happyCount: number;
@@ -78,7 +76,6 @@ export function applyGrowth(
   consumed: GrowthResult['consumed'],
   cfg: Balance['growth'],
   day: number,
-  age: number,
 ): GrowthResult {
   const happyList = consumed.filter((c) => c.kind === 'happy');
   const purifiedList = consumed.filter((c) => c.kind === 'purified');
@@ -105,7 +102,6 @@ export function applyGrowth(
   return {
     day,
     index: growth.branches.length,
-    age,
     consumed,
     happyCount: happyList.length,
     purifiedCount: purifiedList.length,

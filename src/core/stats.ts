@@ -1,4 +1,4 @@
-// 일생 누적 stats (결말 판정·저장·시뮬). Phaser 의존 없음.
+// 한 판(챕터) 누적 stats (저장·시뮬·metrics). Phaser 의존 없음.
 
 export interface GameStats {
   sentUpTierSum: number;
@@ -39,6 +39,11 @@ export interface GameStats {
   bossFloorsCleared: number;
   /** 얻은 와일드카드 (보스 층 보상·이정표 보너스) */
   wildcardsGained: number;
+  // ── v0.11 챕터 진행 (§5.15-6) ──
+  /** 1-turningPoint에 도달한 일차 (그 전 층을 돌파한 날, 0 = 아직) */
+  turningPointReachedDay: number;
+  /** 1-turningPoint를 정화한 일차 (0 = 아직) */
+  turningPointClearedDay: number;
 }
 
 /** 숫자 필드 (결말·저장 검증) */
@@ -65,6 +70,8 @@ export const GAME_STATS_KEYS: readonly NumericStatKey[] = [
   'bossFloorsReached',
   'bossFloorsCleared',
   'wildcardsGained',
+  'turningPointReachedDay',
+  'turningPointClearedDay',
 ];
 
 export function emptyGameStats(): GameStats {

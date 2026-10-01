@@ -58,7 +58,8 @@ export interface LifeMetrics {
   milestoneChoices: { day: number; eventId: string; choiceId: string }[];
   midDayRestores: number;
   gatingBypassUsed: boolean;
-  ending: { id: string; happy: number; unhappy: number; breakdown: Record<string, number> } | null;
+  /** 판의 끝 (§5.15-5): 완성 여부·끝난 일차·스테이지. 진행 중이면 null */
+  chapter: { completed: boolean; day: number; stage: number } | null;
   endingAgree: boolean | null;
   stats: GameStats | null;
   /** 자라기마다 소진 목록·갈래·특성 (§5.14-6). v0.10 이전 기록에는 없다 */
@@ -101,7 +102,7 @@ export function newLife(seed: number, gridSize: { cols: number; rows: number }, 
     milestoneChoices: [],
     midDayRestores: 0,
     gatingBypassUsed: false,
-    ending: null,
+    chapter: null,
     endingAgree: null,
     stats: null,
   };

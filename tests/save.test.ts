@@ -70,13 +70,31 @@ describe('serializeGame / fromSave round-trip (경계 3종)', () => {
     expect(restore(serializeGame(g)).lastDayStats).toEqual(g.lastDayStats);
   });
 
-  it('lifeEnd (결말 포함)', () => {
-    const { state } = runLife(data, simJson as SimConfig, POLICIES.balanced, { seed: 2, grid: SIZE });
-    expect(state.phase).toBe('lifeEnd');
-    expect(state.ending).not.toBeNull();
-    const { before, after } = roundTripJson(state);
-    expect(after).toBe(before);
-    expect(restore(serializeGame(state)).ending).toEqual(state.ending);
+  it('chapterComplete (완성 여부 포함, §5.15-7)', () => {
+    for (const seed of [1, 2]) {
+      const { state } = runLife(data, simJson as SimConfig, POLICIES.balanced, { seed, grid: SIZE });
+      expect(state.phase).toBe('chapterComplete');
+      expect(typeof state.completed).toBe('boolean');
+      const { before, after } = roundTripJson(state);
+      expect(after).toBe(before);
+      expect(restore(serializeGame(state)).completed).toBe(state.completed);
+    }
+  });
+
+  it('갈림길 대기·1-10 정화 플래그도 저장된다, 옛 저장(ending 키)은 초기화', () => {
+    const g = playUntil(fresh(), 4, 'diary');
+    g.pendingCrossroad = true;
+    g.chapterCleared = true;
+    const back = restore(serializeGame(g));
+    expect(back.pendingCrossroad).toBe(true);
+    expect(back.chapterCleared).toBe(true);
+    const raw = JSON.parse(JSON.stringify(makeSaveData(SIZE, emptyGating(), serializeGame(g), 'x')));
+    raw.game.ending = null;
+    delete raw.game.completed;
+    expect(parseSave(JSON.stringify(raw), data, SIZE).ok).toBe(false);
+    const bad = JSON.parse(JSON.stringify(makeSaveData(SIZE, emptyGating(), serializeGame(g), 'x')));
+    bad.game.phase = 'lifeEnd';
+    expect(parseSave(JSON.stringify(bad), data, SIZE).ok).toBe(false);
   });
 
   it('복원한 dayStart는 오늘 이벤트를 다시 뽑지 않고, 이후 진행이 원본과 같다', () => {
@@ -166,17 +184,17 @@ describe('parseSave (초기화 규칙)', () => {
   });
 });
 
-describe('결정성: 끊김 없이 14일 vs 매 경계 round-trip (§5.8-5)', () => {
+describe('결정성: 끊김 없이 한 판 vs 매 경계 round-trip (§5.8-5)', () => {
   const cfg = simJson as SimConfig;
   it.each(['balanced', 'alwaysHappy'].flatMap((p) => [11, 22, 33].map((seed) => [p, seed] as const)))(
-    '%s 시드 %i: 최종 stats·diary·ending 동일',
+    '%s 시드 %i: 최종 stats·diary·completed 동일',
     (policy, seed) => {
       const a = runLife(data, cfg, POLICIES[policy], { seed, grid: SIZE });
       const b = runLife(data, cfg, POLICIES[policy], { seed, grid: SIZE, saveRoundTrip: true });
-      expect(a.state.phase).toBe('lifeEnd');
+      expect(a.state.phase).toBe('chapterComplete');
       expect(b.state.stats).toEqual(a.state.stats);
       expect(b.state.diary).toEqual(a.state.diary);
-      expect(b.state.ending).toEqual(a.state.ending);
+      expect(b.state.completed).toBe(a.state.completed);
       expect(b.result).toEqual(a.result);
       expect(JSON.stringify(serializeGame(b.state))).toBe(JSON.stringify(serializeGame(a.state)));
     },

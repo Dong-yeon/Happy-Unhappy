@@ -1,12 +1,12 @@
 // 하루 구조 (스펙 §5.1~5.3, §5.7, §5.11). Phaser 의존 없음.
 // 상태 흐름 (v0.8, D-027): dayStart ──(카드 닫기/이정표 선택)──▶ day(낮: 방어) ──(저녁 종료 → 해질녘)──▶ night(밤: 심연)
-//                          ──(달이 짐·잠들기 → 새벽)──▶ diary ──([다음 날])──▶ 다음 dayStart   14일째 diary 후 → lifeEnd
+//                          ──(달이 짐·잠들기 → 새벽)──▶ diary ──([다음 날])──▶ 다음 dayStart   1-10 정화·maxDays일째 diary 후 → chapterComplete (§5.15-1)
 
 import type { DailyEvent, EventEffects, GameData, Milestone, SeasonalEvent } from '../data/types';
 import { weightedPick, type Rng } from './rng';
 
 /** 해질녘(dusk)·새벽(dawn)은 단계가 아니라 즉시 처리 (§5.11-1) */
-export type DayPhase = 'dayStart' | 'day' | 'night' | 'diary' | 'lifeEnd';
+export type DayPhase = 'dayStart' | 'day' | 'night' | 'diary' | 'chapterComplete';
 
 /** 그날 무슨 날인지 (카드 표시·효과·그림일기 문장) */
 export type DayEvent =

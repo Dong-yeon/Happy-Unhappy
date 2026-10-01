@@ -52,6 +52,8 @@ export class DefenseLaneView {
     private readonly state: GameState,
     chains: Chain[],
     private readonly joyTarget: { x: number; y: number },
+    /** 걱정 표시 이름 (monsters.worry.name, §5.15-2) */
+    worryName = '걱정',
   ) {
     for (const c of chains) this.chainColor.set(c.archetypeId, parseInt(c.color.slice(1), 16));
     const g = REGION.ground;
@@ -59,7 +61,7 @@ export class DefenseLaneView {
     const bg = scene.add.rectangle(g.x, g.y, g.w, g.h, COLOR.defense).setOrigin(0);
     const lineX = progressX(CORE.lineY);
     const line = scene.add.line(0, 0, lineX, g.y + 6, lineX, g.y + g.h - 6, COLOR.line).setOrigin(0).setLineWidth(1);
-    const spawnLabel = text(scene, g.x + g.w - 6, g.y + 4, '← 걱정', { fontSize: '10px', color: '#c9b98a' }).setOrigin(1, 0);
+    const spawnLabel = text(scene, g.x + g.w - 6, g.y + 4, `← ${worryName}`, { fontSize: '10px', color: '#c9b98a' }).setOrigin(1, 0);
     const laneLabel = text(scene, g.x + g.w / 2, g.y + g.h - 4, '낮 · 방어 레인', { fontSize: '9px', color: '#8f835f' }).setOrigin(0.5, 1);
     const home = HOME.defense;
     const happy = scene.add.circle(home.x, home.y, 10, COLOR.happy);

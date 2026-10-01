@@ -40,16 +40,20 @@
       300
     ]
   },
-  "m6Goals": {
-    "balancedSolid": [
-      0.3,
-      0.5
+  "m88Goals": {
+    "balancedCompleteRate": [
+      0.6,
+      0.85
     ],
-    "balancedHidden": [
-      0.05,
-      0.15
+    "balancedCompleteDay": [
+      12,
+      16
     ],
-    "alwaysHappyMaskMin": 0.8,
-    "randomBestMax": 0.05
+    "balancedMidSunkMin": 5,
+    "balancedEarlySinkMax": 2,
+    "balancedBackflows": [
+      1,
+      3
+    ]
   }
 }

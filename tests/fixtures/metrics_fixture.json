@@ -203,20 +203,7 @@
       ],
       "midDayRestores": 0,
       "gatingBypassUsed": false,
-      "ending": {
-        "id": "solid",
-        "happy": 800,
-        "unhappy": 120,
-        "breakdown": {
-          "upTier": 6,
-          "defeat": 50,
-          "joy": 0,
-          "sunk": -4,
-          "downTier": 5,
-          "layer": 40,
-          "purified": 9
-        }
-      },
+      "chapter": { "completed": true, "day": 2, "stage": 10 },
       "endingAgree": true,
       "stats": {
         "sentUpTierSum": 6,
@@ -311,7 +298,7 @@
       "milestoneChoices": [],
       "midDayRestores": 1,
       "gatingBypassUsed": true,
-      "ending": null,
+      "chapter": null,
       "endingAgree": null,
       "stats": null
     }

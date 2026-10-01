@@ -1,13 +1,12 @@
 // ?debug=1 디버그 패널. M7에서 정식 디버그 패널로 흡수.
 // 기본은 접힘: 포탈 받침 왼쪽 빈 자리의 [DBG] 토글만 보인다. 펼치면 방어 레인 위에 겹쳐 뜬다 (심연 레인은 가리지 않음).
 // 탭: 기본(그리드·기쁨·조각) / 웨이브(정지·다음·배속) / 심연(그림자·역류·층) / 하루(일차·하루 끝·이벤트·일기장)
-//     / 결말(즉시 판정·미리보기 5종) / 저장(gating·저장 초기화·JSON 복사·시드) / metrics(내보내기·요약·초기화)
+//     / 챕터(스테이지 이동·즉시 완성/미완성) / 저장(gating·저장 초기화·JSON 복사·시드) / metrics(내보내기·요약·초기화)
 import Phaser from 'phaser';
 import { allEventIds } from '../core/day';
-import { endingFixtures, judgeEnding, type EndingResult } from '../core/ending';
 import type { GameState } from '../core/game';
 import { WILDCARD, type GridSize } from '../core/grid';
-import type { EndingId, GameData } from '../data/types';
+import type { GameData } from '../data/types';
 import type { MetricsRecorder } from '../metrics/recorder';
 import { formatSummary, summarizeMetrics } from '../metrics/model';
 import { dateOffset, realToday, setDateOffset, today } from '../platform/clock';
@@ -24,7 +23,7 @@ const SPEEDS = [1, 3, 10] as const;
 const PANEL_DEPTH = 100;
 const PANEL_BG = 0x111318;
 const PANEL_ALPHA = 0.92;
-const TABS = ['기본', '웨이브', '심연', '하루', '결말', '저장', 'metrics'] as const;
+const TABS = ['기본', '웨이브', '심연', '하루', '챕터', '저장', 'metrics'] as const;
 /** 탭 버튼 한 줄에 4개 (두 줄) */
 const TABS_PER_ROW = 4;
 const ROWS = 7;
@@ -40,7 +39,6 @@ export interface DebugControls {
   /** 일기장 열기 */
   openDiary(): void;
   /** 결과 화면만 띄움 (게임 상태·저장은 바꾸지 않음) */
-  previewEnding(result: EndingResult): void;
   /** 저장을 바꾼 뒤 다시 부팅 */
   reboot(): void;
   metrics: MetricsRecorder;
@@ -192,7 +190,7 @@ export function createDebugPanel(
   // ── 하루: 일차 이동·하루 끝·이벤트 강제·이정표·일기장 ──
   {
     let y = y0;
-    label('하루', y - 16, '일차 · 이벤트 · 일기장');
+    label('하루', y - 16, '일차 · 이벤트 · 이야기책');
     y += 10;
     let target = state.day;
     const dayLabel = () => `${target}일째`;
@@ -202,7 +200,7 @@ export function createDebugPanel(
     }, '11px');
     const dayBtn = btn('하루', scene, x0 + 58, y, 56, 20, dayLabel(), () => undefined, '10px');
     btn('하루', scene, x0 + 102, y, 26, 20, '+', () => {
-      target = Math.min(state.lifeLengthDays, target + 1);
+      target = Math.min(state.maxDays, target + 1);
       dayBtn.setLabel(dayLabel());
     }, '11px');
     btn('하루', scene, x0 + 142, y, 44, 20, '이동', () => {
@@ -234,43 +232,54 @@ export function createDebugPanel(
     }, '10px');
     y += 26;
     const milestone = data.events.milestones[0]?.id;
-    btn('하루', scene, x0 + 80, y, 160, 20, '이정표 즉시 열기', () => {
+    btn('하루', scene, x0 + 80, y, 160, 20, '갈림길 즉시 열기', () => {
       if (!milestone) return;
-      // 오늘 아침으로 돌아가 이정표 카드를 띄운다
+      // 오늘 아침으로 돌아가 갈림길 카드를 띄운다 (자라기 없이)
       state.debugGotoDay(state.day);
       state.debugForceEvent(milestone);
       controls.onChange();
     }, '10px');
   }
 
-  // ── 결말: 즉시 판정·미리보기 5종 ──
+  // ── 챕터: 스테이지 이동·즉시 완성/미완성 (§5.15) ──
   {
     let y = y0;
-    label('결말', y - 16, '결말 (미리보기는 상태·저장 불변)');
+    label('챕터', y - 16, '챕터 진행 (스테이지 이동은 dayStart·이야기 한 장에서만)');
     y += 10;
-    btn('결말', scene, x0 + 80, y, 160, 20, '즉시 결말 판정 → lifeEnd', () => {
-      state.debugJudgeEnding(); // lifeEnd 이벤트 → 씬이 저장
+    const len = data.balance.chapter.length;
+    let target = state.stage;
+    const stageLabel = () => `1-${target}`;
+    btn('챕터', scene, x0 + 14, y, 26, 20, '−', () => {
+      target = Math.max(1, target - 1);
+      stageBtn.setLabel(stageLabel());
+    }, '11px');
+    const stageBtn = btn('챕터', scene, x0 + 58, y, 56, 20, stageLabel(), () => undefined, '10px');
+    btn('챕터', scene, x0 + 102, y, 26, 20, '+', () => {
+      target = Math.min(len, target + 1);
+      stageBtn.setLabel(stageLabel());
+    }, '11px');
+    btn('챕터', scene, x0 + 142, y, 44, 20, '이동', () => {
+      state.debugSetStage(target);
       controls.onChange();
     }, '10px');
     y += 26;
-    const ids: EndingId[] = ['hidden', 'solid', 'mask', 'quiet', 'rainy'];
-    const fixtures = endingFixtures(data.endings);
-    ids.forEach((id, i) => {
-      const col = i % 3;
-      const row = Math.floor(i / 3);
-      btn('결말', scene, x0 + 28 + col * 56, y + row * 26, 52, 20, id, () => {
-        const f = fixtures[id];
-        controls.previewEnding(judgeEnding(f, data.endings));
-      }, '9px');
-    });
-    y += 52;
-    const now = label('결말', y - 8, '');
+    // chapterComplete 이벤트 → 씬이 저장
+    btn('챕터', scene, x0 + 40, y, 80, 20, '즉시 완성', () => {
+      state.debugCompleteChapter(true);
+      controls.onChange();
+    }, '10px');
+    btn('챕터', scene, x0 + 124, y, 80, 20, '즉시 미완성', () => {
+      state.debugCompleteChapter(false);
+      controls.onChange();
+    }, '10px');
+    y += 26;
+    const now = label('챕터', y - 8, '');
     scene.time.addEvent({
       delay: 500,
       loop: true,
       callback: () => {
-        const r = judgeEnding(state.growth, data.endings);
-        now.setText(`지금 판정: ${r.id} · 총 ${Math.round(r.total)} · 비율 ${r.share.toFixed(2)} · ${state.age}살`);
+        const flags = [state.pendingCrossroad ? '갈림길 대기' : '', state.chapterCleared ? '1-10 정화됨' : ''].filter(Boolean).join(' · ');
+        now.setText(`1-${state.stage} · ${state.day}/${state.maxDays}일 · 자라기 ${state.growthLog.length}회${flags ? ` · ${flags}` : ''}`);
       },
     });
   }

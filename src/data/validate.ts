@@ -118,9 +118,9 @@ function checkCombat(c: Checker, v: unknown, path: string, extra: string[] = [])
   return o;
 }
 
-function checkBalance(c: Checker, v: unknown): { maxTier?: number; lifeLengthDays?: number } {
+function checkBalance(c: Checker, v: unknown): { maxTier?: number; maxDays?: number; chapterLength?: number } {
   const p = 'balance';
-  const b = c.obj(v, p, ['version', 'start', 'grid', 'lane', 'happy', 'wave', 'abyss', 'hero', 'growth', 'night', 'shadow', 'days', 'diary']);
+  const b = c.obj(v, p, ['version', 'start', 'grid', 'lane', 'happy', 'wave', 'abyss', 'hero', 'growth', 'night', 'shadow', 'chapter', 'days', 'diary']);
   if (!b) return {};
   if (b.version !== 2) c.fail(`${p}.version`, `2여야 함 (현재 ${String(b.version)})`);
   c.nums(b.start, `${p}.start`, ['joy', 'shadow'], { min: 0 });
@@ -220,10 +220,20 @@ function checkBalance(c: Checker, v: unknown): { maxTier?: number; lifeLengthDay
     }
   }
 
-  let lifeLengthDays: number | undefined;
-  const d = c.obj(b.days, `${p}.days`, ['lifeLengthDays', 'dailyLimit', 'storeCap', 'morningJoyFloor']);
+  // 챕터 진행 (§5.15-1): 1 ≤ turningPoint < length, maxDays ≥ 1
+  let maxDays: number | undefined;
+  let chapterLength: number | undefined;
+  const ch = c.obj(b.chapter, `${p}.chapter`, ['length', 'turningPoint', 'turningPointHpMult', 'maxDays']);
+  if (ch) {
+    chapterLength = c.num(ch.length, `${p}.chapter.length`, { int: true, min: 2 });
+    const tp = c.num(ch.turningPoint, `${p}.chapter.turningPoint`, { int: true, min: 1 });
+    if (tp !== undefined && chapterLength !== undefined && tp >= chapterLength) c.fail(`${p}.chapter.turningPoint`, 'length보다 작아야 함');
+    c.num(ch.turningPointHpMult, `${p}.chapter.turningPointHpMult`, { min: 0.01 });
+    maxDays = c.num(ch.maxDays, `${p}.chapter.maxDays`, { int: true, min: 1 });
+  }
+
+  const d = c.obj(b.days, `${p}.days`, ['dailyLimit', 'storeCap', 'morningJoyFloor']);
   if (d) {
-    lifeLengthDays = c.num(d.lifeLengthDays, `${p}.days.lifeLengthDays`, { int: true, min: 1 });
     const limit = c.num(d.dailyLimit, `${p}.days.dailyLimit`, { int: true, min: 1 });
     const cap = c.num(d.storeCap, `${p}.days.storeCap`, { int: true, min: 1 });
     c.num(d.morningJoyFloor, `${p}.days.morningJoyFloor`, { int: true, min: 0 });
@@ -231,7 +241,7 @@ function checkBalance(c: Checker, v: unknown): { maxTier?: number; lifeLengthDay
   }
 
   c.nums(b.diary, `${p}.diary`, ['diarySinkThreshold'], { int: true, min: 0 });
-  return { maxTier, lifeLengthDays };
+  return { maxTier, maxDays, chapterLength };
 }
 
 function checkUnits(c: Checker, v: unknown, maxTier: number | undefined): void {
@@ -311,7 +321,7 @@ function checkMonsters(c: Checker, v: unknown): void {
 
 function checkWorld(c: Checker, v: unknown, path: string, world: string | undefined): void {
   const w = c.str(v, path);
-  if (w !== undefined && world !== undefined && w !== world) c.fail(path, `days.world("${world}")와 다름 ("${w}")`);
+  if (w !== undefined && world !== undefined && w !== world) c.fail(path, `chapter.world("${world}")와 다름 ("${w}")`);
 }
 
 function checkEffects(c: Checker, v: unknown, path: string, chainIds: string[], maxTier: number | undefined): void {
@@ -344,11 +354,13 @@ function checkEffects(c: Checker, v: unknown, path: string, chainIds: string[], 
 interface EventIds {
   fixable: string[]; // days.fixed에 넣을 수 있는 id (이정표 + 계절)
   all: string[];
+  /** 갈림길 후보 (chapter.crossroad) */
+  milestones: string[];
 }
 
 function checkEvents(c: Checker, v: unknown, chainIds: string[], maxTier: number | undefined, world: string | undefined): EventIds {
   const ev = c.obj(v, 'events', ['milestones', 'seasonal', 'daily', 'plainDay']);
-  if (!ev) return { fixable: [], all: [] };
+  if (!ev) return { fixable: [], all: [], milestones: [] };
 
   const milestoneIds = (c.arr(ev.milestones, 'events.milestones') ?? []).map((e, i) => {
     const p = `events.milestones[${i}]`;
@@ -409,29 +421,22 @@ function checkEvents(c: Checker, v: unknown, chainIds: string[], maxTier: number
   const all = [...milestoneIds, ...seasonalIds, ...dailyIds];
   c.unique(all, 'events', '이벤트 id');
   const defined = (ids: (string | undefined)[]) => ids.filter((s): s is string => s !== undefined);
-  return { fixable: defined([...milestoneIds, ...seasonalIds]), all: defined(all) };
+  return { fixable: defined([...milestoneIds, ...seasonalIds]), all: defined(all), milestones: defined(milestoneIds) };
 }
 
-function checkDays(c: Checker, v: unknown, eventIds: EventIds, lifeLengthDays: number | undefined): void {
-  const d = c.obj(v, 'days', ['world', 'age', 'fixed', 'dailyEventChance', 'dailyEventCooldownDays', 'quietDays', 'growthDays']);
+function checkDays(c: Checker, v: unknown, eventIds: EventIds, maxDays: number | undefined): void {
+  const d = c.obj(v, 'days', ['fixed', 'dailyEventChance', 'dailyEventCooldownDays', 'quietDays']);
   if (!d) return;
-  c.num(d.age, 'days.age', { int: true, min: 0 });
   c.num(d.dailyEventChance, 'days.dailyEventChance', { min: 0, max: 1 });
   c.num(d.dailyEventCooldownDays, 'days.dailyEventCooldownDays', { int: true, min: 0 });
   c.num(d.quietDays, 'days.quietDays', { int: true, min: 0 });
-  // 자라는 날 (§5.14-2): 2 ~ lifeLengthDays 오름차순 (1일차는 자랄 것이 없다. 일생 끝 자라기는 따로)
-  const gd = c.arr(d.growthDays, 'days.growthDays') ?? [];
-  gd.forEach((x, i) => c.num(x, `days.growthDays[${i}]`, { int: true, min: 2, max: lifeLengthDays }));
-  for (let i = 1; i < gd.length; i++) {
-    if (typeof gd[i] === 'number' && typeof gd[i - 1] === 'number' && (gd[i] as number) <= (gd[i - 1] as number)) c.fail('days.growthDays', '오름차순이어야 함');
-  }
   const fixed = c.map(d.fixed, 'days.fixed');
   if (!fixed) return;
   for (const [dayKey, id] of Object.entries(fixed)) {
     const p = `days.fixed.${dayKey}`;
     const day = Number(dayKey);
     if (!Number.isInteger(day) || day < 1) c.fail(p, '일차 키는 1 이상의 정수여야 함');
-    else if (lifeLengthDays !== undefined && day > lifeLengthDays) c.fail(p, `lifeLengthDays(${lifeLengthDays})를 넘는 일차`);
+    else if (maxDays !== undefined && day > maxDays) c.fail(p, `chapter.maxDays(${maxDays})를 넘는 일차`);
     const s = c.str(id, p);
     if (s === undefined) continue;
     if (!eventIds.all.includes(s)) c.fail(p, `events.json에 없는 이벤트 "${s}"`);
@@ -450,26 +455,37 @@ function checkDiary(c: Checker, v: unknown): void {
   c.str(d.forgottenDay, 'diary.forgottenDay');
 }
 
-function checkEndings(c: Checker, v: unknown): void {
-  const e = c.obj(v, 'endings', ['totalThreshold', 'shareBand', 'hiddenMinMemories', 'endings']);
-  if (!e) return;
-  c.num(e.totalThreshold, 'endings.totalThreshold', { min: 0 });
-  c.num(e.hiddenMinMemories, 'endings.hiddenMinMemories', { int: true, min: 0 });
-  const band = c.arr(e.shareBand, 'endings.shareBand');
-  if (band) {
-    if (band.length !== 2) c.fail('endings.shareBand', '[하한, 상한] 두 값이어야 함');
-    band.forEach((x, i) => c.num(x, `endings.shareBand[${i}]`, { min: 0, max: 1 }));
-    if (typeof band[0] === 'number' && typeof band[1] === 'number' && band[0] > band[1]) c.fail('endings.shareBand', '하한 ≤ 상한이어야 함');
+/** chapter.json (§5.15-2): world, 갈림길 id(이정표), 보스 이름, 층·낮 장면 이름 각 chapter.length개 */
+function checkChapter(c: Checker, v: unknown, milestoneIds: string[] | undefined, length: number | undefined): void {
+  const o = c.obj(v, 'chapter', ['world', 'crossroad', 'bossName', 'sceneNames', 'dayScenes']);
+  if (!o) return;
+  c.str(o.world, 'chapter.world');
+  c.str(o.bossName, 'chapter.bossName');
+  const cr = c.str(o.crossroad, 'chapter.crossroad');
+  if (cr !== undefined && milestoneIds && !milestoneIds.includes(cr)) c.fail('chapter.crossroad', `events.milestones에 없는 갈림길 "${cr}"`);
+  for (const k of ['sceneNames', 'dayScenes']) {
+    c.strList(o[k], `chapter.${k}`);
+    const a = o[k];
+    if (Array.isArray(a) && length !== undefined && a.length !== length) c.fail(`chapter.${k}`, `balance.chapter.length(${length})개여야 함 (현재 ${a.length})`);
   }
-  const ids = ['hidden', 'solid', 'mask', 'quiet', 'rainy'];
-  const list = c.obj(e.endings, 'endings.endings', ids);
-  if (!list) return;
-  for (const id of ids) {
-    if (!(id in list)) continue;
-    const p = `endings.endings.${id}`;
-    const o = c.obj(list[id], p, ['name', 'title', 'desc']);
-    if (o) for (const k of ['name', 'title', 'desc']) if (k in o) c.str(o[k], `${p}.${k}`);
-  }
+}
+
+/** chapter_complete.json (§5.15-5) */
+function checkChapterComplete(c: Checker, v: unknown): void {
+  const o = c.obj(v, 'chapterComplete', ['title', 'doneText', 'notDoneText', 'learnedRecipes']);
+  if (!o) return;
+  for (const k of ['title', 'doneText', 'notDoneText']) c.str(o[k], `chapterComplete.${k}`);
+  const list = c.arr(o.learnedRecipes, 'chapterComplete.learnedRecipes') ?? [];
+  const ids: (string | undefined)[] = [];
+  list.forEach((it, i) => {
+    const p = `chapterComplete.learnedRecipes[${i}]`;
+    const e = c.obj(it, p, ['id', 'name', 'side']);
+    if (!e) return;
+    ids.push(c.str(e.id, `${p}.id`));
+    c.str(e.name, `${p}.name`);
+    if (e.side !== 'day' && e.side !== 'night') c.fail(`${p}.side`, 'day 또는 night여야 함');
+  });
+  c.unique(ids, 'chapterComplete.learnedRecipes', '조합법 id');
 }
 
 /** 조합표 (§5.13-5): 재료 chain이 chains.json에 존재, tier 2~3, 재료 2개, id 중복 금지, 알 수 없는 키 오류 */
@@ -504,16 +520,16 @@ function checkRecipes(c: Checker, v: unknown, chainIds: string[]): void {
 /** 원본 JSON 묶음을 검증한다. 하나라도 문제가 있으면 전체 목록을 돌려준다. */
 export function validateGameData(raw: Record<keyof GameData, unknown>): ValidationResult {
   const c = new Checker();
-  const { maxTier, lifeLengthDays } = checkBalance(c, raw.balance);
-  const world = typeof (raw.days as Obj | null)?.world === 'string' ? ((raw.days as Obj).world as string) : undefined;
-  if (world === undefined) c.fail('days.world', '비어 있지 않은 문자열이어야 함');
+  const { maxTier, maxDays, chapterLength } = checkBalance(c, raw.balance);
+  const world = typeof (raw.chapter as Obj | null)?.world === 'string' ? ((raw.chapter as Obj).world as string) : undefined;
   checkUnits(c, raw.units, maxTier);
   const chainIds = checkChains(c, raw.chains, maxTier, world);
   checkMonsters(c, raw.monsters);
   const eventIds = checkEvents(c, raw.events, chainIds, maxTier, world);
-  checkDays(c, raw.days, eventIds, lifeLengthDays);
+  checkDays(c, raw.days, eventIds, maxDays);
   checkDiary(c, raw.diary);
-  checkEndings(c, raw.endings);
+  checkChapter(c, raw.chapter, eventIds.milestones, chapterLength);
+  checkChapterComplete(c, raw.chapterComplete);
   checkRecipes(c, raw.recipes, chainIds);
 
   if (c.issues.length > 0) return { ok: false, issues: c.issues };

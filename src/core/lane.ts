@@ -77,6 +77,9 @@ export interface WallStats {
   bossFloorEvery?: number;
   bossFloorHpMult?: number;
   bossFloorCounterMult?: number;
+  /** 전환점 층 (§5.15-1): 이 층만 HP × turningPointHpMult */
+  turningPoint?: number;
+  turningPointHpMult?: number;
 }
 
 type OptsOf<K extends LaneKind> = K extends 'defense' ? HappyStats : { wall: WallStats; advanceSpeed: number };
@@ -111,9 +114,10 @@ export function isBossFloor(w: WallStats, layer: number): boolean {
   return !!w.bossFloorEvery && layer % w.bossFloorEvery === 0;
 }
 
-/** 층 HP = 기본 HP (보스 층이면 × bossFloorHpMult) */
+/** 층 HP = 기본 HP (보스 층이면 × bossFloorHpMult, 전환점 층이면 × turningPointHpMult) */
 export function layerHp(w: WallStats, layer: number): number {
-  return layerBaseHp(w, layer) * (isBossFloor(w, layer) ? (w.bossFloorHpMult ?? 1) : 1);
+  const turning = w.turningPoint !== undefined && layer === w.turningPoint ? (w.turningPointHpMult ?? 1) : 1;
+  return layerBaseHp(w, layer) * (isBossFloor(w, layer) ? (w.bossFloorHpMult ?? 1) : 1) * turning;
 }
 
 /** 층 반격 공격력 (보스 층이면 × bossFloorCounterMult) */
@@ -239,7 +243,7 @@ export class Lane<K extends LaneKind = LaneKind> {
       const o = opts as OptsOf<'abyss'>;
       this.wallStats = o.wall;
       this.advanceSpeed = o.advanceSpeed;
-      const hp = layerBaseHp(o.wall, 1);
+      const hp = layerHp(o.wall, 1);
       this.wall = { layer: 1, hp, maxHp: hp, extraHp: 0, atk: o.wall.counterAtk, atkInterval: o.wall.counterAtkInterval, range: o.wall.counterRange, cd: 0 };
     }
   }
@@ -333,6 +337,12 @@ export class Lane<K extends LaneKind = LaneKind> {
   /** 복원 뒤: 현재 층에 맞는 반격 공격력 (보스 층 배수) */
   syncWallForLayer(): void {
     this.wall.atk = layerCounterAtk(this.wallStats!, this.wall.layer);
+  }
+
+  /** 디버그: 이 층의 시작 상태로 */
+  debugSetLayer(layer: number): void {
+    this.wall.layer = layer - 1;
+    this.nextLayer();
   }
 
   private nextLayer(): void {
