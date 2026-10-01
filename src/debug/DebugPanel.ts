@@ -1,18 +1,21 @@
 // ?debug=1 디버그 패널. M7에서 정식 디버그 패널로 흡수.
 // 기본은 접힘: 포탈 받침 왼쪽 빈 자리의 [DBG] 토글만 보인다. 펼치면 방어 레인 위에 겹쳐 뜬다 (심연 레인은 가리지 않음).
 // 탭: 기본(그리드·기쁨·조각) / 웨이브(정지·다음·배속) / 심연(그림자·역류·층) / 하루(일차·하루 끝·이벤트·일기장)
-//     / 결말(즉시 판정·미리보기 5종) / 저장(gating·저장 초기화·JSON 복사·시드)
+//     / 결말(즉시 판정·미리보기 5종) / 저장(gating·저장 초기화·JSON 복사·시드) / metrics(내보내기·요약·초기화)
 import Phaser from 'phaser';
 import { allEventIds } from '../core/day';
 import { endingFixtures, judgeEnding, type EndingResult } from '../core/ending';
 import type { GameState } from '../core/game';
 import { WILDCARD, type GridSize } from '../core/grid';
 import type { EndingId, GameData } from '../data/types';
-import { dateOffset, setDateOffset, today } from '../platform/clock';
+import type { MetricsRecorder } from '../metrics/recorder';
+import { formatSummary, summarizeMetrics } from '../metrics/model';
+import { dateOffset, realToday, setDateOffset, today } from '../platform/clock';
 import { storageStatus } from '../platform/storage';
 import { REGION } from '../scenes/layout';
 import type { SaveSession } from '../scenes/session';
 import { Button, text } from '../scenes/ui';
+import { copyOrShow, exportFileName } from './exportModal';
 import { saveGridOverride } from './gridPreset';
 
 const DEBUG_JOY = 100;
@@ -21,8 +24,12 @@ const SPEEDS = [1, 3, 10] as const;
 const PANEL_DEPTH = 100;
 const PANEL_BG = 0x111318;
 const PANEL_ALPHA = 0.92;
-const TABS = ['기본', '웨이브', '심연', '하루', '결말', '저장'] as const;
-const ROWS = 5;
+const TABS = ['기본', '웨이브', '심연', '하루', '결말', '저장', 'metrics'] as const;
+/** 탭 버튼 한 줄에 4개 (두 줄) */
+const TABS_PER_ROW = 4;
+const ROWS = 7;
+/** [metrics 초기화] 두 번 탭 확인 시간 */
+const RESET_CONFIRM_MS = 3000;
 type Tab = (typeof TABS)[number];
 
 export interface DebugControls {
@@ -36,6 +43,7 @@ export interface DebugControls {
   previewEnding(result: EndingResult): void;
   /** 저장을 바꾼 뒤 다시 부팅 */
   reboot(): void;
+  metrics: MetricsRecorder;
 }
 
 export function createDebugPanel(
@@ -60,7 +68,8 @@ export function createDebugPanel(
     return b;
   };
   const label = (tab: Tab, y: number, s: string) => {
-    const t = text(scene, x0, y, s, { fontSize: '9px', color: '#ff9e6b' }).setDepth(PANEL_DEPTH + 1);
+    // 패널 밖으로 넘치지 않게 줄바꿈
+    const t = text(scene, x0, y, s, { fontSize: '9px', color: '#ff9e6b', wordWrap: { width: lane.w - 20 } }).setDepth(PANEL_DEPTH + 1);
     pages.get(tab)!.items.push(t);
     return t;
   };
@@ -71,18 +80,21 @@ export function createDebugPanel(
     if (header.text !== h) header.setText(h).setColor(storageStatus.lastError ? '#ff5f5f' : '#ff9e6b');
   };
   const tabBtns = TABS.map((t, i) =>
-    new Button(scene, x0 + 13 + i * 27, top + 28, 26, 18, t, () => {
+    new Button(scene, x0 + 19 + (i % TABS_PER_ROW) * 41, top + 26 + Math.floor(i / TABS_PER_ROW) * 21, 38, 18, t, () => {
       page = t;
       apply();
-    }, '8px'),
+      if (t === 'metrics') onMetricsShow();
+    }, '9px'),
   );
   for (const b of tabBtns) b.container.setDepth(PANEL_DEPTH + 1);
-  const y0 = top + 56;
+  const y0 = top + 76;
+  /** metrics 탭을 열 때 요약을 바로 갱신 (아래 metrics 블록이 설정) */
+  let onMetricsShow = () => {};
 
   // ── 기본: 그리드 프리셋·기쁨·조각 지급 ──
   {
     let y = y0;
-    label('기본', y - 16, '그리드 (전환 시 게임 저장 초기화, gating 유지)');
+    label('기본', y - 16, '그리드 (전환: 게임 저장만 초기화)');
     y += 10;
     data.balance.grid.gridPresets.forEach(([cols, rows], i) => {
       const active = cols === current.cols && rows === current.rows;
@@ -307,6 +319,49 @@ export function createDebugPanel(
       console.info('[debug] 저장 JSON', raw);
       navigator.clipboard?.writeText(raw).catch(() => console.warn('[debug] 클립보드 복사 실패 — 콘솔 참고'));
     }, '9px');
+  }
+
+  // ── metrics: 내보내기·요약·초기화 (§5.10-5) ──
+  {
+    const m = controls.metrics;
+    let y = y0;
+    label('metrics', y - 16, 'metrics (hau_metrics_v2)');
+    y += 10;
+    const status = label('metrics', y + 16, '');
+    btn('metrics', scene, x0 + 40, y, 80, 20, 'JSON 복사', () => {
+      void copyOrShow(m.json(), exportFileName(realToday())).then((r) =>
+        status.setText(r === 'copied' ? '클립보드에 복사함' : '복사 불가 → 텍스트·파일 저장 창'),
+      );
+    }, '10px');
+    let armedAt = -Infinity;
+    btn('metrics', scene, x0 + 124, y, 80, 20, 'metrics 초기화', (b) => {
+      const now = scene.time.now;
+      if (now - armedAt <= RESET_CONFIRM_MS) {
+        m.reset();
+        armedAt = -Infinity;
+        b.setLabel('metrics 초기화').setActive(false);
+        status.setText('초기화함');
+        return;
+      }
+      armedAt = now;
+      b.setLabel('한 번 더 탭').setActive(true);
+      scene.time.delayedCall(RESET_CONFIRM_MS, () => b.container.active && b.setLabel('metrics 초기화').setActive(false));
+    }, '9px');
+    const summary = text(scene, x0, y + 32, '', { fontSize: '8px', color: '#e8c9a0', lineSpacing: 2, wordWrap: { width: lane.w - 18 } }).setDepth(
+      PANEL_DEPTH + 1,
+    );
+    pages.get('metrics')!.items.push(summary);
+    const syncSummary = () => {
+      const d = m.data;
+      summary.setText(
+        `${formatSummary('현재 일생', summarizeMetrics([m.life], d.sessions.filter((x) => x.startedAt >= m.life.startedAt)))}\n` +
+          `${formatSummary('전체', summarizeMetrics(d.lives, d.sessions))}\n` +
+          `판 도중 복원 ${m.life.midDayRestores} · 우회 사용 ${m.life.gatingBypassUsed ? '예' : '아니오'}`,
+      );
+    };
+    scene.time.addEvent({ delay: 1000, loop: true, callback: () => page === 'metrics' && syncSummary() });
+    onMetricsShow = syncSummary;
+    syncSummary();
   }
 
   const bottom = y0 + 26 * ROWS + 12;

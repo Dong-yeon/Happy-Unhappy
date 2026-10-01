@@ -107,7 +107,7 @@ describe('소환 (☀ 창문)', () => {
     expect(g.canSummon(empty, 'happy')).toBe('empty');
   });
 
-  it('소환 기록 필드: {t, side, chain, tier, cell:{col,row}, heldFor}', () => {
+  it('소환 기록 필드: {t, day, side, chain, tier, cell:{col,row}, heldFor}', () => {
     const g = game(1, 4, 4);
     g.wave.paused = true;
     g.tick(1); // bornAt = 1
@@ -115,7 +115,7 @@ describe('소환 (☀ 창문)', () => {
     g.tick(2.5); // playTime = 3.5
     g.summon(i, 'happy');
     expect(g.summonLog).toEqual([
-      { t: 3.5, side: 'happy', chain: BLANKET, tier: 1, cell: { col: i % 4, row: Math.floor(i / 4) }, heldFor: 2.5 },
+      { t: 3.5, day: 1, side: 'happy', chain: BLANKET, tier: 1, cell: { col: i % 4, row: Math.floor(i / 4) }, heldFor: 2.5 },
     ]);
   });
 

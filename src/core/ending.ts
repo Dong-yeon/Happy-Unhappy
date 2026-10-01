@@ -4,7 +4,7 @@
 // shadowPurified는 층 돌파분만 (보스 승리 감소분 shadowCalmed는 점수 없음, D-023). wSunk 감점·0 하한은 D-024.
 
 import type { EndingId, Endings } from '../data/types';
-import { emptyGameStats, type GameStats } from './stats';
+import { emptyGameStats, type GameStats, type NumericStatKey } from './stats';
 
 export type BreakdownKey = 'upTier' | 'defeat' | 'joy' | 'sunk' | 'downTier' | 'layer' | 'purified';
 
@@ -25,7 +25,7 @@ const TERMS = [
   ['downTier', 'sentDownTierSum', 'wDownTier', 'unhappy', 1],
   ['layer', 'layersCleared', 'wLayer', 'unhappy', 1],
   ['purified', 'shadowPurified', 'wPurified', 'unhappy', 1],
-] as const satisfies readonly (readonly [BreakdownKey, keyof GameStats, keyof Endings['weights'], 'happy' | 'unhappy', 1 | -1])[];
+] as const satisfies readonly (readonly [BreakdownKey, NumericStatKey, keyof Endings['weights'], 'happy' | 'unhappy', 1 | -1])[];
 
 export const BREAKDOWN_KEYS: readonly BreakdownKey[] = TERMS.map((t) => t[0]);
 

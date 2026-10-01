@@ -29,9 +29,25 @@ export interface DayStats {
   joyEnd: number;
   /** ×1 기준 하루 길이(초) = waves 단계에서 흐른 게임 시간 */
   realSeconds: number;
+  // ── M7 metrics (§5.10-1). 관찰만 한다: 게임 규칙은 이 값을 읽지 않는다 ──
+  /** 조각 생성 수 */
+  spawns: number;
+  merges: number;
+  releases: number;
+  /** 놓아준 조각의 단계별 개수 (길이 maxTier+1, 0 = 와일드카드) */
+  releaseTiers: number[];
+  /** 귀환 대기열 상한 초과로 소실된 조각 */
+  lostReturns: number;
+  abyssDeaths: number;
+  /** Unhappy 멈춤 시간(초) */
+  stallSeconds: number;
+  /** waves 단계에서 그리드에 빈칸이 없던 게임 시간(초) */
+  gridFullSeconds: number;
+  /** 그날 층 돌파 시각 (playTime) */
+  layerClearTimes: number[];
 }
 
-export function emptyDayStats(joy: number): DayStats {
+export function emptyDayStats(joy: number, maxTier: number): DayStats {
   return {
     sunk: 0,
     defeated: 0,
@@ -43,6 +59,15 @@ export function emptyDayStats(joy: number): DayStats {
     joyStart: joy,
     joyEnd: joy,
     realSeconds: 0,
+    spawns: 0,
+    merges: 0,
+    releases: 0,
+    releaseTiers: new Array<number>(maxTier + 1).fill(0),
+    lostReturns: 0,
+    abyssDeaths: 0,
+    stallSeconds: 0,
+    gridFullSeconds: 0,
+    layerClearTimes: [],
   };
 }
 

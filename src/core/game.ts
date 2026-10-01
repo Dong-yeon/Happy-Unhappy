@@ -67,6 +67,8 @@ export interface GameGeometry {
 /** 소환 기록 (metrics M7 대비, 스펙 §4.3.1) */
 export interface SummonRecord {
   t: number;
+  /** 소환한 일차 (M7 metrics) */
+  day: number;
   side: Side;
   chain: string;
   tier: number;
@@ -221,7 +223,7 @@ export class GameState {
     this.abyss = new Lane('abyss', geometry.abyss, { wall: b.abyss, advanceSpeed: b.lane.abyssAdvanceSpeed });
     this.wave = new DayWaves({ ...b.wave, hpBase: data.monsters.worry.hpBase });
     this.today = this.resolveToday();
-    this.dayStats = emptyDayStats(this.joy);
+    this.dayStats = emptyDayStats(this.joy, b.grid.maxTier);
   }
 
   get weather(): Weather {
@@ -304,6 +306,7 @@ export class GameState {
     for (let i = from; i < out.length; i++) {
       if (out[i].type === 'abyssUnitDie') {
         this.stats.abyssDeaths += 1;
+        this.dayStats.abyssDeaths += 1;
         this.addShadow(b.abyss.abyssDeathShadow); // 조각 소실 + 그림자
       }
     }
@@ -313,6 +316,7 @@ export class GameState {
     this.updateStall(out);
     if (this.unhappyStalled) {
       this.stats.stallSeconds += FIXED_DT;
+      this.dayStats.stallSeconds += FIXED_DT;
       this.addShadow(b.abyss.unhappyStallShadowPerSec * FIXED_DT);
     }
 
@@ -332,6 +336,9 @@ export class GameState {
     this.checkBackflow(out);
 
     if (this.shadow !== shadowBefore) out.push({ type: 'shadowChange', value: this.shadow, weather: this.weather });
+
+    // metrics: 이 틱 끝에 그리드에 빈칸이 없음 (관찰만)
+    if (this.grid.cells.every((c) => c !== null)) this.dayStats.gridFullSeconds += FIXED_DT;
 
     // 저녁 웨이브까지 끝남 → 하루 끝
     if (this.wave.phase === 'done') this.endDay(out);
@@ -482,6 +489,7 @@ export class GameState {
     }
     this.stats.layersCleared += 1;
     this.dayStats.layersCleared += 1;
+    this.dayStats.layerClearTimes.push(this.playTime);
     out.push({ type: 'layerClear', layer, returns });
   }
 
@@ -520,7 +528,7 @@ export class GameState {
 
     // 1
     this.spawnedToday = 0;
-    this.dayStats = emptyDayStats(this.joy);
+    this.dayStats = emptyDayStats(this.joy, this.data.balance.grid.maxTier);
     this.faceBonusToday = false;
 
     // 2
@@ -586,7 +594,7 @@ export class GameState {
     this.diary.push(entry);
     this.lastDayStats = this.dayStats;
     // 4
-    this.dayStats = emptyDayStats(this.joy);
+    this.dayStats = emptyDayStats(this.joy, this.data.balance.grid.maxTier);
     this.wave.phase = 'idle';
     this.phase = 'diary';
     out.push({ type: 'dayEnd', day: this.day, entry, stats: this.lastDayStats });
@@ -643,7 +651,7 @@ export class GameState {
     g.defense.happy.cd = save.happyCd;
     g.defense.nextWorryId = save.nextWorryId;
     g.wave.day = save.waveDay;
-    Object.assign(g.stats, save.stats);
+    Object.assign(g.stats, copy(save.stats));
     refill(g.heroFirstPurify, save.heroFirstPurify);
     refill(g.diary, save.diary);
     refill(g.flags, save.flags);
@@ -652,7 +660,7 @@ export class GameState {
     refill(g.bossLog, save.bossLog);
     refill(g.summonLog, save.summonLog);
     g.ending = copy(save.ending);
-    g.dayStats = emptyDayStats(g.joy);
+    g.dayStats = emptyDayStats(g.joy, data.balance.grid.maxTier);
     g.pending = [];
     rng.setState(save.rngState);
     return g;
@@ -684,6 +692,7 @@ export class GameState {
     );
     this.joy -= this.spawnCost;
     this.spawnedToday += 1;
+    this.dayStats.spawns += 1;
     const piece = this.newPiece(chain, 1);
     this.grid.cells[index] = piece;
     return { index, piece };
@@ -694,7 +703,15 @@ export class GameState {
   /** 머지로 칸이 비면 귀환 대기열을 바로 배치한다 */
   drop(from: number, to: number | null): DropKind {
     const kind = applyDrop(this.grid, from, to);
-    if (kind === 'merge') this.flushReturnQueue();
+    if (kind === 'merge') {
+      // metrics: 머지 수, 3단계(영웅)가 된 체인
+      this.dayStats.merges += 1;
+      const p = this.grid.cells[to!]!;
+      if (p.tier >= this.data.balance.grid.maxTier && !isWildcard(p)) {
+        this.stats.tier3ByChain[p.chain] = (this.stats.tier3ByChain[p.chain] ?? 0) + 1;
+      }
+      this.flushReturnQueue();
+    }
     return kind;
   }
 
@@ -711,6 +728,9 @@ export class GameState {
     const r = releaseAt(this.grid, index, this.data.balance.grid.releaseRefund);
     if (!r) return null;
     this.joy += r.refund;
+    this.dayStats.releases += 1;
+    const t = isWildcard(r.piece) ? 0 : r.piece.tier;
+    if (t < this.dayStats.releaseTiers.length) this.dayStats.releaseTiers[t] += 1;
     this.flushReturnQueue();
     return r.refund;
   }
@@ -744,12 +764,16 @@ export class GameState {
 
     this.summonLog.push({
       t: this.playTime,
+      day: this.day,
       side,
       chain: piece.chain,
       tier: piece.tier,
       cell: toCell(this.grid, cell),
       heldFor: this.playTime - piece.bornAt,
     });
+    if (piece.tier >= this.data.balance.grid.maxTier && this.stats.heroFirstSummonDay[piece.chain] === undefined) {
+      this.stats.heroFirstSummonDay[piece.chain] = this.day;
+    }
     if (side === 'happy') {
       this.stats.sentUpTierSum += piece.tier;
       this.dayStats.sentUp += 1;
@@ -778,6 +802,7 @@ export class GameState {
   enqueueReturn(piece: Piece): EnqueueResult {
     const r = enqueueReturn(this.grid, this.returnQueue, piece, this.data.balance.grid.returnQueueCap, this.rng);
     this.lostReturns += r.lost;
+    this.dayStats.lostReturns += r.lost;
     return r;
   }
 
@@ -881,7 +906,7 @@ export class GameState {
     this.ending = null;
     this.day = d;
     this.today = this.resolveToday();
-    this.dayStats = emptyDayStats(this.joy);
+    this.dayStats = emptyDayStats(this.joy, this.data.balance.grid.maxTier);
     this.phase = 'dayStart';
     this.pending.push({ type: 'dayStart', day: this.day, event: this.today });
   }

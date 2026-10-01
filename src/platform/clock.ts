@@ -34,3 +34,8 @@ export function minutesUntilMidnight(): number {
 export function nowIso(): string {
   return new Date().toISOString();
 }
+
+/** 실제 오늘 (디버그 오프셋 없음, metrics realDate) */
+export function realToday(): string {
+  return localDate(new Date());
+}

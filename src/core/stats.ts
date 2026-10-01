@@ -19,9 +19,17 @@ export interface GameStats {
   stallSeconds: number;
   /** 심연 유닛 사망 수 */
   abyssDeaths: number;
+  // ── M7 metrics (§5.10-1) ──
+  /** 체인별 머지로 3단계(영웅)가 된 횟수 */
+  tier3ByChain: Record<string, number>;
+  /** 체인별 영웅 첫 소환 일차 */
+  heroFirstSummonDay: Record<string, number>;
 }
 
-export const GAME_STATS_KEYS: readonly (keyof GameStats)[] = [
+/** 숫자 필드 (결말·저장 검증) */
+export type NumericStatKey = Exclude<keyof GameStats, 'tier3ByChain' | 'heroFirstSummonDay'>;
+
+export const GAME_STATS_KEYS: readonly NumericStatKey[] = [
   'sentUpTierSum',
   'sentDownTierSum',
   'worriesDefeated',
@@ -38,7 +46,7 @@ export const GAME_STATS_KEYS: readonly (keyof GameStats)[] = [
 ];
 
 export function emptyGameStats(): GameStats {
-  const s = {} as GameStats;
+  const s = { tier3ByChain: {}, heroFirstSummonDay: {} } as unknown as GameStats;
   for (const k of GAME_STATS_KEYS) s[k] = 0;
   return s;
 }

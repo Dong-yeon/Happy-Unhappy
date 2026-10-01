@@ -3,6 +3,7 @@
 
 export const SAVE_KEY = 'hau_save_v2';
 export const DATE_OFFSET_KEY = 'hau_debug_date_offset';
+export const METRICS_KEY = 'hau_metrics_v2';
 
 /** 마지막 쓰기 실패 사유 (디버그 표시). 성공하면 null로 돌아온다 */
 export const storageStatus: { lastError: string | null } = { lastError: null };

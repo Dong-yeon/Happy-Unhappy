@@ -9,7 +9,8 @@
     "preview": "vite preview --host",
     "test": "vitest run",
     "typecheck": "tsc --noEmit && tsc --noEmit -p sim",
-    "sim": "tsx sim/run.ts"
+    "sim": "tsx sim/run.ts",
+    "metrics": "tsx sim/metrics.ts"
   },
   "dependencies": {
     "phaser": "3.90.0"

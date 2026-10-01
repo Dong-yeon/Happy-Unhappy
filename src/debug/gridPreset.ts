@@ -10,6 +10,21 @@ export function isDebug(): boolean {
   return new URLSearchParams(window.location.search).get('debug') === '1';
 }
 
+/** 사람 플레이 테스트 URL (§5.10-4): 평가 버튼만 보이고 디버그 패널은 숨긴다 */
+export function isPlaytest(): boolean {
+  return new URLSearchParams(window.location.search).get('playtest') === '1';
+}
+
+/** 디버그 패널·디버그 표시 (?playtest=1이면 ?debug=1이어도 숨김) */
+export function showDebugUi(): boolean {
+  return isDebug() && !isPlaytest();
+}
+
+/** 하루 끝·결말 주관 평가 버튼 */
+export function showRatings(): boolean {
+  return isDebug() || isPlaytest();
+}
+
 export function loadGridOverride(): GridSize | null {
   const raw = readKey(KEY);
   if (!raw) return null;

@@ -128,13 +128,14 @@ type Obj = Record<string, unknown>;
 const PIECE_KEYS = ['id', 'chain', 'tier', 'bornAt'];
 const DAY_STATS_KEYS: (keyof DayStats)[] = [
   'sunk', 'defeated', 'layersCleared', 'backflow', 'bossWin', 'sentUp', 'sentDown', 'joyStart', 'joyEnd', 'realSeconds',
+  'spawns', 'merges', 'releases', 'releaseTiers', 'lostReturns', 'abyssDeaths', 'stallSeconds', 'gridFullSeconds', 'layerClearTimes',
 ];
 const DIARY_KEYS: (keyof DiaryEntry)[] = ['day', 'eventTitle', 'line', 'eventLine', 'resultLine', 'category'];
 const DIARY_CATEGORIES: DiaryCategory[] = ['backflow', 'layerCleared', 'manySunk', 'default'];
 const BOSS_KEYS: (keyof BossRecord)[] = [
   'day', 'slot', 'prep', 'defenseUnits', 'defenseAvgTier', 'abyssUnits', 'gridPieces', 'joy', 'shadowBefore', 'win',
 ];
-const SUMMON_KEYS: (keyof SummonRecord)[] = ['t', 'side', 'chain', 'tier', 'cell', 'heldFor'];
+const SUMMON_KEYS: (keyof SummonRecord)[] = ['t', 'day', 'side', 'chain', 'tier', 'cell', 'heldFor'];
 const ENDING_IDS: EndingId[] = ['hidden', 'solid', 'mask', 'quiet', 'rainy'];
 const GAME_KEYS: (keyof SaveGame)[] = [
   'seed', 'rngState', 'day', 'phase', 'todayId', 'playTime', 'tickCount', 'nextPieceId', 'nextUnitId', 'spawnedToday',
@@ -190,6 +191,16 @@ class SaveChecker extends Checker {
     });
   }
 
+  /** 체인 id → 0 이상 정수 */
+  chainCounts(v: unknown, path: string): void {
+    const m = this.map(v, path);
+    if (!m) return;
+    for (const [k, x] of Object.entries(m)) {
+      if (!this.data.chains.some((c) => c.archetypeId === k)) this.fail(`${path}.${k}`, `chains.json에 없는 체인: "${k}"`);
+      this.num(x, `${path}.${k}`, { int: true, min: 0 });
+    }
+  }
+
   date(v: unknown, path: string): void {
     if (typeof v !== 'string' || !isValidDate(v)) this.fail(path, '날짜 형식 오류 (YYYY-MM-DD)');
   }
@@ -200,6 +211,11 @@ class SaveChecker extends Checker {
     for (const k of DAY_STATS_KEYS) {
       if (k === 'backflow') this.oneOf(o[k], `${path}.${k}`, [0, 1]);
       else if (k === 'bossWin') this.oneOf(o[k], `${path}.${k}`, [0, 1, null]);
+      else if (k === 'releaseTiers') {
+        const a = this.arr(o[k], `${path}.${k}`);
+        if (a && a.length !== this.data.balance.grid.maxTier + 1) this.fail(`${path}.${k}`, `길이 ${a.length} ≠ maxTier+1`);
+        a?.forEach((x, i) => this.num(x, `${path}.${k}[${i}]`, { int: true, min: 0 }));
+      } else if (k === 'layerClearTimes') this.list(o[k], `${path}.${k}`, (x, pp) => this.num(x, pp, { min: 0 }));
       else this.num(o[k], `${path}.${k}`);
     }
   }
@@ -240,7 +256,11 @@ class SaveChecker extends Checker {
 
     const abyss = this.nums(o.abyss, p('abyss'), ['layer', 'hp', 'maxHp', 'extraHp', 'cd']);
     if (abyss) this.num(abyss.layer, `${p('abyss')}.layer`, { int: true, min: 1 });
-    this.nums(o.stats, p('stats'), [...GAME_STATS_KEYS], { min: 0 });
+    const st = this.obj(o.stats, p('stats'), [...GAME_STATS_KEYS, 'tier3ByChain', 'heroFirstSummonDay']);
+    if (st) {
+      for (const k of GAME_STATS_KEYS) this.num(st[k], `${p('stats')}.${k}`, { min: 0 });
+      for (const k of ['tier3ByChain', 'heroFirstSummonDay']) this.chainCounts(st[k], `${p('stats')}.${k}`);
+    }
 
     const chainIds = this.data.chains.map((c) => c.archetypeId);
     this.list(o.heroFirstPurify, p('heroFirstPurify'), (it, pp) => this.oneOf(it, pp, chainIds));
@@ -272,6 +292,7 @@ class SaveChecker extends Checker {
       const r = this.obj(it, pp, SUMMON_KEYS);
       if (!r) return;
       for (const k of ['t', 'tier', 'heldFor']) this.num(r[k], `${pp}.${k}`);
+      this.num(r.day, `${pp}.day`, { int: true, min: 1 });
       this.oneOf(r.side, `${pp}.side`, ['happy', 'unhappy']);
       this.str(r.chain, `${pp}.chain`);
       this.nums(r.cell, `${pp}.cell`, ['col', 'row'], { int: true, min: 0 });

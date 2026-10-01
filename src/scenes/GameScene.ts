@@ -4,7 +4,8 @@ import type { CoreEvent, GameState } from '../core/game';
 import type { GridSize } from '../core/grid';
 import type { SlotId } from '../core/wave';
 import { createDebugPanel } from '../debug/DebugPanel';
-import { isDebug } from '../debug/gridPreset';
+import { showDebugUi } from '../debug/gridPreset';
+import { MetricsRecorder } from '../metrics/recorder';
 import { AbyssLaneView } from './AbyssLaneView';
 import { DayUi } from './DayUi';
 import { DefenseLaneView } from './DefenseLaneView';
@@ -39,6 +40,7 @@ const MAX_FRAME_MS = 100;
 export class GameScene extends Phaser.Scene {
   private state!: GameState;
   private session!: SaveSession;
+  private metrics!: MetricsRecorder;
   private gridView!: GridView;
   private joyText!: Phaser.GameObjects.Text;
   private spawnBtn!: Button;
@@ -68,6 +70,8 @@ export class GameScene extends Phaser.Scene {
     // 저장 복원(하루 경계) 또는 새 일생 (?seed= 가 있으면 그 시드) → gating 지급 확인
     this.session = new SaveSession(data, size);
     this.state = this.session.boot();
+    // metrics (§5.10): 관찰만. 판 도중 복원 감지는 생성 시
+    this.metrics = new MetricsRecorder(this.state, size);
 
     this.drawHud(data);
     this.drawDefenseLane();
@@ -89,6 +93,7 @@ export class GameScene extends Phaser.Scene {
       onHover: (hover) => this.onDragHover(hover),
       onSummon: (unit, x, y) => (unit.side === 'happy' ? this.laneView : this.abyssView).onSummon(unit, x, y),
       canInteract: () => this.state.phase === 'waves' && !this.dayUi.blocking,
+      onDropResult: (fail, distance) => this.metrics.drop(fail, distance),
     });
     this.dayUi = new DayUi(this, this.state, data, {
       onChange: () => this.onDebugChange(),
@@ -96,22 +101,29 @@ export class GameScene extends Phaser.Scene {
       canOpenDay: () => this.session.canOpenDay,
       recheck: () => this.session.checkGrant(this.state),
       forgottenLog: () => this.session.gating.forgottenLog,
+      rating: (day) => this.metrics.rating(day),
+      rate: (day, key, value) => this.metrics.rate(day, key, value),
+      endingAgree: () => this.metrics.endingAgree,
+      setEndingAgree: (v) => this.metrics.setEndingAgree(v),
     });
-    // 지급 확인: 앱이 다시 보일 때 (§5.8-1)
+    // 지급 확인: 앱이 다시 보일 때 (§5.8-1) / metrics 세션 시간 쓰기: 숨겨질 때 (§5.10-3)
     const onVisible = () => {
       if (document.visibilityState === 'visible') this.session.checkGrant(this.state);
+      else this.metrics.onHidden();
     };
     document.addEventListener('visibilitychange', onVisible);
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => document.removeEventListener('visibilitychange', onVisible));
-    if (isDebug()) {
-      // 디버그 전용: 브라우저 콘솔에서 core 상태를 들여다보기 (?debug=1일 때만)
+    if (showDebugUi()) {
+      // 디버그 전용 (?playtest=1이면 숨김): 브라우저 콘솔에서 core 상태를 들여다보기 (?debug=1일 때만)
       (window as unknown as { __hauState?: GameState }).__hauState = this.state;
+      (window as unknown as { __hauGame?: Phaser.Game }).__hauGame = this.game;
       createDebugPanel(this, data, this.state, this.session, size, {
         setSpeed: (s) => (this.speed = s),
         onChange: () => this.onDebugChange(),
         openDiary: () => this.dayUi.showDiaryList(),
         previewEnding: (r) => this.dayUi.showResult(r, true),
         reboot: () => this.scene.start('Boot'),
+        metrics: this.metrics,
       });
     }
     this.gridView.refresh();
@@ -133,14 +145,21 @@ export class GameScene extends Phaser.Scene {
     for (const e of events) {
       if (e.type === 'dayEnd') {
         if (boundary) this.session.endDay(this.state);
+        this.metrics.endDay();
       } else if (e.type === 'dayStart' || e.type === 'lifeEnd') {
         if (boundary) this.session.saveGame(this.state);
+        if (e.type === 'lifeEnd') this.metrics.lifeEnd();
+      } else if (e.type === 'dayBegin') {
+        this.metrics.beginDay(this.session.bypass);
       }
     }
   }
 
   update(_time: number, delta: number): void {
-    const events = this.state.tick((Math.min(delta, MAX_FRAME_MS) / 1000) * this.speed);
+    const dt = Math.min(delta, MAX_FRAME_MS) / 1000;
+    // metrics 실제 시간: 배속을 곱하지 않은 프레임 시간 (백그라운드 동안은 프레임이 멈춘다)
+    this.metrics.frame(dt, this.speed);
+    const events = this.state.tick(dt * this.speed);
     this.persist(events);
     this.laneView.handle(events);
     this.abyssView.handle(events);
@@ -172,7 +191,8 @@ export class GameScene extends Phaser.Scene {
     if (this.joyText.text !== joy) this.joyText.setText(joy);
     const w = s.wave;
     // HUD: "8살 · n일째 · 아침/낮/저녁" (보스 웨이브면 시간대 옆에 "역류")
-    const slot = SLOT_NAMES[w.slotId];
+    // dayStart에서는 아직 웨이브가 시작되지 않았으므로 전날 마지막 칸 대신 아침
+    const slot = s.phase === 'dayStart' ? SLOT_NAMES.morning : SLOT_NAMES[w.slotId];
     const tag = s.bossActive ? ' 역류' : w.inBossPrep ? ' 역류 준비' : s.pendingBackflow ? ' · 역류 예약' : w.paused ? ' (정지)' : '';
     const phase = `${this.age}살 · ${s.day}일째 · ${slot}${tag}`;
     if (this.phaseText.text !== phase) this.phaseText.setText(phase).setColor(s.shadowLocked ? '#ff9e9e' : '#e8e8e8');

@@ -32,6 +32,8 @@ export interface GridViewHooks {
   onSummon(unit: Unit, fromX: number, fromY: number): void;
   /** 지금 그리드를 만질 수 있는지 (하루 단계가 waves이고 모달이 없을 때) */
   canInteract(): boolean;
+  /** metrics: 드래그를 놓은 결과 (실패 사유 없으면 null) + 시작 → 놓은 점 거리 (논리 px) */
+  onDropResult?(fail: 'invalid' | 'laneFull' | 'wildcard' | null, distance: number): void;
 }
 
 const SUMMON_BLOCKED_LABEL = '보낼 수 없음';
@@ -173,13 +175,17 @@ export class GridView {
 
     const w = this.world(p);
     const target = dropTarget(this.state.grid, w.x, w.y);
+    const distance = Math.hypot(w.x - press.startX, w.y - press.startY);
+    const report = (fail: 'invalid' | 'laneFull' | 'wildcard' | null) => this.hooks.onDropResult?.(fail, distance);
     switch (target.kind) {
       case 'cell':
+        report(null); // 같은 칸·놓을 수 없는 칸은 원위치일 뿐 영역 밖은 아니다
         if (this.state.drop(press.from, target.index) === 'none') break;
         this.refresh();
         this.hooks.onChange();
         return;
       case 'release':
+        report(null);
         if (this.state.release(press.from) === null) break; // 와일드카드 → 원위치
         this.floatAway(press.from);
         this.hooks.onChange();
@@ -187,6 +193,7 @@ export class GridView {
       case 'summon': {
         // ◐ 손거울은 M4 전까지 canSummon이 'unavailable' → 원위치
         const r = this.state.summon(press.from, target.portal);
+        report(r.ok ? null : r.reason === 'empty' ? 'invalid' : r.reason);
         if (!r.ok) break;
         const v = this.views[press.from];
         this.views[press.from] = null;
@@ -197,6 +204,7 @@ export class GridView {
         return;
       }
       case 'none':
+        report('invalid');
         break;
     }
     this.placeAt(press.from);

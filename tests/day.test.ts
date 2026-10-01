@@ -2,7 +2,7 @@
 import { describe, expect, it } from 'vitest';
 import { rawGameData } from '../src/data';
 import type { GameData } from '../src/data/types';
-import { resolveDayEvent, type DailyUse, type DayStats } from '../src/core/day';
+import { emptyDayStats, resolveDayEvent, type DailyUse, type DayStats } from '../src/core/day';
 import { diaryCategory, pickAvoiding, writeDiary } from '../src/core/diary';
 import { GameState, type CoreEvent } from '../src/core/game';
 import { WILDCARD } from '../src/core/grid';
@@ -416,8 +416,8 @@ describe('하루 끝 처리 (D-022: 방어 유닛도 귀환)', () => {
 
 describe('그림일기', () => {
   const stats = (s: Partial<DayStats>): DayStats => ({
-    sunk: 0, defeated: 0, layersCleared: 0, backflow: 0, bossWin: null,
-    sentUp: 0, sentDown: 0, joyStart: 0, joyEnd: 0, realSeconds: 0, ...s,
+    ...emptyDayStats(0, 3),
+    ...s,
   });
   const th = base.balance.diary.diarySinkThreshold;
 

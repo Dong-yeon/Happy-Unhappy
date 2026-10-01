@@ -6,7 +6,8 @@ import type { EndingResult } from '../core/ending';
 import type { GameState } from '../core/game';
 import type { ForgottenEntry } from '../core/gating';
 import type { GameData } from '../data/types';
-import { isDebug } from '../debug/gridPreset';
+import { showDebugUi, showRatings } from '../debug/gridPreset';
+import type { DayRating } from '../metrics/model';
 import { minutesUntilMidnight } from '../platform/clock';
 import { REGION, VIEW_H, VIEW_W } from './layout';
 import { mergeDiary } from './diaryList';
@@ -26,7 +27,22 @@ export interface DayUiHooks {
   recheck(): void;
   /** 이번 일생의 기억나지 않는 날 (일기장 병합) */
   forgottenLog(): readonly ForgottenEntry[];
+  /** 하루 끝 주관 평가 (§5.10-4, ?debug=1·?playtest=1에서만 표시) */
+  rating(day: number): DayRating | null;
+  rate<K extends keyof DayRating>(day: number, key: K, value: DayRating[K]): void;
+  endingAgree(): boolean | null;
+  setEndingAgree(v: boolean): void;
 }
+
+const DAY_RATINGS: { value: NonNullable<DayRating['day']>; label: string }[] = [
+  { value: 'good', label: '좋았다' },
+  { value: 'meh', label: '그저 그랬다' },
+  { value: 'bad', label: '별로였다' },
+];
+const BACKFLOW_RATINGS: { value: NonNullable<DayRating['backflow']>; label: string }[] = [
+  { value: 'tense', label: '긴장됐다' },
+  { value: 'annoyed', label: '짜증났다' },
+];
 
 const BREAKDOWN_LABELS: Record<keyof EndingResult['breakdown'], string> = {
   upTier: '위로 보낸 단계',
@@ -69,8 +85,8 @@ class Modal {
     return t;
   }
 
-  button(x: number, y: number, w: number, label: string, onClick: (btn: Button) => void): Button {
-    const b = new Button(this.scene, x, this.top + y, w, 30, label, onClick, '12px');
+  button(x: number, y: number, w: number, label: string, onClick: (btn: Button) => void, fontSize = '12px', h = 30): Button {
+    const b = new Button(this.scene, x, this.top + y, w, h, label, onClick, fontSize);
     b.container.setDepth(OVERLAY_DEPTH + 2);
     this.buttons.push(b);
     return b;
@@ -207,7 +223,10 @@ export class DayUi {
     const s = this.state;
     const entry = s.diary[s.diary.length - 1];
     const st = s.lastDayStats;
-    const m = new Modal(this.scene, 250);
+    const ratings = showRatings();
+    const backflowRow = ratings && st?.backflow === 1;
+    const extra = ratings ? (backflowRow ? 68 : 36) : 0;
+    const m = new Modal(this.scene, 250 + extra);
     m.text(16, `${entry.day}일째 그림일기`, { fontSize: '14px', color: '#f2c94c', fontStyle: 'bold' });
     m.text(38, entry.eventTitle, { fontSize: '11px', color: '#9fb4e0' });
     m.text(62, entry.line, { fontSize: '13px', lineSpacing: 5 });
@@ -219,12 +238,45 @@ export class DayUi {
         { fontSize: '10px', color: '#8a8f9e', lineSpacing: 3 },
       );
     }
+    // 주관 평가 (선택 안 해도 다음 날로 갈 수 있음)
+    if (ratings) {
+      const day = entry.day;
+      this.ratingRow(m, 184, '오늘은?', DAY_RATINGS, () => this.hooks.rating(day)?.day ?? null, (v) => this.hooks.rate(day, 'day', v));
+      if (backflowRow) {
+        this.ratingRow(m, 216, '역류는?', BACKFLOW_RATINGS, () => this.hooks.rating(day)?.backflow ?? null, (v) =>
+          this.hooks.rate(day, 'backflow', v),
+        );
+      }
+    }
+    const by = 204 + extra;
     const last = s.day >= s.lifeLengthDays;
-    m.button(VIEW_W / 2 - 64, 204, 110, last ? '일생 끝' : '다음 날', () => {
+    m.button(VIEW_W / 2 - 64, by, 110, last ? '일생 끝' : '다음 날', () => {
       if (this.state.nextDay()) this.hooks.onChange();
     });
-    m.button(VIEW_W / 2 + 64, 204, 110, '일기장', () => this.showDiaryList());
+    m.button(VIEW_W / 2 + 64, by, 110, '일기장', () => this.showDiaryList());
     this.modal = m;
+  }
+
+  /** "질문 [선택지…]" 한 줄. 고른 버튼은 강조, 다시 고르면 바꿀 수 있다 */
+  private ratingRow<T>(
+    m: Modal,
+    y: number,
+    label: string,
+    options: { value: T; label: string }[],
+    current: () => T | null,
+    pick: (v: T) => void,
+  ): void {
+    const t = m.text(y + 8, label, { fontSize: '11px', color: '#9fb4e0' }, 0);
+    const w = options.length === 3 ? 66 : 80;
+    // 버튼은 라벨 오른쪽부터 (짧은 라벨은 같은 열에 맞춘다)
+    const x0 = (VIEW_W - PANEL_W) / 2 + Math.max(88, 16 + t.width + 8) + w / 2;
+    const buttons = options.map((o, i) =>
+      m.button(x0 + i * (w + 4), y + 15, w, o.label, () => {
+        pick(o.value);
+        buttons.forEach((b, j) => b.setActive(options[j].value === current()));
+      }, '10px', 24),
+    );
+    buttons.forEach((b, j) => b.setActive(options[j].value === current()));
   }
 
   /**
@@ -233,8 +285,9 @@ export class DayUi {
    */
   showResult(result: EndingResult | null, preview: boolean): void {
     this.closeModal();
-    const debug = isDebug();
-    const m = new Modal(this.scene, debug ? 330 : 300);
+    const debug = showDebugUi();
+    const agree = showRatings() && !preview && result !== null;
+    const m = new Modal(this.scene, (debug ? 330 : 300) + (agree ? 34 : 0));
     if (!result) {
       m.text(40, '결말 없음', { fontSize: '16px', color: '#ff9e9e' });
     } else {
@@ -257,7 +310,14 @@ export class DayUi {
         });
       }
     }
-    const by = debug ? 290 : 260;
+    if (agree) {
+      const opts = [
+        { value: true, label: '응' },
+        { value: false, label: '아니' },
+      ];
+      this.ratingRow(m, debug ? 250 : 214, '이 결말, 납득돼?', opts, () => this.hooks.endingAgree(), (v) => this.hooks.setEndingAgree(v));
+    }
+    const by = (debug ? 290 : 260) + (agree ? 34 : 0);
     m.button(VIEW_W / 2 - 64, by, 110, '일기장', () => this.showDiaryList());
     if (preview) {
       m.button(VIEW_W / 2 + 64, by, 110, '닫기', () => {
