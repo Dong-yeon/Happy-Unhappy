@@ -169,13 +169,15 @@ describe('통계·리포트', () => {
 
 describe('M6: 결말 리포트 (§5.8-4)', () => {
   it('판마다 결말이 있고, 분포 합 = 1, 항목별 평균 기여의 합 = 점수 평균', () => {
-    const runs = [run('balanced', 1), run('alwaysHappy', 1), run('random', 1)];
+    // 0 하한이 걸리지 않는 판들로 (random은 가라앉음 감점으로 happy가 0에 막힌다)
+    const runs = [run('balanced', 1), run('alwaysHappy', 1)];
     for (const r of runs) expect(r.ending).not.toBeNull();
+    expect(run('random', 1).ending?.happy).toBe(0);
     const e = endingStats(runs);
-    expect(e.n).toBe(3);
+    expect(e.n).toBe(2);
     expect(Object.values(e.dist).reduce((a, b) => a + b, 0)).toBeCloseTo(1);
     const b = e.breakdown;
-    expect(b.upTier + b.defeat + b.joy).toBeCloseTo(e.happy.mean);
+    expect(b.upTier + b.defeat + b.joy + b.sunk).toBeCloseTo(e.happy.mean);
     expect(b.downTier + b.layer + b.purified).toBeCloseTo(e.unhappy.mean);
   });
 

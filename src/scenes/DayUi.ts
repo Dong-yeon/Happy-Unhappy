@@ -32,6 +32,7 @@ const BREAKDOWN_LABELS: Record<keyof EndingResult['breakdown'], string> = {
   upTier: '위로 보낸 단계',
   defeat: '막아낸 걱정',
   joy: '얻은 기쁨',
+  sunk: '가라앉음 감점',
   downTier: '아래로 보낸 단계',
   layer: '층 돌파',
   purified: '정화한 그림자',
@@ -249,7 +250,7 @@ export class DayUi {
         const lines = (Object.keys(BREAKDOWN_LABELS) as (keyof typeof BREAKDOWN_LABELS)[]).map(
           (k) => `${BREAKDOWN_LABELS[k]} ${result.breakdown[k].toFixed(1)}`,
         );
-        m.text(202, `[기여] ${lines.slice(0, 3).join(' · ')}\n${lines.slice(3).join(' · ')}`, {
+        m.text(202, `[기여] ${lines.slice(0, 4).join(' · ')}\n${lines.slice(4).join(' · ')}`, {
           fontSize: '9px',
           color: '#ff9e6b',
           lineSpacing: 3,

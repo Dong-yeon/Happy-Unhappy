@@ -104,10 +104,15 @@ describe('상태 흐름', () => {
 
 describe('웨이브: 일차 기준 수·HP, worryMultiplier', () => {
   it('일차 d의 걱정 수·HP 공식', () => {
-    const g = fresh();
+    // 가라앉음·멈춤으로 역류가 와서 웨이브 칸이 보스로 바뀌지 않게 그림자 증가를 끈다
+    const g = fresh((d) => {
+      d.balance.shadow.sinkShadow = 0;
+      d.balance.abyss.unhappyStallShadowPerSec = 0;
+    });
     g.debugGotoDay(4);
     begin(g);
-    const es = runDay(g);
+    const es = runDay(g, 3000); // 방어 없음: Happy 거점 혼자 막으므로 하루가 길다
+    expect(g.phase).toBe('diary');
     const spawns = ofType(es, 'spawnWorry').filter((e) => !e.boss);
     expect(spawns).toHaveLength(waveCount({ ...W, hpBase: 1 }, 4) * 3);
   });
@@ -199,7 +204,7 @@ describe('이정표', () => {
   });
 
   it('Unhappy가 맡는다: 기쁨 −(0 미만 불가), 층 남은 HP × (1 − reduce) 1회, flag face', () => {
-    const g = fresh();
+    const g = fresh((d) => (d.balance.days.morningJoyFloor = 0)); // 바닥은 따로 테스트
     g.joy = 5;
     const hp = g.abyss.wall.hp;
     begin(g, 'first_tooth', 'unhappy');
@@ -477,6 +482,88 @@ describe('캘린더', () => {
     expect(kinds[9]).toBe('birthday');
     expect(g.phase).toBe('lifeEnd');
     expect(g.diary).toHaveLength(14);
+  });
+});
+
+describe('조용한 날 (D-024)', () => {
+  const NO_FIXED = (d: GameData) => {
+    d.days.fixed = {};
+    d.days.dailyEventChance = 1; // 조용한 날이 아니면 반드시 일상 이벤트
+  };
+
+  it('1 ~ quietDays일차는 평범한 하루, rng를 소비하지 않는다', () => {
+    const d = structuredClone(base);
+    NO_FIXED(d);
+    for (let day = 1; day <= d.days.quietDays; day++) {
+      let calls = 0;
+      const rng = () => (calls++, 0);
+      expect(resolveDayEvent(d, day, rng, []).kind).toBe('plain');
+      expect(calls).toBe(0);
+    }
+  });
+
+  it('quietDays + 1일차부터 기존 확률 (dailyEventChance)', () => {
+    const d = structuredClone(base);
+    NO_FIXED(d);
+    const day = d.days.quietDays + 1;
+    expect(resolveDayEvent(d, day, mulberry32(1), []).kind).toBe('daily');
+    d.days.dailyEventChance = 0;
+    let calls = 0;
+    expect(resolveDayEvent(d, day, () => (calls++, 0.5), []).kind).toBe('plain');
+    expect(calls).toBe(1);
+  });
+
+  it('고정 이벤트가 조용한 날보다 먼저 (quietDays 안의 고정 일차는 고정 이벤트)', () => {
+    const d = structuredClone(base);
+    d.days.fixed = { '1': 'birthday' };
+    expect(resolveDayEvent(d, 1, mulberry32(1), []).id).toBe('birthday');
+  });
+
+  it('GameState: 1~2일차 카드는 평범한 하루', () => {
+    const g = fresh(NO_FIXED);
+    expect(g.today.kind).toBe('plain');
+    g.confirmDay();
+    g.debugEndDay();
+    g.nextDay();
+    expect(g.today.kind).toBe('plain');
+    g.confirmDay();
+    g.debugEndDay();
+    g.nextDay();
+    expect(g.today.kind).toBe('daily');
+  });
+});
+
+describe('아침 기쁨 바닥 (D-024)', () => {
+  const FLOOR = base.balance.days.morningJoyFloor;
+
+  it('이벤트 효과 직후 joy = max(joy, morningJoyFloor): 바닥 미만이면 바닥으로', () => {
+    const g = fresh();
+    g.joy = 0;
+    begin(g, 'plain');
+    expect(g.joy).toBe(FLOOR);
+    expect(g.dayStats.joyStart).toBe(FLOOR);
+  });
+
+  it('이미 바닥 이상이면 그대로 (가산이 아니다)', () => {
+    const g = fresh();
+    g.joy = FLOOR + 7;
+    begin(g, 'plain');
+    expect(g.joy).toBe(FLOOR + 7);
+  });
+
+  it('순서: 이벤트 joy 가감 뒤에 바닥 → 그다음 이정표 선택 효과', () => {
+    // 이벤트 joy 감소로 바닥 밑으로 내려가도 바닥에서 시작
+    const g = fresh((d) => d.events.daily.push({ id: 'bad_day', world: d.days.world, title: '나쁜 날', effects: { joy: -50 }, diaryLine: '나빴다.' }));
+    g.joy = 30;
+    begin(g, 'bad_day');
+    expect(g.joy).toBe(FLOOR);
+
+    // 이정표 선택(Unhappy: joy −10)은 바닥 뒤에 적용 → 바닥 − 10
+    const m = fresh();
+    const unhappy = base.events.milestones[0].choices.find((c) => c.id === 'unhappy')!;
+    m.joy = 0;
+    begin(m, 'first_tooth', 'unhappy');
+    expect(m.joy).toBe(Math.max(0, FLOOR + unhappy.joy));
   });
 });
 

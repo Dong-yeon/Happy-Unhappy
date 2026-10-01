@@ -36,7 +36,7 @@ describe('judgeEnding', () => {
 
   it('fixture는 가중치·임계값이 바뀌어도 성립', () => {
     const c = cfg((x) => {
-      x.weights = { wUpTier: 0.7, wDefeat: 2, wJoy: 0, wDownTier: 0, wLayer: 0.3, wPurified: 5 };
+      x.weights = { wUpTier: 0.7, wDefeat: 2, wJoy: 0, wSunk: 3, wDownTier: 0, wLayer: 0.3, wPurified: 5 };
       x.thresholds = { happy: 333, unhappy: 47 };
       x.balanceRatio = 0.05;
     });
@@ -44,12 +44,13 @@ describe('judgeEnding', () => {
     for (const id of IDS) expect(judgeEnding(fx[id].stats, fx[id].flags, c).id, id).toBe(id);
   });
 
-  it('공식: 항목별 기여 = stats × 가중치, happy·unhappy는 그 합', () => {
+  it('공식: 항목별 기여 = stats × 가중치 (가라앉음은 감점), happy·unhappy는 그 합', () => {
     const s = {
       ...emptyGameStats(),
       sentUpTierSum: 10,
       worriesDefeated: 20,
       totalJoyEarned: 100,
+      sunkCount: 3,
       sentDownTierSum: 5,
       layersCleared: 2,
       shadowPurified: 30,
@@ -60,11 +61,12 @@ describe('judgeEnding', () => {
       upTier: 10 * w.wUpTier,
       defeat: 20 * w.wDefeat,
       joy: 100 * w.wJoy,
+      sunk: -3 * w.wSunk,
       downTier: 5 * w.wDownTier,
       layer: 2 * w.wLayer,
       purified: 30 * w.wPurified,
     });
-    expect(r.happy).toBeCloseTo(10 * w.wUpTier + 20 * w.wDefeat + 100 * w.wJoy);
+    expect(r.happy).toBeCloseTo(10 * w.wUpTier + 20 * w.wDefeat + 100 * w.wJoy - 3 * w.wSunk);
     expect(r.unhappy).toBeCloseTo(5 * w.wDownTier + 2 * w.wLayer + 30 * w.wPurified);
   });
 
@@ -87,6 +89,25 @@ describe('judgeEnding', () => {
     expect(judgeEnding(stats(100, 100), [], unit).id).toBe('solid');
     expect(judgeEnding(stats(100, 100), ['avoid'], unit).id).toBe('solid');
     expect(judgeEnding(stats(100, 100), ['avoid', 'face'], unit).id).toBe('hidden');
+  });
+
+  it('wSunk: 가라앉은 걱정 1마리당 Happy 점수 감점 → 임계값 아래로 떨어지면 결말이 바뀐다 (D-024)', () => {
+    const c = cfg((x) => {
+      x.weights = { wUpTier: 0, wDefeat: 1, wJoy: 0, wSunk: 2, wDownTier: 0, wLayer: 1, wPurified: 0 };
+      x.thresholds = { happy: 100, unhappy: 10 };
+    });
+    expect(judgeEnding(stats(120, 20), [], c)).toMatchObject({ id: 'solid', happy: 120 });
+    const r = judgeEnding(stats(120, 20, { sunkCount: 11 }), [], c);
+    expect(r).toMatchObject({ id: 'quiet', happy: 98 });
+    expect(r.breakdown.sunk).toBe(-22);
+  });
+
+  it('두 점수는 0 하한 (감점이 커도 음수가 아니다, breakdown은 0 하한 전 값)', () => {
+    const r = judgeEnding(stats(0, 0, { sunkCount: 300, sentUpTierSum: 5 }), [], CFG);
+    expect(r.happy).toBe(0);
+    expect(r.unhappy).toBe(0);
+    expect(r.breakdown.sunk).toBe(-300 * CFG.weights.wSunk);
+    expect(r.id).toBe('rainy');
   });
 
   it('보스 승리 그림자 감소(shadowCalmed)는 점수에 들어가지 않는다 (D-023)', () => {

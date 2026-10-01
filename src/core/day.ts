@@ -87,7 +87,8 @@ export function allEventIds(data: GameData): string[] {
 }
 
 /**
- * 일차 d의 이벤트 (§5.2): days.fixed(이정표·계절) → 아니면 dailyEventChance로 일상 이벤트(쿨다운 제외) → 아니면 평범한 하루.
+ * 일차 d의 이벤트 (§5.2): days.fixed(이정표·계절) → 조용한 날(d ≤ quietDays, 난수 소비 없음, D-024)이면 평범한 하루
+ * → 아니면 dailyEventChance로 일상 이벤트(쿨다운 제외) → 아니면 평범한 하루.
  * 같은 일상 이벤트는 dailyEventCooldownDays일 안에 반복하지 않는다 (d - 마지막 사용일 ≤ 쿨다운이면 제외).
  */
 export function resolveDayEvent(data: GameData, day: number, rng: Rng, used: readonly DailyUse[]): DayEvent {
@@ -96,6 +97,8 @@ export function resolveDayEvent(data: GameData, day: number, rng: Rng, used: rea
     const found = eventById(data, fixedId);
     if (found) return found;
   }
+  // 조용한 날: 1~2일차는 규칙을 익히는 날 (rng 호출 전에 판정해 난수를 소비하지 않는다)
+  if (day <= data.days.quietDays) return plainCard(data);
   if (rng() < data.days.dailyEventChance) {
     const cd = data.days.dailyEventCooldownDays;
     const pool = data.events.daily.filter((e) => !used.some((u) => u.id === e.id && day - u.day <= cd));

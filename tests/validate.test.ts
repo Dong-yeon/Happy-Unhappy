@@ -211,6 +211,22 @@ describe('validateGameData', () => {
     expectIssue(issues, 'endings.balanceRatio', /1 이하/);
   });
 
+  it('M6.5: days.quietDays 필수, balance.days.morningJoyFloor는 0 이상 정수, endings.weights.wSunk 필수', () => {
+    const issues = issuesAfter((d) => {
+      delete (d.days as Record<string, unknown>).quietDays;
+      d.balance.days.morningJoyFloor = 2.5;
+      delete (d.endings.weights as Record<string, unknown>).wSunk;
+    });
+    expectIssue(issues, 'days.quietDays', /필수 키/);
+    expectIssue(issues, 'balance.days.morningJoyFloor', /정수/);
+    expectIssue(issues, 'endings.weights.wSunk', /필수 키/);
+    expectIssue(
+      issuesAfter((d) => (d.balance.days.morningJoyFloor = -1)),
+      'balance.days.morningJoyFloor',
+      /0 이상/,
+    );
+  });
+
   it('balance.version ≠ 2', () => {
     const issues = issuesAfter((d) => {
       (d.balance as Record<string, unknown>).version = 1;

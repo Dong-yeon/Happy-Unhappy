@@ -54,7 +54,13 @@ export interface Balance {
     /** 마음 날씨 경계: [흐림, 비, 폭우]가 시작되는 그림자 값 (그 미만은 맑음) */
     weatherThresholds: [number, number, number];
   };
-  days: { lifeLengthDays: number; dailyLimit: number; storeCap: number };
+  days: {
+    lifeLengthDays: number;
+    dailyLimit: number;
+    storeCap: number;
+    /** 하루 시작(이벤트 효과 직후) 기쁨 바닥. 가산이 아니라 max (D-024) */
+    morningJoyFloor: number;
+  };
   diary: { diarySinkThreshold: number };
 }
 
@@ -149,6 +155,8 @@ export interface Days {
   fixed: Record<string, string>;
   dailyEventChance: number;
   dailyEventCooldownDays: number;
+  /** 1 ~ quietDays일차는 고정 이벤트 외에 일상 이벤트 없음 (D-024) */
+  quietDays: number;
 }
 
 export interface Diary {
@@ -159,7 +167,8 @@ export interface Diary {
 export type EndingId = 'hidden' | 'solid' | 'mask' | 'quiet' | 'rainy';
 
 export interface Endings {
-  weights: { wUpTier: number; wDefeat: number; wJoy: number; wDownTier: number; wLayer: number; wPurified: number };
+  /** wSunk: Happy 점수 감점 (가라앉은 걱정 1마리당, D-024) */
+  weights: { wUpTier: number; wDefeat: number; wJoy: number; wSunk: number; wDownTier: number; wLayer: number; wPurified: number };
   /** Tʜ·Tᴜ (v0.6, D-023) */
   thresholds: { happy: number; unhappy: number };
   /** 히든 균형: |happy − unhappy| ≤ balanceRatio × max(happy, unhappy) */

@@ -205,11 +205,12 @@ function checkBalance(c: Checker, v: unknown): { maxTier?: number; lifeLengthDay
   }
 
   let lifeLengthDays: number | undefined;
-  const d = c.obj(b.days, `${p}.days`, ['lifeLengthDays', 'dailyLimit', 'storeCap']);
+  const d = c.obj(b.days, `${p}.days`, ['lifeLengthDays', 'dailyLimit', 'storeCap', 'morningJoyFloor']);
   if (d) {
     lifeLengthDays = c.num(d.lifeLengthDays, `${p}.days.lifeLengthDays`, { int: true, min: 1 });
     const limit = c.num(d.dailyLimit, `${p}.days.dailyLimit`, { int: true, min: 1 });
     const cap = c.num(d.storeCap, `${p}.days.storeCap`, { int: true, min: 1 });
+    c.num(d.morningJoyFloor, `${p}.days.morningJoyFloor`, { int: true, min: 0 });
     if (limit !== undefined && cap !== undefined && cap < limit) c.fail(`${p}.days.storeCap`, 'dailyLimit 이상이어야 함');
   }
 
@@ -396,11 +397,12 @@ function checkEvents(c: Checker, v: unknown, chainIds: string[], maxTier: number
 }
 
 function checkDays(c: Checker, v: unknown, eventIds: EventIds, lifeLengthDays: number | undefined): void {
-  const d = c.obj(v, 'days', ['world', 'age', 'fixed', 'dailyEventChance', 'dailyEventCooldownDays']);
+  const d = c.obj(v, 'days', ['world', 'age', 'fixed', 'dailyEventChance', 'dailyEventCooldownDays', 'quietDays']);
   if (!d) return;
   c.num(d.age, 'days.age', { int: true, min: 0 });
   c.num(d.dailyEventChance, 'days.dailyEventChance', { min: 0, max: 1 });
   c.num(d.dailyEventCooldownDays, 'days.dailyEventCooldownDays', { int: true, min: 0 });
+  c.num(d.quietDays, 'days.quietDays', { int: true, min: 0 });
   const fixed = c.map(d.fixed, 'days.fixed');
   if (!fixed) return;
   for (const [dayKey, id] of Object.entries(fixed)) {
@@ -426,7 +428,7 @@ function checkDiary(c: Checker, v: unknown): void {
 function checkEndings(c: Checker, v: unknown): void {
   const e = c.obj(v, 'endings', ['weights', 'thresholds', 'balanceRatio', 'endings']);
   if (!e) return;
-  c.nums(e.weights, 'endings.weights', ['wUpTier', 'wDefeat', 'wJoy', 'wDownTier', 'wLayer', 'wPurified'], { min: 0 });
+  c.nums(e.weights, 'endings.weights', ['wUpTier', 'wDefeat', 'wJoy', 'wSunk', 'wDownTier', 'wLayer', 'wPurified'], { min: 0 });
   c.nums(e.thresholds, 'endings.thresholds', ['happy', 'unhappy'], { min: 0 });
   c.num(e.balanceRatio, 'endings.balanceRatio', { min: 0, max: 1 });
   const ids = ['hidden', 'solid', 'mask', 'quiet', 'rainy'];

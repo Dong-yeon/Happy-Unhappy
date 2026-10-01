@@ -504,6 +504,7 @@ export class GameState {
    * 이벤트 카드를 닫는다(이정표면 선택). 하루 시작 처리 (이 순서):
    * 1. spawnedToday = 0
    * 2. 이벤트 효과: joy 가감(0 미만 불가) → freePieces 지급 → chainWeight → worryMultiplier
+   *    → 아침 기쁨 바닥 joy = max(joy, morningJoyFloor) (D-024, 가산이 아니라 바닥)
    * 3. 이정표 선택 효과
    * 4. 역류가 넘어와 있으면 아침 웨이브를 보스로 (+ 준비 시간)
    * 그다음 'waves' 단계로 (첫 웨이브 전 dayStartDelay 또는 bossPrepSeconds)
@@ -532,6 +533,7 @@ export class GameState {
     }
     this.chainWeightToday = { ...(fx.chainWeight ?? {}) };
     const mult = fx.worryMultiplier ?? 1;
+    this.joy = Math.max(this.joy, this.data.balance.days.morningJoyFloor);
 
     // 3
     if (choice) {

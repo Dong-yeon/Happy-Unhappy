@@ -29,7 +29,8 @@
     "balancedLostReturnsMeanMax": 1
   },
   "m5Goals": {
-    "balancedPrepMorningWinRateMin": 0.5,
+    "prepMorningWinRateMin": 0.5,
+    "prepMorningMinDefense": 3,
     "balancedBackflowsMax": 2,
     "alwaysHappyBackflowsMin": 3,
     "earlyDays": 2,

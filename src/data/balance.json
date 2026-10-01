@@ -19,12 +19,12 @@
   "wave": {
     "wavesPerDay": 3,
     "countBase": 6,
-    "countStep": 1,
+    "countStep": 2,
     "spawnInterval": 1.5,
     "waveGap": 3,
     "dayStartDelay": 3,
     "bossPrepSeconds": 10,
-    "hpGrowthPerDay": 1.08
+    "hpGrowthPerDay": 1.13
   },
   "abyss": {
     "layerHpBase": 120,
@@ -47,7 +47,8 @@
   "days": {
     "lifeLengthDays": 14,
     "dailyLimit": 2,
-    "storeCap": 4
+    "storeCap": 4,
+    "morningJoyFloor": 20
   },
   "diary": { "diarySinkThreshold": 3 }
 }

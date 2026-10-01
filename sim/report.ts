@@ -308,6 +308,7 @@ const BREAKDOWN_LABEL: Record<BreakdownKey, string> = {
   upTier: '위 단계(wUpTier)',
   defeat: '처치(wDefeat)',
   joy: '기쁨(wJoy)',
+  sunk: '가라앉음 감점(wSunk)',
   downTier: '아래 단계(wDownTier)',
   layer: '층(wLayer)',
   purified: '정화(wPurified)',
@@ -329,7 +330,8 @@ export function formatEndings(r: PolicyReport): string {
   return [
     `결말 분포 (n=${e.n}): ${ENDING_IDS.map((id) => `${id} ${pctOf(e.dist[id])}`).join(' / ')}`,
     table(['점수', 'p10', 'p50', 'p90', '평균'], [score('Happy', e.happy), score('Unhappy', e.unhappy), score('합', e.total)]),
-    `항목별 평균 기여 — Happy: ${share(['upTier', 'defeat', 'joy'], hMean)}`,
+    // % 는 가산 항목 합 대비 (감점은 음수 %)
+    `항목별 평균 기여 — Happy: ${share(['upTier', 'defeat', 'joy', 'sunk'], hMean)}`,
     `                  Unhappy: ${share(['downTier', 'layer', 'purified'], uMean)}`,
   ].join('\n');
 }
@@ -468,15 +470,24 @@ export function checkM3Goals(reports: PolicyReport[], goals: SimConfig['m3Goals'
   } else na('balanced', 'balanced를 실행하지 않음');
 
   const hoard = reports.find((r) => r.policy === 'hoarder');
-  if (hoard && bal) {
-    const worse = hoard.summary.sunk.median > bal.summary.sunk.median;
-    out.push({
-      label: 'hoarder: balanced보다 나쁨',
-      pass: worse,
-      detail: `가라앉은 수 중앙값 hoarder ${fmt(hoard.summary.sunk.median)} vs balanced ${fmt(bal.summary.sunk.median)}`,
-    });
-  } else na('hoarder', 'hoarder와 balanced를 함께 실행해야 비교 가능');
+  if (hoard && bal) out.push(hoarderCheck(hoard, bal));
+  else na('hoarder', 'hoarder와 balanced를 함께 실행해야 비교 가능');
   return out;
+}
+
+/**
+ * hoarder: balanced보다 나쁨 = 결말 점수 합(happy + unhappy) 중앙값이 더 낮음 (v0.6.1 §5.9-5).
+ * 가라앉은 수 비교는 버렸다 (난이도를 올리면 balanced가 아래 투자로 가라앉음이 더 많을 수 있다).
+ */
+function hoarderCheck(hoard: PolicyReport, bal: PolicyReport): GoalCheck {
+  return {
+    id: 'hoarder<B',
+    label: 'hoarder: balanced보다 나쁨 (결말 점수 합 중앙값)',
+    pass: hoard.endings.total.median < bal.endings.total.median,
+    detail:
+      `점수 합 중앙값 hoarder ${fmt(hoard.endings.total.median, 0)} vs balanced ${fmt(bal.endings.total.median, 0)}` +
+      ` (참고: 가라앉은 수 중앙값 ${fmt(hoard.summary.sunk.median)} vs ${fmt(bal.summary.sunk.median)})`,
+  };
 }
 
 function tierLine(r: PolicyReport): string {
@@ -558,14 +569,8 @@ export function checkM4Goals(reports: PolicyReport[], goals: SimConfig['m4Goals'
   } else out.push({ label: 'balanced', pass: null, detail: '실행하지 않음' });
 
   const hoard = get('hoarder');
-  if (hoard && bal) {
-    out.push({
-      id: 'hoarder<B',
-      label: 'hoarder: balanced보다 나쁨',
-      pass: hoard.summary.sunk.median > bal.summary.sunk.median,
-      detail: `가라앉은 수 중앙값 hoarder ${fmt(hoard.summary.sunk.median)} vs balanced ${fmt(bal.summary.sunk.median)}`,
-    });
-  } else out.push({ label: 'hoarder', pass: null, detail: 'hoarder와 balanced를 함께 실행해야 비교 가능' });
+  if (hoard && bal) out.push(hoarderCheck(hoard, bal));
+  else out.push({ label: 'hoarder', pass: null, detail: 'hoarder와 balanced를 함께 실행해야 비교 가능' });
   return out;
 }
 
@@ -577,15 +582,31 @@ export function checkM5Goals(reports: PolicyReport[], goals: SimConfig['m5Goals'
   const get = (name: string) => reports.find((r) => r.policy === name);
   const pct = (x: number | null) => (x === null ? '—' : `${fmt(x * 100, 1)}%`);
 
+  // 준비 시간이 있는 아침 보스 중 등장 시 방어 유닛 ≥ N기인 경우의 처치율, 전 정책 합산 (v0.6.1 §5.9-5)
+  {
+    const minDef = goals.prepMorningMinDefense;
+    const prepped = reports.flatMap((r) => r.runs.flatMap((run) => run.bossLog)).filter((b) => b.slot === 'morning' && b.prep);
+    const ready = prepped.filter((b) => b.defenseUnits >= minDef && b.win !== null);
+    const wins = ready.filter((b) => b.win).length;
+    const rate = ready.length ? wins / ready.length : null;
+    out.push({
+      id: '준비보스',
+      label: `준비 시간이 있는 아침 보스, 등장 시 방어 ≥ ${minDef}기: 처치율 ≥ ${fmt(goals.prepMorningWinRateMin * 100, 0)}% (전 정책 합산, D-021)`,
+      pass: rate === null ? null : rate >= goals.prepMorningWinRateMin,
+      detail:
+        `해당 ${ready.length}회, 처치 ${wins}회 (${pct(rate)}) · 준비된 아침 보스 전체 ${prepped.length}회 (정책별 해당/처치: ` +
+        reports
+          .map((r) => {
+            const rs = r.runs.flatMap((run) => run.bossLog).filter((b) => b.slot === 'morning' && b.prep && b.defenseUnits >= minDef && b.win !== null);
+            return `${r.policy} ${rs.length}/${rs.filter((b) => b.win).length}`;
+          })
+          .join(', ') +
+        ')',
+    });
+  }
+
   const bal = get('balanced');
   if (bal) {
-    const prep = bal.bossDiag.bySlot['morning|prep'];
-    out.push({
-      id: 'B 준비보스',
-      label: `balanced: 준비 시간이 있는 아침 보스 처치율 ≥ ${fmt(goals.balancedPrepMorningWinRateMin * 100, 0)}% (D-021)`,
-      pass: prep && prep.winRate !== null ? prep.winRate >= goals.balancedPrepMorningWinRateMin : null,
-      detail: prep ? `등장 ${prep.n}회, 처치 ${prep.wins}회 (${pct(prep.winRate)})` : '준비 시간이 있는 아침 보스가 없었음',
-    });
     out.push({
       id: 'B 역류',
       label: `balanced: 역류 0~${goals.balancedBackflowsMax}회 (중앙값)`,
