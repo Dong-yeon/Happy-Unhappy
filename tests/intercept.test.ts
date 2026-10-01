@@ -235,18 +235,31 @@ describe('봇 balanced: 밤에 빛나지 않은 영웅을 정화, 조합 우선'
   }
   const decide = (g: GameState) => POLICIES.balanced.decide({ state: g, rng: mulberry32(1), cfg });
 
-  it('밤: 빛나지 않은 영웅이 2단계보다 먼저 손거울로', () => {
+  it('밤: 빛나지 않은 영웅(같은 체인 2개 이상)이 2단계보다 먼저 손거울로', () => {
     const g = night();
-    g.grid.cells[3] = g.newPiece(BLANKET, 2);
+    g.grid.cells[3] = g.newPiece(DOG, 2);
     g.grid.cells[0] = g.newPiece(DOG, 3);
-    expect(decide(g)).toEqual({ type: 'summon', cell: 0, side: 'unhappy' });
+    g.grid.cells[1] = g.newPiece(DOG, 3);
+    const a = decide(g);
+    expect(a).toMatchObject({ type: 'summon', side: 'unhappy' });
+    if (a?.type !== 'summon') return;
+    expect([0, 1]).toContain(a.cell);
+  });
+
+  it('밤 (§5.14-5): 빛나지 않은 영웅이 그 체인에 1개뿐이면 보내지 않는다 (행복한 추억 재료로 남김)', () => {
+    const g = night();
+    g.grid.cells[0] = g.newPiece(DOG, 3);
+    g.grid.cells[1] = g.newPiece(DOG, 4, { legend: 'park_walk' });
+    expect(decide(g)).toBeNull();
+    g.grid.cells[3] = g.newPiece(DOG, 2);
+    expect(decide(g)).toEqual({ type: 'summon', cell: 3, side: 'unhappy' });
   });
 
   it('밤: 빛나는 영웅·전설·쉬는 영웅은 보내지 않는다 (남은 2단계를 보냄)', () => {
     const g = night();
     g.grid.cells[0] = g.newPiece(DOG, 3, { shining: true });
     g.grid.cells[1] = g.newPiece(DOG, 4, { legend: 'park_walk' });
-    g.grid.cells[2] = g.newPiece(BLANKET, 3, { restUntil: 'dusk' });
+    g.grid.cells[2] = g.newPiece(DOG, 3, { restUntil: 'dusk' });
     expect(decide(g)).toBeNull();
     g.grid.cells[6] = g.newPiece(BLANKET, 1);
     g.grid.cells[7] = g.newPiece(DOG, 2);

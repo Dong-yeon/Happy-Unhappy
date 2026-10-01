@@ -45,7 +45,6 @@ export class GameScene extends Phaser.Scene {
   private shadowFill!: Phaser.GameObjects.Rectangle;
   private shadowFrame!: Phaser.GameObjects.Rectangle;
   private shadowBarW = 0;
-  private age = 0;
   private shadowMax = 1;
   private portals!: Record<'happy' | 'unhappy', PortalView>;
   private sky!: SkyView;
@@ -168,7 +167,7 @@ export class GameScene extends Phaser.Scene {
     this.abyssView.handle(events);
     // 층 돌파 귀환 조각은 core에서 이미 그리드에 들어가 있다
     // 층 돌파·하루 끝 귀환·선물 조각은 core에서 이미 그리드에 들어가 있다
-    const gridEvents = ['layerClear', 'dayReturn', 'freePiece', 'injured', 'bossFloorClear', 'combine'];
+    const gridEvents = ['layerClear', 'dayReturn', 'freePiece', 'injured', 'bossFloorClear', 'combine', 'growth'];
     if (events.some((e) => gridEvents.includes(e.type))) this.gridView.refresh();
     this.laneView.sync();
     this.abyssView.sync();
@@ -240,7 +239,7 @@ export class GameScene extends Phaser.Scene {
     const slot =
       s.phase === 'night' ? '밤' : s.phase === 'diary' ? '새벽' : s.phase === 'dayStart' ? SLOT_NAMES.morning : SLOT_NAMES[w.slotId];
     const tag = s.bossActive ? ' 역류' : w.inBossPrep ? ' 역류 준비' : s.pendingBackflow ? ' · 역류 예약' : w.paused ? ' (정지)' : '';
-    const phase = `${this.age}살 · ${s.day}일째 · ${slot}${tag}`;
+    const phase = `${s.age}살 · ${s.day}일째 · ${slot}${tag}`;
     if (this.phaseText.text !== phase) this.phaseText.setText(phase).setColor(s.shadowLocked ? '#ff9e9e' : '#e8e8e8');
     const weather = `마음 날씨 ${s.weather}`;
     if (this.weatherText.text !== weather) this.weatherText.setText(weather);
@@ -279,7 +278,6 @@ export class GameScene extends Phaser.Scene {
     this.fill(r, COLOR.hud);
     const midY = r.y + r.h / 2;
     // 일차·날씨는 M5/M4에서 core 상태로 연결. 시간대 칸은 M3 임시로 "웨이브 n"
-    this.age = data.days.age;
     this.phaseText = text(this, 8, midY, '', { fontSize: '11px' }).setOrigin(0, 0.5);
     this.joyText = text(this, VIEW_W / 2 + 30, midY, `기쁨 ${data.balance.start.joy}`, { fontSize: '12px', color: '#f2c94c' }).setOrigin(0.5);
     this.weatherText = text(this, VIEW_W - 8, midY, '', { fontSize: '12px', color: '#9fb4e0' }).setOrigin(1, 0.5);

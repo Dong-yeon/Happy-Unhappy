@@ -120,7 +120,7 @@ function checkCombat(c: Checker, v: unknown, path: string, extra: string[] = [])
 
 function checkBalance(c: Checker, v: unknown): { maxTier?: number; lifeLengthDays?: number } {
   const p = 'balance';
-  const b = c.obj(v, p, ['version', 'start', 'grid', 'lane', 'happy', 'wave', 'abyss', 'hero', 'night', 'shadow', 'days', 'diary']);
+  const b = c.obj(v, p, ['version', 'start', 'grid', 'lane', 'happy', 'wave', 'abyss', 'hero', 'growth', 'night', 'shadow', 'days', 'diary']);
   if (!b) return {};
   if (b.version !== 2) c.fail(`${p}.version`, `2여야 함 (현재 ${String(b.version)})`);
   c.nums(b.start, `${p}.start`, ['joy', 'shadow'], { min: 0 });
@@ -191,6 +191,9 @@ function checkBalance(c: Checker, v: unknown): { maxTier?: number; lifeLengthDay
 
   // 영웅 (v0.9, D-029)
   c.nums(b.hero, `${p}.hero`, ['shineMult'], { min: 0 });
+  // 자라는 날 (v0.10, D-030)
+  const gr = c.nums(b.growth, `${p}.growth`, ['growthPerLegend', 'memoryBonus', 'traitPerStack', 'traitMaxStacks', 'ageWorryMult'], { min: 0 });
+  if (gr) c.num(gr.traitMaxStacks, `${p}.growth.traitMaxStacks`, { int: true, min: 0 });
 
   // 밤 (v0.8, D-027): abyss.unhappyStallShadowPerSec → night.stallShadowPerSec
   const n = c.nums(b.night, `${p}.night`, ['nightSeconds', 'stallShadowPerSec'], { min: 0 });
@@ -410,12 +413,18 @@ function checkEvents(c: Checker, v: unknown, chainIds: string[], maxTier: number
 }
 
 function checkDays(c: Checker, v: unknown, eventIds: EventIds, lifeLengthDays: number | undefined): void {
-  const d = c.obj(v, 'days', ['world', 'age', 'fixed', 'dailyEventChance', 'dailyEventCooldownDays', 'quietDays']);
+  const d = c.obj(v, 'days', ['world', 'age', 'fixed', 'dailyEventChance', 'dailyEventCooldownDays', 'quietDays', 'growthDays']);
   if (!d) return;
   c.num(d.age, 'days.age', { int: true, min: 0 });
   c.num(d.dailyEventChance, 'days.dailyEventChance', { min: 0, max: 1 });
   c.num(d.dailyEventCooldownDays, 'days.dailyEventCooldownDays', { int: true, min: 0 });
   c.num(d.quietDays, 'days.quietDays', { int: true, min: 0 });
+  // 자라는 날 (§5.14-2): 2 ~ lifeLengthDays 오름차순 (1일차는 자랄 것이 없다. 일생 끝 자라기는 따로)
+  const gd = c.arr(d.growthDays, 'days.growthDays') ?? [];
+  gd.forEach((x, i) => c.num(x, `days.growthDays[${i}]`, { int: true, min: 2, max: lifeLengthDays }));
+  for (let i = 1; i < gd.length; i++) {
+    if (typeof gd[i] === 'number' && typeof gd[i - 1] === 'number' && (gd[i] as number) <= (gd[i - 1] as number)) c.fail('days.growthDays', '오름차순이어야 함');
+  }
   const fixed = c.map(d.fixed, 'days.fixed');
   if (!fixed) return;
   for (const [dayKey, id] of Object.entries(fixed)) {
@@ -431,21 +440,27 @@ function checkDays(c: Checker, v: unknown, eventIds: EventIds, lifeLengthDays: n
 }
 
 function checkDiary(c: Checker, v: unknown): void {
-  const d = c.obj(v, 'diary', ['result', 'night', 'forgottenDay']);
+  const d = c.obj(v, 'diary', ['result', 'night', 'growth', 'forgottenDay']);
   if (!d) return;
   const r = c.obj(d.result, 'diary.result', ['backflow', 'manySunk', 'default']);
   if (r) for (const k of ['backflow', 'manySunk', 'default']) if (k in r) c.strList(r[k], `diary.result.${k}`);
   const n = c.obj(d.night, 'diary.night', ['layerCleared', 'tried', 'none']);
   if (n) for (const k of ['layerCleared', 'tried', 'none']) if (k in n) c.strList(n[k], `diary.night.${k}`);
+  c.strList(d.growth, 'diary.growth');
   c.str(d.forgottenDay, 'diary.forgottenDay');
 }
 
 function checkEndings(c: Checker, v: unknown): void {
-  const e = c.obj(v, 'endings', ['weights', 'thresholds', 'balanceRatio', 'endings']);
+  const e = c.obj(v, 'endings', ['totalThreshold', 'shareBand', 'hiddenMinMemories', 'endings']);
   if (!e) return;
-  c.nums(e.weights, 'endings.weights', ['wUpTier', 'wDefeat', 'wJoy', 'wSunk', 'wDownTier', 'wLayer', 'wPurified'], { min: 0 });
-  c.nums(e.thresholds, 'endings.thresholds', ['happy', 'unhappy'], { min: 0 });
-  c.num(e.balanceRatio, 'endings.balanceRatio', { min: 0, max: 1 });
+  c.num(e.totalThreshold, 'endings.totalThreshold', { min: 0 });
+  c.num(e.hiddenMinMemories, 'endings.hiddenMinMemories', { int: true, min: 0 });
+  const band = c.arr(e.shareBand, 'endings.shareBand');
+  if (band) {
+    if (band.length !== 2) c.fail('endings.shareBand', '[하한, 상한] 두 값이어야 함');
+    band.forEach((x, i) => c.num(x, `endings.shareBand[${i}]`, { min: 0, max: 1 }));
+    if (typeof band[0] === 'number' && typeof band[1] === 'number' && band[0] > band[1]) c.fail('endings.shareBand', '하한 ≤ 상한이어야 함');
+  }
   const ids = ['hidden', 'solid', 'mask', 'quiet', 'rainy'];
   const list = c.obj(e.endings, 'endings.endings', ids);
   if (!list) return;
@@ -465,10 +480,11 @@ function checkRecipes(c: Checker, v: unknown, chainIds: string[]): void {
   const ids: (string | undefined)[] = [];
   list.forEach((it, i) => {
     const p = `recipes.recipes[${i}]`;
-    const o = c.obj(it, p, ['id', 'name', 'inputs', 'legend']);
+    const o = c.obj(it, p, ['id', 'name', 'kind', 'inputs', 'legend']);
     if (!o) return;
     ids.push(c.str(o.id, `${p}.id`));
     c.str(o.name, `${p}.name`);
+    if (o.kind !== 'happy' && o.kind !== 'purified') c.fail(`${p}.kind`, 'happy 또는 purified여야 함');
     const inputs = c.arr(o.inputs, `${p}.inputs`);
     if (inputs && inputs.length !== 2) c.fail(`${p}.inputs`, '재료는 2개여야 함');
     inputs?.forEach((inp, j) => {

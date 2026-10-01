@@ -51,6 +51,7 @@ import {
   type Unit,
 } from './lane';
 import { judgeEnding, type EndingResult } from './ending';
+import { applyGrowth, emptyGrowth, kindOf, traitMult, type GrowthResult, type GrowthState, type Traits } from './growth';
 import { LEGEND_TIER, findRecipe, isHeroic } from './recipes';
 import type { SeededRng } from './rng';
 import type { SaveGame } from './save';
@@ -145,6 +146,8 @@ export type CoreEvent =
   | { type: 'bossFloorClear'; layer: number; returns: LayerReturn[] }
   | { type: 'dayEnd'; day: number; entry: DiaryEntry; stats: DayStats }
   | { type: 'dayStart'; day: number; event: DayEvent }
+  /** 자라기 (§5.14-2): 5·10일 dayStart 앞 / 일생 끝 lifeEnd 앞 */
+  | { type: 'growth'; result: GrowthResult }
   | { type: 'lifeEnd' };
 
 /** 즉시 소환이면 unit, 낮의 손거울(맡기기)이면 unit = null·reserved = 맡긴 조각 */
@@ -226,6 +229,15 @@ export class GameState {
   /** 결말 (14일째 nextDay → lifeEnd에서 1회 판정, §5.8-3) */
   ending: EndingResult | null = null;
 
+  // ── 자라기 (§5.14) ──
+  readonly growth: GrowthState = emptyGrowth();
+  /** `${체인}:${종류}` → 스택 */
+  readonly traits: Traits = {};
+  /** 아이 나이: days.age + 자란 횟수 */
+  age: number;
+  /** 자라기마다의 결과 (리포트·metrics·연출) */
+  readonly growthLog: GrowthResult[] = [];
+
   /** 저장(save.ts)이 읽고 쓴다 */
   nextUnitId = 1;
   /** 아직 틱으로 처리하지 않은 시간 */
@@ -242,6 +254,7 @@ export class GameState {
     readonly seed = 0,
   ) {
     const b = data.balance;
+    this.age = data.days.age;
     this.joy = b.start.joy;
     this.shadow = clampShadow(b.start.shadow, b.shadow.shadowMax);
     this.grid = createGrid(size, b.grid.maxTier);
@@ -450,7 +463,7 @@ export class GameState {
       } else {
         const worry = this.data.monsters.worry;
         lane.spawnWorry(
-          { hp: this.wave.hp, speed: worry.speed, atk: worry.atk, atkInterval: worry.atkInterval, joyReward: worry.joyReward },
+          { hp: this.worryHp, speed: worry.speed, atk: worry.atk, atkInterval: worry.atkInterval, joyReward: worry.joyReward },
           x,
           out,
         );
@@ -690,7 +703,7 @@ export class GameState {
     }
     const units: Unit[] = [];
     for (const p of this.nightParty.splice(0)) {
-      const u = this.abyss.addUnit(this.nextUnitId++, 'unhappy', p.chain, p.tier, this.pieceStats(p));
+      const u = this.abyss.addUnit(this.nextUnitId++, 'unhappy', p.chain, p.tier, this.pieceStats(p, 'abyss'));
       if (u) units.push(this.markHeroic(u, p));
     }
     this.wave.phase = 'idle';
@@ -733,7 +746,7 @@ export class GameState {
     out.push({ type: 'dayReturn', side: 'unhappy', returns: back.map((u) => this.returnPiece(u.id, u.x, u.y, this.unitPiece(u))) });
     this.dayStats.joyEnd = this.joy;
     const prev = this.diary.length ? this.diary[this.diary.length - 1] : null;
-    const entry = writeDiary(this.data, this.day, this.today, this.dayStats, this.rng, prev);
+    const entry = writeDiary(this.data, this.day, this.today, this.dayStats, this.rng, prev, this.isGrowthDay(this.day));
     this.diary.push(entry);
     this.lastDayStats = this.dayStats;
     this.dayStats = emptyDayStats(this.joy, this.data.balance.grid.maxTier);
@@ -741,22 +754,61 @@ export class GameState {
     out.push({ type: 'dayEnd', day: this.day, entry, stats: this.lastDayStats });
   }
 
-  /** [다음 날]. 14일째 일기 뒤면 일생 끝 + 결말 판정 */
+  /** [다음 날]. 14일째 일기 뒤면 마지막 자라기 + 결말 판정. 자라는 날이면 이벤트 카드보다 먼저 자라기 (§5.14-2) */
   nextDay(): boolean {
     if (this.phase !== 'diary') return false;
     if (this.day >= this.lifeLengthDays) {
+      this.grow();
       this.enterLifeEnd();
       return true;
     }
     this.day += 1;
+    if (this.isGrowthDay(this.day)) this.grow();
     this.today = this.resolveToday();
     this.phase = 'dayStart';
     this.pending.push({ type: 'dayStart', day: this.day, event: this.today });
     return true;
   }
 
+  /** 5·10일 (days.growthDays). 일생 끝 자라기는 별도 */
+  isGrowthDay(day: number): boolean {
+    return this.data.days.growthDays.includes(day);
+  }
+
+  /** 걱정 HP = 일차 HP × ageWorryMult^(자란 횟수) (§5.14-2). 역류 보스는 bossHp 그대로 */
+  get worryHp(): number {
+    return this.wave.hp * Math.pow(this.data.balance.growth.ageWorryMult, this.growth.branches.length);
+  }
+
+  /**
+   * 자라기 (즉시, 레인·맡긴 추억이 빈 경계에서만 호출):
+   * 그리드(칸 순) + 귀환 대기열(순서대로)의 전설 전부를 소진 (쉬는 전설 포함). 영웅·1~2단계·와일드카드는 남는다.
+   * 성장치·기억·특성·갈래 반영, 나이 +1. 빈 칸에 대기열을 채운다.
+   */
+  grow(): GrowthResult {
+    const recipes = this.data.recipes.recipes;
+    const consumed: GrowthResult['consumed'] = [];
+    this.grid.cells.forEach((p, i) => {
+      if (!p || p.legend === undefined) return;
+      consumed.push({ recipe: p.legend, kind: kindOf(recipes, p.legend), chain: p.chain, cell: i });
+      this.grid.cells[i] = null;
+    });
+    const keep = this.returnQueue.filter((p) => {
+      if (p.legend === undefined) return true;
+      consumed.push({ recipe: p.legend, kind: kindOf(recipes, p.legend), chain: p.chain, cell: null });
+      return false;
+    });
+    this.returnQueue.splice(0, this.returnQueue.length, ...keep);
+    this.age += 1;
+    const result = applyGrowth(this.growth, this.traits, consumed, this.data.balance.growth, this.day, this.age);
+    this.growthLog.push(result);
+    this.flushReturnQueue();
+    this.pending.push({ type: 'growth', result });
+    return result;
+  }
+
   private enterLifeEnd(): void {
-    this.ending = judgeEnding(this.stats, this.flags, this.data.endings);
+    this.ending = judgeEnding(this.growth, this.data.endings);
     this.phase = 'lifeEnd';
     this.pending.push({ type: 'lifeEnd' });
   }
@@ -803,6 +855,10 @@ export class GameState {
     refill(g.bossLog, save.bossLog);
     refill(g.summonLog, save.summonLog);
     g.ending = copy(save.ending);
+    Object.assign(g.growth, copy(save.growth));
+    Object.assign(g.traits, copy(save.traits));
+    g.age = save.age;
+    refill(g.growthLog, save.growthLog);
     g.dayStats = emptyDayStats(g.joy, data.balance.grid.maxTier);
     g.pending = [];
     rng.setState(save.rngState);
@@ -958,7 +1014,7 @@ export class GameState {
       this.pending.push({ type: 'reserve', cell, piece });
       return { ok: true, unit: null, reserved: piece };
     }
-    const unit = this.markHeroic(this.laneOf(side).addUnit(this.nextUnitId++, side, piece.chain, piece.tier, this.pieceStats(piece))!, piece);
+    const unit = this.markHeroic(this.laneOf(side).addUnit(this.nextUnitId++, side, piece.chain, piece.tier, this.pieceStats(piece, side === 'happy' ? 'defense' : 'abyss'))!, piece);
     this.grid.cells[cell] = null;
     this.flushReturnQueue();
     this.recordSummon(piece, cell, side, false);
@@ -992,16 +1048,19 @@ export class GameState {
 
   /** 1~(maxTier-1)단계 = 공용 추억 정령, maxTier = 체인 영웅 */
   /** 조각의 유닛 능력치: 전설 = 조합표 능력치 / 빛나는 영웅 = 영웅 × shineMult (hp·atk) / 그 외 unitStats (§5.13) */
-  pieceStats(p: Pick<Piece, 'chain' | 'tier' | 'shining' | 'legend'>): CombatStats {
+  /** lane이 있으면 그 레인의 특성 배수 (happy 특성 = 낮 방어, purified 특성 = 밤 심연, 해당 체인만, §5.14-2) */
+  pieceStats(p: Pick<Piece, 'chain' | 'tier' | 'shining' | 'legend'>, lane?: 'defense' | 'abyss'): CombatStats {
+    const t = lane ? traitMult(this.traits, p.chain, lane, this.data.balance.growth) : 1;
+    const withTrait = (s: CombatStats): CombatStats => (t === 1 ? s : { ...s, hp: s.hp * t, atk: s.atk * t });
     if (p.legend !== undefined) {
       const r = this.data.recipes.recipes.find((x) => x.id === p.legend);
       if (!r) throw new Error(`알 수 없는 전설: ${p.legend}`);
-      return r.legend;
+      return withTrait(r.legend);
     }
     const s = this.unitStats(p.chain, p.tier);
-    if (!p.shining) return s;
+    if (!p.shining) return withTrait(s);
     const m = this.data.balance.hero.shineMult;
-    return { ...s, hp: s.hp * m, atk: s.atk * m };
+    return withTrait({ ...s, hp: s.hp * m, atk: s.atk * m });
   }
 
   /** 유닛에 조각의 빛남·전설 표시를 옮긴다 (값이 있을 때만) */
@@ -1127,7 +1186,7 @@ export class GameState {
     this.debugEndNight();
   }
 
-  /** 즉시 결말 판정: 현재 stats·flags로 판정 → lifeEnd (레인은 비움) */
+  /** 즉시 결말 판정: 지금까지의 성장치로 판정 → lifeEnd (레인은 비움, 자라기는 하지 않음) */
   debugJudgeEnding(): void {
     if (this.phase === 'lifeEnd') return;
     this.clearLanes();

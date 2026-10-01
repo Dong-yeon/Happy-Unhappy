@@ -106,6 +106,8 @@ const hoarder: Policy = {
  * v0.9 (§5.13-7, D-029): 조합 가능하면 즉시 조합 (머지보다 먼저). 쉬는 조각은 보내지 않는다.
  * 낮: 영웅·전설은 창문 우선, 맡기기 후보는 빛나지 않은 영웅 → abyssMinTier 이상 비영웅
  * 밤: 머지·조합 우선 → 빛나지 않고 쉬지 않는 영웅을 손거울로 (정화해서 빛나게) → 그다음 abyssMinTier ≤ 단계 < maxTier
+ * v0.10 (§5.14-5): 조합은 행복·정화 모두. 빛나지 않은 영웅이 그 체인에 1개 이하이면 밤에 보내지 않는다 (낮 맡기기 포함)
+ *   — 행복한 추억 조합 재료로 남긴다.
  */
 const balanced: Policy = {
   name: 'balanced',
@@ -116,10 +118,13 @@ const balanced: Policy = {
     const maxTier = state.grid.maxTier;
     const belowHero = maxTier - 1;
     const unshinedHero = (x: Piece) => x.tier === maxTier && !x.legend && !x.shining;
+    const unshinedOf = (chain: string) => state.grid.cells.filter((c) => c && c.chain === chain && unshinedHero(c)).length;
+    // 밤(맡기기 포함)에 보낼 빛나지 않은 영웅: 같은 체인에 2개 이상일 때만
+    const spareUnshined = (x: Piece) => unshinedHero(x) && unshinedOf(x.chain) >= 2;
     if (state.phase === 'night') {
       return (
         bestMergeOrCombine(state) ??
-        summonUnhappy(state, bestCell(state, unshinedHero)) ??
+        summonUnhappy(state, bestCell(state, spareUnshined)) ??
         summonUnhappy(state, bestSummonCell(state, p.abyssMinTier, belowHero))
       );
     }
@@ -140,7 +145,7 @@ const balanced: Policy = {
     if (merge) return merge;
     if (safe) {
       const down =
-        summonUnhappy(state, bestCell(state, unshinedHero)) ?? summonUnhappy(state, bestSummonCell(state, p.abyssMinTier, belowHero));
+        summonUnhappy(state, bestCell(state, spareUnshined)) ?? summonUnhappy(state, bestSummonCell(state, p.abyssMinTier, belowHero));
       if (down) return down;
     }
     const proactive = summonHappy(state, bestSummonCell(state, p.proactiveSummonTier));

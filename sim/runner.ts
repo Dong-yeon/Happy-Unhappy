@@ -3,6 +3,7 @@
 // 하루 시작 카드는 봇이 닫고(이정표면 정책의 선택), 그림일기 뒤에는 바로 다음 날로 넘어간다.
 // --saveRoundTrip (§5.8-4): 경계(dayStart·diary)마다 serializeGame → JSON → fromSave로 상태를 갈아끼운다. 봇 rng는 그대로.
 import type { EndingResult } from '../src/core/ending';
+import type { Branch } from '../src/core/growth';
 import { GameState, type BossRecord } from '../src/core/game';
 import { FIXED_DT } from '../src/core/lane';
 import { mulberry32 } from '../src/core/rng';
@@ -91,6 +92,10 @@ export interface RunResult {
   playTime: number;
   /** 결말 (14일을 다 살았을 때). 없으면 null */
   ending: EndingResult | null;
+  /** 자라기마다 (§5.14-5): 소진한 행복/정화 전설 수·기억·갈래 */
+  growths: { day: number; happy: number; purified: number; pairs: number; branch: Branch }[];
+  /** 일생 끝(또는 중단 시점)의 특성 스택 */
+  traits: Record<string, number>;
 }
 
 /** 봇 rng는 게임 rng와 다른 수열 (같은 시드에서도 서로 간섭하지 않게) */
@@ -283,6 +288,8 @@ export function runLife(data: GameData, cfg: SimConfig, policy: Policy, opt: Run
     bossFloorsReached: st.bossFloorsReached,
     bossFloorsCleared: st.bossFloorsCleared,
     wildcardsGained: st.wildcardsGained,
+    growths: state.growthLog.map((g) => ({ day: g.day, happy: g.happyCount, purified: g.purifiedCount, pairs: g.pairs, branch: g.branch })),
+    traits: { ...state.traits },
   };
   return { result, state };
 }

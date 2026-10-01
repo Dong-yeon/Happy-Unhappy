@@ -197,29 +197,39 @@ describe('validateGameData', () => {
     expectIssue(issues, 'endings.endings.hidden', /필수 키/);
   });
 
-  it('M6: endings.thresholds.{happy,unhappy}·balanceRatio (옛 threshold·balanceGap은 알 수 없는 키)', () => {
+  it('M8.7: endings.totalThreshold·shareBand·hiddenMinMemories (옛 weights·thresholds·balanceRatio는 알 수 없는 키)', () => {
     const issues = issuesAfter((d) => {
       const e = d.endings as Record<string, unknown>;
-      e.threshold = 100;
-      e.balanceGap = 20;
-      delete (e.thresholds as Record<string, unknown>).unhappy;
-      e.balanceRatio = 1.5;
+      e.weights = {};
+      e.thresholds = {};
+      e.balanceRatio = 0.2;
+      delete e.hiddenMinMemories;
+      e.shareBand = [0.8, 0.2];
+      e.totalThreshold = -1;
     });
-    expectIssue(issues, 'endings.threshold', /알 수 없는 키/);
-    expectIssue(issues, 'endings.balanceGap', /알 수 없는 키/);
-    expectIssue(issues, 'endings.thresholds.unhappy', /필수 키/);
-    expectIssue(issues, 'endings.balanceRatio', /1 이하/);
+    expectIssue(issues, 'endings.weights', /알 수 없는 키/);
+    expectIssue(issues, 'endings.thresholds', /알 수 없는 키/);
+    expectIssue(issues, 'endings.balanceRatio', /알 수 없는 키/);
+    expectIssue(issues, 'endings.hiddenMinMemories', /필수 키/);
+    expectIssue(issues, 'endings.shareBand', /하한 ≤ 상한/);
+    expectIssue(issues, 'endings.totalThreshold', /이상/);
+    expectIssue(issuesAfter((d) => ((d.endings as Record<string, unknown>).shareBand = [0.3])), 'endings.shareBand', /두 값/);
   });
 
-  it('M6.5: days.quietDays 필수, balance.days.morningJoyFloor는 0 이상 정수, endings.weights.wSunk 필수', () => {
+  it('M8.7: days.growthDays (2..lifeLengthDays 오름차순 정수), balance.growth 필수, recipes kind', () => {
+    expectIssue(issuesAfter((d) => (d.days.growthDays = [10, 5])), 'days.growthDays', /.+/);
+    expectIssue(issuesAfter((d) => (d.days.growthDays = [5, 99])), 'days.growthDays[1]', /이하/);
+    expectIssue(issuesAfter((d) => delete (d.balance as Record<string, unknown>).growth), 'balance.growth', /필수 키/);
+    expectIssue(issuesAfter((d) => ((d.recipes.recipes[0] as Record<string, unknown>).kind = 'sad')), 'recipes.recipes[0].kind', /.+/);
+  });
+
+  it('M6.5: days.quietDays 필수, balance.days.morningJoyFloor는 0 이상 정수', () => {
     const issues = issuesAfter((d) => {
       delete (d.days as Record<string, unknown>).quietDays;
       d.balance.days.morningJoyFloor = 2.5;
-      delete (d.endings.weights as Record<string, unknown>).wSunk;
     });
     expectIssue(issues, 'days.quietDays', /필수 키/);
     expectIssue(issues, 'balance.days.morningJoyFloor', /정수/);
-    expectIssue(issues, 'endings.weights.wSunk', /필수 키/);
     expectIssue(
       issuesAfter((d) => (d.balance.days.morningJoyFloor = -1)),
       'balance.days.morningJoyFloor',

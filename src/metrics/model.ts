@@ -3,6 +3,7 @@
 
 import type { DayStats } from '../core/day';
 import type { SummonRecord } from '../core/game';
+import type { GrowthResult } from '../core/growth';
 import type { GameStats } from '../core/stats';
 
 export const METRICS_VERSION = 2;
@@ -60,6 +61,8 @@ export interface LifeMetrics {
   ending: { id: string; happy: number; unhappy: number; breakdown: Record<string, number> } | null;
   endingAgree: boolean | null;
   stats: GameStats | null;
+  /** 자라기마다 소진 목록·갈래·특성 (§5.14-6). v0.10 이전 기록에는 없다 */
+  growths?: GrowthResult[];
 }
 
 export interface SessionRecord {

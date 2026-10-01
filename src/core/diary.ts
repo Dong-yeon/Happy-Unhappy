@@ -1,5 +1,5 @@
 // 그림일기 (스펙 §5.4, §5.7, §5.11-6). Phaser 의존 없음.
-// 문장 = 이벤트 문장 + 낮 결과 문장 + 밤 문장.
+// 문장 = 이벤트 문장 + (자라는 날 문장) + 낮 결과 문장 + 밤 문장. 자라는 날 문장은 growthDays에만 (§5.14-2).
 //   낮 결과 (첫 번째 일치): 1. 역류가 있었던 날 → backflow  2. 가라앉음 ≥ diarySinkThreshold → manySunk  3. default
 //   밤 (첫 번째 일치): 1. 층 돌파 → layerCleared  2. 내려갔지만 돌파 못 함 → tried  3. 아무도 내려가지 않음 → none
 // 같은 계열 안에서는 rng, 직전 날과 같은 문장은 피한다.
@@ -21,6 +21,8 @@ export interface DiaryEntry {
   category: DiaryCategory;
   nightLine: string;
   nightCategory: NightCategory;
+  /** 자라는 날만 (결과 문장 앞) */
+  growthLine?: string;
 }
 
 export function diaryCategory(stats: DayStats, sinkThreshold: number): DiaryCategory {
@@ -56,20 +58,24 @@ export function writeDiary(
   stats: DayStats,
   rng: Rng,
   prev: Pick<DiaryEntry, 'resultLine' | 'nightLine'> | null,
+  growthDay = false,
 ): DiaryEntry {
   const category = diaryCategory(stats, data.balance.diary.diarySinkThreshold);
   const eventLine = eventLineOf(data, e, rng);
+  const growthLine = growthDay ? data.diary.growth[randInt(rng, data.diary.growth.length)] : undefined;
   const resultLine = pickAvoiding(rng, data.diary.result[category], prev?.resultLine ?? null);
   const nCat = nightCategory(stats);
   const nightLine = pickAvoiding(rng, data.diary.night[nCat], prev?.nightLine ?? null);
-  return {
+  const entry: DiaryEntry = {
     day,
     eventTitle: e.title,
-    line: `${eventLine} ${resultLine} ${nightLine}`,
+    line: growthLine ? `${eventLine} ${growthLine} ${resultLine} ${nightLine}` : `${eventLine} ${resultLine} ${nightLine}`,
     eventLine,
     resultLine,
     category,
     nightLine,
     nightCategory: nCat,
   };
+  if (growthLine) entry.growthLine = growthLine;
+  return entry;
 }

@@ -6,11 +6,14 @@ import { isWildcard, type Piece } from './grid';
 /** 전설 추억의 단계 (영웅 = maxTier 3 위) */
 export const LEGEND_TIER = 4;
 
-/** 조각이 재료 조건과 맞는지: 체인·단계 일치, shining 조건이 있으면 빛나는 영웅. 와일드카드·전설은 재료가 될 수 없다 */
+/** 조각이 재료 조건과 맞는지: 체인·단계 일치 + shining 조건. 와일드카드·전설은 재료가 될 수 없다 */
 function matches(p: Piece, input: Recipe['inputs'][number]): boolean {
   if (isWildcard(p) || p.legend) return false;
   if (p.chain !== input.chain || p.tier !== input.tier) return false;
-  return !input.shining || p.shining === true;
+  // shining: true = 빛나는 영웅만 / false = 빛나지 않아야 함 / 생략 = 무관 (§5.14-1)
+  if (input.shining === true) return p.shining === true;
+  if (input.shining === false) return !p.shining;
+  return true;
 }
 
 /** (a, b) 순서 무관으로 일치하는 첫 조합 (조합표 순서). 쉬는 재료도 허용 (§5.13-2) */

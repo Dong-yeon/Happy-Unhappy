@@ -114,7 +114,7 @@ describe('부상 (§5.13-2)', () => {
     const g = fresh();
     g.wave.paused = true;
     const r = g.summon(g.debugGrant(DOG, 4, { legend: 'park_walk' })!, 'happy');
-    expect(unitOf(r)).toMatchObject({ legend: 'park_walk', hp: base.recipes.recipes[1].legend.hp });
+    expect(unitOf(r)).toMatchObject({ legend: 'park_walk', hp: base.recipes.recipes.find((x) => x.id === 'park_walk')!.legend.hp });
     unitOf(r).hp = 0;
     const [inj] = ofType(ticks(g, 1), 'injured');
     expect(inj.ret.piece).toMatchObject({ tier: 4, legend: 'park_walk', restUntil: 'dawn' });
@@ -242,12 +242,40 @@ describe('조합 (§5.13-5)', () => {
     }
   });
 
-  it('shining 조건: 빛나지 않은 영웅이면 조합 안 됨 → 교환', () => {
+  it('shining: true 조건: 빛나지 않은 영웅이면 정화된 추억 조합 안 됨 → 교환', () => {
     const g = grid();
     g.grid.cells[0] = g.newPiece(DOG, 3);
-    g.grid.cells[1] = g.newPiece(BLANKET, 2);
-    expect(g.combinePreview(0, 1)).toBeNull();
+    g.grid.cells[1] = g.newPiece(BLANKET, 3);
+    expect(g.combinePreview(0, 1)).toBeNull(); // not_alone_night는 둘 다 빛나야 함
     expect(g.drop(0, 1)).toBe('swap');
+  });
+
+  it('shining: false 조건 (§5.14-1): 빛나지 않은 영웅 → 행복한 추억, 빛나는 영웅 → 정화된 추억', () => {
+    const g = grid();
+    const kindOf = (id: string | undefined) => R.find((x) => x.id === id)?.kind;
+    // 강아지 영웅 + 담요 2단계
+    const plainDog = g.newPiece(DOG, 3);
+    const shinyDog = g.newPiece(DOG, 3, { shining: true });
+    const blanket2 = g.newPiece(BLANKET, 2);
+    expect(findRecipe(R, plainDog, blanket2)?.id).toBe('sunny_picnic');
+    expect(findRecipe(R, shinyDog, blanket2)?.id).toBe('park_walk');
+    expect(kindOf('sunny_picnic')).toBe('happy');
+    expect(kindOf('park_walk')).toBe('purified');
+    // 담요 영웅 + 강아지 2단계
+    const plainBlanket = g.newPiece(BLANKET, 3);
+    const shinyBlanket = g.newPiece(BLANKET, 3, { shining: true });
+    const dog2 = g.newPiece(DOG, 2);
+    expect(findRecipe(R, plainBlanket, dog2)?.id).toBe('nap_friend');
+    expect(findRecipe(R, shinyBlanket, dog2)?.id).toBe('cozy_nap');
+    // 빛나는 영웅은 shining: false 재료가 될 수 없다
+    const onlyHappy = R.filter((x) => x.kind === 'happy');
+    expect(findRecipe(onlyHappy, shinyDog, blanket2)).toBeNull();
+    expect(findRecipe(onlyHappy, shinyBlanket, dog2)).toBeNull();
+    // 실제 drop
+    g.grid.cells[0] = plainDog;
+    g.grid.cells[1] = blanket2;
+    expect(g.drop(0, 1)).toBe('combine');
+    expect(g.grid.cells[1]).toMatchObject({ tier: 4, legend: 'sunny_picnic', chain: DOG });
   });
 
   it('쉬는 재료 허용, 결과 전설은 쉬지 않는 새 조각', () => {
@@ -263,7 +291,8 @@ describe('조합 (§5.13-5)', () => {
 
   it('우선순위: 여러 조합이 맞으면 조합표 순서상 앞의 것 (findRecipe)', () => {
     const g = grid();
-    const recipes = [R[1], { ...R[1], id: 'dup', name: '중복' }];
+    const park = R.find((x) => x.id === 'park_walk')!;
+    const recipes = [park, { ...park, id: 'dup', name: '중복' }];
     const a = g.newPiece(DOG, 3, { shining: true });
     const b = g.newPiece(BLANKET, 2);
     expect(findRecipe(recipes, a, b)?.id).toBe('park_walk');
@@ -340,6 +369,8 @@ describe('저장·결정성 (새 Piece 필드 포함)', () => {
     const r = runLife(base, simJson as SimConfig, POLICIES.balanced, { seed: 4, grid: SIZE }).result;
     expect(r.shiningMade).toBeGreaterThan(0);
     expect(r.legendsMade).toBeGreaterThan(0);
-    expect(r.injuriesDay + r.injuriesNight).toBeGreaterThan(0);
+    // v0.10: 특성으로 유닛이 강해져 부상이 드물다 → 부상은 다른 시드로 확인
+    const r8 = runLife(base, simJson as SimConfig, POLICIES.balanced, { seed: 8, grid: SIZE }).result;
+    expect(r8.injuriesDay + r8.injuriesNight).toBeGreaterThan(0);
   });
 });

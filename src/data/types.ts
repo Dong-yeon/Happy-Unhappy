@@ -61,6 +61,18 @@ export interface Balance {
   };
   /** 영웅 (§5.13-3): 빛나는 영웅의 hp·atk 배수 */
   hero: { shineMult: number };
+  /** 자라는 날 (§5.14-4, D-030) */
+  growth: {
+    /** 양분으로 준 전설 하나당 성장치 */
+    growthPerLegend: number;
+    /** 기억(행복 1 + 정화 1 짝) 하나당 양쪽 성장치 보너스 */
+    memoryBonus: number;
+    /** 특성 스택당 hp·atk 배수 증가 */
+    traitPerStack: number;
+    traitMaxStacks: number;
+    /** 자란 횟수만큼 걱정 HP × ageWorryMult^n */
+    ageWorryMult: number;
+  };
   /** 밤 (§5.11-7, D-027) */
   night: {
     /** 밤 길이(초, 달이 질 때까지) */
@@ -180,6 +192,8 @@ export interface Days {
   dailyEventCooldownDays: number;
   /** 1 ~ quietDays일차는 고정 이벤트 외에 일상 이벤트 없음 (D-024) */
   quietDays: number;
+  /** 자라는 날 (§5.14-2): 이 일차 dayStart (+ 일생 끝 자동 1회) */
+  growthDays: number[];
 }
 
 export interface Diary {
@@ -187,18 +201,21 @@ export interface Diary {
   result: { backflow: string[]; manySunk: string[]; default: string[] };
   /** 밤 문장 (§5.11-6) */
   night: { layerCleared: string[]; tried: string[]; none: string[] };
+  /** 자라는 날 문장 (§5.14-2) */
+  growth: string[];
   forgottenDay: string;
 }
 
 export type EndingId = 'hidden' | 'solid' | 'mask' | 'quiet' | 'rainy';
 
+/** 결말 (§5.14-3, D-030): 양분으로 준 추억의 총량·비율·갈래로 판정 */
 export interface Endings {
-  /** wSunk: Happy 점수 감점 (가라앉은 걱정 1마리당, D-024) */
-  weights: { wUpTier: number; wDefeat: number; wJoy: number; wSunk: number; wDownTier: number; wLayer: number; wPurified: number };
-  /** Tʜ·Tᴜ (v0.6, D-023) */
-  thresholds: { happy: number; unhappy: number };
-  /** 히든 균형: |happy − unhappy| ≤ balanceRatio × max(happy, unhappy) */
-  balanceRatio: number;
+  /** total(= growth.happy + growth.unhappy) 미만이면 비 오는 어른 */
+  totalThreshold: number;
+  /** 행복한 추억 비율이 이 범위면 단단한 어른 (위 = 웃는 가면, 아래 = 조용한) */
+  shareBand: [number, number];
+  /** 히든: 자라기 갈래가 모두 together + 기억이 이 수 이상 */
+  hiddenMinMemories: number;
   endings: Record<EndingId, { name: string; title: string; desc: string }>;
 }
 
@@ -206,13 +223,17 @@ export interface Endings {
 export interface RecipeInput {
   chain: string;
   tier: number;
-  /** true면 빛나는 영웅만 */
+  /** true = 빛나는 영웅만 / false = 빛나지 않아야 함 / 생략 = 무관 (§5.14-1) */
   shining?: boolean;
 }
+
+/** 전설의 두 종류 (§5.14-1): 행복한 추억(빛나지 않은 영웅) / 정화된 추억(빛나는 영웅) */
+export type LegendKind = 'happy' | 'purified';
 
 export interface Recipe {
   id: string;
   name: string;
+  kind: LegendKind;
   inputs: [RecipeInput, RecipeInput];
   legend: CombatStats;
 }

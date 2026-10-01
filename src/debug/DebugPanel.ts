@@ -260,7 +260,7 @@ export function createDebugPanel(
       const row = Math.floor(i / 3);
       btn('결말', scene, x0 + 28 + col * 56, y + row * 26, 52, 20, id, () => {
         const f = fixtures[id];
-        controls.previewEnding(judgeEnding(f.stats, f.flags, data.endings));
+        controls.previewEnding(judgeEnding(f, data.endings));
       }, '9px');
     });
     y += 52;
@@ -269,8 +269,8 @@ export function createDebugPanel(
       delay: 500,
       loop: true,
       callback: () => {
-        const r = judgeEnding(state.stats, state.flags, data.endings);
-        now.setText(`지금 판정: ${r.id} · H ${Math.round(r.happy)} / U ${Math.round(r.unhappy)}`);
+        const r = judgeEnding(state.growth, data.endings);
+        now.setText(`지금 판정: ${r.id} · 총 ${Math.round(r.total)} · 비율 ${r.share.toFixed(2)} · ${state.age}살`);
       },
     });
   }

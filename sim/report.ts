@@ -59,11 +59,14 @@ export interface EndingStats {
   n: number;
   /** 결말별 비율 (n 기준) */
   dist: Record<EndingId, number>;
+  /** 성장치 (§5.14-3): growth.happy / growth.unhappy / 합 */
   happy: Summary;
   unhappy: Summary;
   /** happy + unhappy */
   total: Summary;
-  /** 항목별 평균 기여 (가중치 곱한 값) */
+  /** 행복한 추억 비율 */
+  share: Summary;
+  /** 평균: 준 전설 수(행복/정화)·기억 수 */
   breakdown: Record<BreakdownKey, number>;
 }
 
@@ -79,7 +82,8 @@ export function endingStats(runs: RunResult[]): EndingStats {
     dist,
     happy: summarize(ends.map((e) => e.happy)),
     unhappy: summarize(ends.map((e) => e.unhappy)),
-    total: summarize(ends.map((e) => e.happy + e.unhappy)),
+    total: summarize(ends.map((e) => e.total)),
+    share: summarize(ends.map((e) => e.share)),
     breakdown,
   };
 }
@@ -313,6 +317,7 @@ export function formatReport(r: PolicyReport): string {
     curveLine(r),
     formatBossDiag(r),
     formatEndings(r),
+    formatGrowth(r),
     heroLine(r),
   ];
   return lines.join('\n');
@@ -330,34 +335,62 @@ function heroLine(r: PolicyReport): string {
 }
 
 const BREAKDOWN_LABEL: Record<BreakdownKey, string> = {
-  upTier: '위 단계(wUpTier)',
-  defeat: '처치(wDefeat)',
-  joy: '기쁨(wJoy)',
-  sunk: '가라앉음 감점(wSunk)',
-  downTier: '아래 단계(wDownTier)',
-  layer: '층(wLayer)',
-  purified: '정화(wPurified)',
+  happyLegends: '준 행복한 추억',
+  purifiedLegends: '준 정화된 추억',
+  memories: '기억',
 };
 
 function pctOf(x: number): string {
   return `${fmt(x * 100, 1)}%`;
 }
 
-/** 결말 분포 + 점수 백분위 + 항목별 평균 기여 (§5.8-4) */
+/** 결말 분포 + 성장치 백분위 + 준 전설·기억 평균 (§5.14-3) */
 export function formatEndings(r: PolicyReport): string {
   const e = r.endings;
   if (!e || e.n === 0) return '결말: 없음 (14일을 다 산 판이 없음)';
-  const score = (label: string, s: Summary) => [label, fmt(s.p10, 0), fmt(s.median, 0), fmt(s.p90, 0), fmt(s.mean, 1)];
-  const share = (side: BreakdownKey[], total: number) =>
-    side.map((k) => `${BREAKDOWN_LABEL[k]} ${fmt(e.breakdown[k], 1)} (${total > 0 ? fmt((e.breakdown[k] / total) * 100, 0) : '—'}%)`).join(' · ');
-  const hMean = e.breakdown.upTier + e.breakdown.defeat + e.breakdown.joy;
-  const uMean = e.breakdown.downTier + e.breakdown.layer + e.breakdown.purified;
+  const score = (label: string, s: Summary, d = 0) => [label, fmt(s.p10, d), fmt(s.median, d), fmt(s.p90, d), fmt(s.mean, d + 1)];
   return [
     `결말 분포 (n=${e.n}): ${ENDING_IDS.map((id) => `${id} ${pctOf(e.dist[id])}`).join(' / ')}`,
-    table(['점수', 'p10', 'p50', 'p90', '평균'], [score('Happy', e.happy), score('Unhappy', e.unhappy), score('합', e.total)]),
-    // % 는 가산 항목 합 대비 (감점은 음수 %)
-    `항목별 평균 기여 — Happy: ${share(['upTier', 'defeat', 'joy', 'sunk'], hMean)}`,
-    `                  Unhappy: ${share(['downTier', 'layer', 'purified'], uMean)}`,
+    table(['성장치', 'p10', 'p50', 'p90', '평균'], [
+      score('행복(☀)', e.happy),
+      score('정화(☾)', e.unhappy),
+      score('합 total', e.total),
+      score('행복 비율 share', e.share, 2),
+    ]),
+    `일생 평균: ${BREAKDOWN_KEYS.map((k) => `${BREAKDOWN_LABEL[k]} ${fmt(e.breakdown[k], 2)}`).join(' · ')}`,
+  ].join('\n');
+}
+
+/** 자라기별 (§5.14-5): 소진 전설 행복/정화 평균, 기억 평균, 갈래 분포 + 특성 스택 평균 */
+export function formatGrowth(r: PolicyReport): string {
+  const runs = r.runs;
+  const maxN = Math.max(0, ...runs.map((x) => x.growths?.length ?? 0));
+  if (maxN === 0) return '자라기: 없음';
+  const rows: string[][] = [];
+  for (let i = 0; i < maxN; i++) {
+    const gs = runs.flatMap((x) => (x.growths && x.growths[i] ? [x.growths[i]] : []));
+    const n = gs.length;
+    const mean = (f: (g: (typeof gs)[number]) => number) => (n ? gs.reduce((s, g) => s + f(g), 0) / n : NaN);
+    const br = (b: string) => pctOf(n ? gs.filter((g) => g.branch === b).length / n : 0);
+    rows.push([
+      `${i + 1}번째 (${[...new Set(gs.map((g) => g.day))].join('/')}일)`,
+      String(n),
+      fmt(mean((g) => g.happy), 2),
+      fmt(mean((g) => g.purified), 2),
+      fmt(mean((g) => g.pairs), 2),
+      `${br('happy')} / ${br('unhappy')} / ${br('together')} / ${br('slow')}`,
+    ]);
+  }
+  const traitKeys = [...new Set(runs.flatMap((x) => Object.keys(x.traits ?? {})))].sort();
+  const n = Math.max(1, runs.length);
+  const traitText = traitKeys.length
+    ? traitKeys.map((k) => `${k} ${fmt(runs.reduce((s, x) => s + (x.traits?.[k] ?? 0), 0) / n, 2)}`).join(' · ')
+    : '없음';
+  const allTogether = runs.filter((x) => (x.growths?.length ?? 0) > 0 && x.growths.every((g) => g.branch === 'together')).length;
+  return [
+    table(['자라기', 'n', '행복 전설', '정화 전설', '기억', '갈래 happy / unhappy / together / slow'], rows),
+    `특성 스택 평균 (일생 끝): ${traitText}`,
+    `모든 자라기가 together인 판: ${pctOf(allTogether / n)}`,
   ].join('\n');
 }
 
@@ -402,8 +435,8 @@ export function formatComparison(reports: PolicyReport[]): string {
     'solid%',
     'hidden%',
     'mask%',
-    'H p50',
-    'U p50',
+    '☀ p50',
+    '☾ p50',
   ];
   const rows = reports.map((r) => [
     r.policy,
@@ -507,10 +540,10 @@ export function checkM3Goals(reports: PolicyReport[], goals: SimConfig['m3Goals'
 function hoarderCheck(hoard: PolicyReport, bal: PolicyReport): GoalCheck {
   return {
     id: 'hoarder<B',
-    label: 'hoarder: balanced보다 나쁨 (결말 점수 합 중앙값)',
+    label: 'hoarder: balanced보다 나쁨 (성장치 합 total 중앙값)',
     pass: hoard.endings.total.median < bal.endings.total.median,
     detail:
-      `점수 합 중앙값 hoarder ${fmt(hoard.endings.total.median, 0)} vs balanced ${fmt(bal.endings.total.median, 0)}` +
+      `성장치 합 중앙값 hoarder ${fmt(hoard.endings.total.median, 0)} vs balanced ${fmt(bal.endings.total.median, 0)}` +
       ` (참고: 가라앉은 수 중앙값 ${fmt(hoard.summary.sunk.median)} vs ${fmt(bal.summary.sunk.median)})`,
   };
 }
@@ -754,7 +787,7 @@ export function checkM6Goals(
   if (hoard && bal) {
     out.push({
       id: 'hoarder<B',
-      label: 'hoarder: 결말 점수(happy + unhappy 중앙값)가 balanced보다 낮음',
+      label: 'hoarder: 성장치 합(total 중앙값)이 balanced보다 낮음 (§5.14 결말 기준)',
       pass: hoard.endings.total.median < bal.endings.total.median,
       detail: `hoarder ${fmt(hoard.endings.total.median, 0)} vs balanced ${fmt(bal.endings.total.median, 0)}`,
     });
@@ -850,7 +883,7 @@ export function formatSweep(key: string, rows: SweepRow[]): string {
     }),
   ]);
   // 정책별 상세 (§5.12-4): 결말 분포·가라앉음·1~2일차·역류·밤 층 돌파·맡긴 비율·낮/밤 길이·점수 p50 (중앙값)
-  const detailHeader = ['값', '정책', 'hid/sol/mask/qui/rainy %', '가라앉음', '1~2일차', '역류', '밤 층', '맡긴%', '낮(초)', '밤(초)', 'H p50', 'U p50'];
+  const detailHeader = ['값', '정책', 'hid/sol/mask/qui/rainy %', '가라앉음', '1~2일차', '역류', '밤 층', '맡긴%', '낮(초)', '밤(초)', '☀ p50', '☾ p50'];
   const detailBody = rows.flatMap((row) =>
     row.reports.map((r) => {
       const e = r.endings.dist;

@@ -43,6 +43,13 @@
     "bossFloorWildcards": 1
   },
   "hero": { "shineMult": 1.2 },
+  "growth": {
+    "growthPerLegend": 100,
+    "memoryBonus": 50,
+    "traitPerStack": 0.1,
+    "traitMaxStacks": 5,
+    "ageWorryMult": 1.15
+  },
   "night": {
     "nightSeconds": 60,
     "stallShadowPerSec": 0.3

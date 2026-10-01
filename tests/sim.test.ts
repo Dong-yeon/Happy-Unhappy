@@ -79,9 +79,9 @@ describe('정책 기본 동작', () => {
     expect(bal.upRatio! + bal.downRatio!).toBeCloseTo(1, 10);
   });
 
-  it('hoarder는 최고 단계 조각만 보낸다', () => {
+  it('hoarder는 최고 단계 조각(영웅)과 행복한 추억 전설만 보낸다', () => {
     for (let s = 1; s <= 4; s++) {
-      for (const t of Object.keys(run('hoarder', s).summonTiers)) expect(Number(t)).toBe(data.balance.grid.maxTier);
+      for (const t of Object.keys(run('hoarder', s).summonTiers)) expect(Number(t)).toBeGreaterThanOrEqual(data.balance.grid.maxTier);
     }
   });
 
@@ -176,12 +176,14 @@ describe('M6: 결말 리포트 (§5.8-4)', () => {
     for (const r of runs) expect(r.ending).not.toBeNull();
     expect(run('random', 1).ending?.happy).toBe(0);
     expect(Object.values(endingStats(runs).dist).reduce((a, b) => a + b, 0)).toBeCloseTo(1);
-    // 기여 합 = 점수: 0 하한이 걸리지 않은 판만 (alwaysHappy는 가라앉음 없음)
-    const e = endingStats([run('alwaysHappy', 1)]);
-    expect(e.n).toBe(1);
-    const b = e.breakdown;
-    expect(b.upTier + b.defeat + b.joy + b.sunk).toBeCloseTo(e.happy.mean);
-    expect(b.downTier + b.layer + b.purified).toBeCloseTo(e.unhappy.mean);
+    // 성장치 = 준 전설 × growthPerLegend + 기억 × memoryBonus (§5.14-2)
+    for (const r of runs) {
+      const gr = data.balance.growth;
+      const b = r.ending!.breakdown;
+      expect(r.ending!.happy).toBe(b.happyLegends * gr.growthPerLegend + b.memories * gr.memoryBonus);
+      expect(r.ending!.unhappy).toBe(b.purifiedLegends * gr.growthPerLegend + b.memories * gr.memoryBonus);
+      expect(r.growths.length).toBe(data.days.growthDays.length + 1);
+    }
   });
 
   it('alwaysHappy는 보스 승리분이 unhappy 점수에 들어가지 않는다 (D-023)', () => {

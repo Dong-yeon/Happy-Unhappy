@@ -138,6 +138,7 @@ export class MetricsRecorder {
     const i = this.life.days.findIndex((d) => d.day === m.day);
     if (i >= 0) this.life.days[i] = m;
     else this.life.days.push(m);
+    this.life.growths = structuredClone(s.growthLog);
     this.data.inProgress = null;
     this.session.daysCompleted += 1;
     this.active = false;
@@ -149,6 +150,7 @@ export class MetricsRecorder {
     const s = this.state;
     this.life.ending = s.ending ? structuredClone(s.ending) : null;
     this.life.stats = structuredClone(s.stats);
+    this.life.growths = structuredClone(s.growthLog);
     this.life.endedAt = nowIso();
     this.data.inProgress = null;
     this.write();

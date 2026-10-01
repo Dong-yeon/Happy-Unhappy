@@ -1,86 +1,72 @@
-// 결말 판정 (스펙 §5.6, §5.8-3). 순수 함수, Phaser 의존 없음. 가중치·임계값은 endings.json.
-//   happyScore   = max(0, sentUpTierSum × wUpTier + worriesDefeated × wDefeat + totalJoyEarned × wJoy − sunkCount × wSunk)
-//   unhappyScore = max(0, sentDownTierSum × wDownTier + layersCleared × wLayer + shadowPurified × wPurified)
-// shadowPurified는 층 돌파분만 (보스 승리 감소분 shadowCalmed는 점수 없음, D-023). wSunk 감점·0 하한은 D-024.
+// 결말 판정 (스펙 §5.14-3, D-030 — §5.6 대체). 순수 함수, Phaser 의존 없음. 임계값은 endings.json.
+// "얼마나 많은 추억을 양분으로 줬는가": 행복한 추억과 정화된 추억은 같은 무게. 처치 수 등 플레이 결과는 직접 넣지 않는다.
+//   total = growth.happy + growth.unhappy,  share = growth.happy / total (total 0이면 0.5)
+// 위에서부터 첫 번째:
+//   1. 자라기 갈래가 모두 together + memories ≥ hiddenMinMemories → hidden (화해)
+//   2. total < totalThreshold → rainy (양분이 적었다)
+//   3. shareBand[0] ≤ share ≤ shareBand[1] → solid
+//   4. share > shareBand[1] → mask / share < shareBand[0] → quiet
 
 import type { EndingId, Endings } from '../data/types';
-import { emptyGameStats, type GameStats, type NumericStatKey } from './stats';
+import { emptyGrowth, type Branch, type GrowthState } from './growth';
 
-export type BreakdownKey = 'upTier' | 'defeat' | 'joy' | 'sunk' | 'downTier' | 'layer' | 'purified';
+/** 결과 화면·리포트용 숫자 (기존 저장·metrics의 breakdown 자리) */
+export type BreakdownKey = 'happyLegends' | 'purifiedLegends' | 'memories';
+export const BREAKDOWN_KEYS: readonly BreakdownKey[] = ['happyLegends', 'purifiedLegends', 'memories'];
 
 export interface EndingResult {
   id: EndingId;
+  /** growth.happy (행복한 추억 쪽 성장치) */
   happy: number;
+  /** growth.unhappy (정화된 추억 쪽 성장치) */
   unhappy: number;
-  /** 항목별 기여 (가중치 곱한 값. sunk는 감점이라 음수, 0 하한 적용 전) */
+  total: number;
+  share: number;
+  branches: Branch[];
+  /** 준 전설 수(행복/정화)·기억 수 */
   breakdown: Record<BreakdownKey, number>;
 }
 
-/** 점수 항목: [breakdown 키, stats 키, 가중치 키, 쪽, 부호] */
-const TERMS = [
-  ['upTier', 'sentUpTierSum', 'wUpTier', 'happy', 1],
-  ['defeat', 'worriesDefeated', 'wDefeat', 'happy', 1],
-  ['joy', 'totalJoyEarned', 'wJoy', 'happy', 1],
-  ['sunk', 'sunkCount', 'wSunk', 'happy', -1],
-  ['downTier', 'sentDownTierSum', 'wDownTier', 'unhappy', 1],
-  ['layer', 'layersCleared', 'wLayer', 'unhappy', 1],
-  ['purified', 'shadowPurified', 'wPurified', 'unhappy', 1],
-] as const satisfies readonly (readonly [BreakdownKey, NumericStatKey, keyof Endings['weights'], 'happy' | 'unhappy', 1 | -1])[];
-
-export const BREAKDOWN_KEYS: readonly BreakdownKey[] = TERMS.map((t) => t[0]);
-
-/**
- * 위에서부터 첫 번째 일치:
- * hidden: happy ≥ Tʜ, unhappy ≥ Tᴜ, |happy − unhappy| ≤ balanceRatio × max(happy, unhappy), flag face
- * solid: 둘 다 임계값 이상 / mask: happy만 / quiet: unhappy만 / rainy: 둘 다 미달
- */
-export function judgeEnding(stats: GameStats, flags: readonly string[], cfg: Endings): EndingResult {
-  const breakdown = {} as Record<BreakdownKey, number>;
-  let happy = 0;
-  let unhappy = 0;
-  for (const [key, stat, weight, side, sign] of TERMS) {
-    const v = sign * stats[stat] * cfg.weights[weight];
-    breakdown[key] = v;
-    if (side === 'happy') happy += v;
-    else unhappy += v;
-  }
-  // 두 점수는 0 미만이면 0 (표시·판정 모두, D-024)
-  happy = Math.max(0, happy);
-  unhappy = Math.max(0, unhappy);
-  const hOk = happy >= cfg.thresholds.happy;
-  const uOk = unhappy >= cfg.thresholds.unhappy;
+export function judgeEnding(growth: GrowthState, cfg: Endings): EndingResult {
+  const total = growth.happy + growth.unhappy;
+  const share = total > 0 ? growth.happy / total : 0.5;
+  const [lo, hi] = cfg.shareBand;
   let id: EndingId;
-  if (hOk && uOk) {
-    const balanced = Math.abs(happy - unhappy) <= cfg.balanceRatio * Math.max(happy, unhappy);
-    id = balanced && flags.includes('face') ? 'hidden' : 'solid';
-  } else if (hOk) id = 'mask';
-  else if (uOk) id = 'quiet';
-  else id = 'rainy';
-  return { id, happy, unhappy, breakdown };
-}
-
-/** 한쪽 점수를 target으로 맞추는 stats (그 쪽의 가산 항목 중 가중치가 가장 큰 것 하나만 사용, 감점 0) */
-function setScore(s: GameStats, cfg: Endings, side: 'happy' | 'unhappy', target: number): void {
-  const terms = TERMS.filter((t) => t[3] === side && t[4] > 0);
-  const best = terms.reduce((a, b) => (cfg.weights[b[2]] > cfg.weights[a[2]] ? b : a));
-  const w = cfg.weights[best[2]];
-  if (w > 0) s[best[1]] = target / w;
-}
-
-/** 결말 5종에 각각 도달하는 stats·flags (테스트·디버그 결말 미리보기용) */
-export function endingFixtures(cfg: Endings): Record<EndingId, { stats: GameStats; flags: string[] }> {
-  const x = Math.max(cfg.thresholds.happy, cfg.thresholds.unhappy) * 1.2 + 10;
-  const make = (h: number, u: number, flags: string[]) => {
-    const stats = emptyGameStats();
-    setScore(stats, cfg, 'happy', h);
-    setScore(stats, cfg, 'unhappy', u);
-    return { stats, flags };
-  };
+  if (growth.branches.length > 0 && growth.branches.every((b) => b === 'together') && growth.memories >= cfg.hiddenMinMemories) id = 'hidden';
+  else if (total < cfg.totalThreshold) id = 'rainy';
+  else if (share >= lo && share <= hi) id = 'solid';
+  else if (share > hi) id = 'mask';
+  else id = 'quiet';
   return {
-    hidden: make(x, x, ['face']),
-    solid: make(x * 1.5, x, ['avoid']),
-    mask: make(x, 0, ['avoid']),
-    quiet: make(0, x, ['face']),
-    rainy: make(0, 0, []),
+    id,
+    happy: growth.happy,
+    unhappy: growth.unhappy,
+    total,
+    share,
+    branches: [...growth.branches],
+    breakdown: { happyLegends: growth.given.happy, purifiedLegends: growth.given.purified, memories: growth.memories },
+  };
+}
+
+/** 결말 5종에 각각 도달하는 growth (테스트·디버그 결말 미리보기용) */
+export function endingFixtures(cfg: Endings): Record<EndingId, GrowthState> {
+  const t = cfg.totalThreshold;
+  const [lo, hi] = cfg.shareBand;
+  const make = (happy: number, unhappy: number, branches: Branch[], memories = 0): GrowthState => ({
+    ...emptyGrowth(),
+    happy,
+    unhappy,
+    memories,
+    branches,
+    given: { happy: Math.round(happy / 100), purified: Math.round(unhappy / 100) },
+  });
+  const big = Math.max(t, 1) * 2;
+  const mid = (lo + hi) / 2;
+  return {
+    hidden: make(big * mid, big * (1 - mid), ['together', 'together', 'together'], cfg.hiddenMinMemories),
+    solid: make(big * mid, big * (1 - mid), ['together', 'happy', 'together']),
+    mask: make(big * Math.min(1, hi + (1 - hi) / 2), big * (1 - Math.min(1, hi + (1 - hi) / 2)), ['happy', 'happy', 'happy']),
+    quiet: make(big * (lo / 2), big * (1 - lo / 2), ['unhappy', 'unhappy', 'unhappy']),
+    rainy: make(0, 0, ['slow', 'slow', 'slow']),
   };
 }

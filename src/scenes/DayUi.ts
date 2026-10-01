@@ -3,13 +3,15 @@
 // 도형 + 텍스트만. 상태는 core(GameState)에서 읽고, 버튼은 core 메서드·hooks만 호출한다.
 import Phaser from 'phaser';
 import type { EndingResult } from '../core/ending';
+import type { GrowthResult } from '../core/growth';
 import type { GameState } from '../core/game';
 import type { ForgottenEntry } from '../core/gating';
 import type { GameData } from '../data/types';
 import { showDebugUi, showRatings } from '../debug/gridPreset';
 import type { DayRating } from '../metrics/model';
 import { minutesUntilMidnight } from '../platform/clock';
-import { REGION, VIEW_H, VIEW_W } from './layout';
+import { REGION, VIEW_H, VIEW_W, cellCenter, skyArc } from './layout';
+import { BRANCH_ICON, BRANCH_LABEL, recipeName, traitName, traitsLine } from './growthText';
 import { mergeDiary } from './diaryList';
 import { Button, COLOR, text } from './ui';
 
@@ -44,15 +46,9 @@ const BACKFLOW_RATINGS: { value: NonNullable<DayRating['backflow']>; label: stri
   { value: 'annoyed', label: '짜증났다' },
 ];
 
-const BREAKDOWN_LABELS: Record<keyof EndingResult['breakdown'], string> = {
-  upTier: '위로 보낸 단계',
-  defeat: '막아낸 걱정',
-  joy: '얻은 기쁨',
-  sunk: '가라앉음 감점',
-  downTier: '아래로 보낸 단계',
-  layer: '층 돌파',
-  purified: '정화한 그림자',
-};
+/** 자라기 연출: 전설이 빛이 되어 해(행복한 추억)·달(정화된 추억)로 올라간다 */
+const GROWTH_LIGHT_MS = 700;
+const GROWTH_LIGHT_STAGGER = 120;
 
 /** [처음부터] 두 번 탭: 첫 탭 후 이 시간 안에 다시 눌러야 한다 */
 const RESTART_CONFIRM_MS = 3000;
@@ -93,6 +89,7 @@ class Modal {
   }
 
   destroy(): void {
+    this.scene.tweens.killTweensOf(this.objects);
     for (const o of this.objects) o.destroy();
     for (const b of this.buttons) b.container.destroy();
   }
@@ -107,6 +104,8 @@ export class DayUi {
   /** "내일 또 만나요"의 남은 시간 텍스트 (떠 있을 때만) */
   private waitText: Phaser.GameObjects.Text | null = null;
   private waitCheckedAt = 0;
+  /** 연출을 본 자라기 수 (복원 시점까지는 본 것으로 친다) */
+  private growthSeen: number;
 
   constructor(
     private readonly scene: Phaser.Scene,
@@ -119,6 +118,7 @@ export class DayUi {
     const band = scene.add.rectangle(0, 0, r.w, 22, 0x7a2e3e, 0.92).setOrigin(0);
     this.prepText = text(scene, r.w / 2, 11, '', { fontSize: '11px', color: '#ffd6de', fontStyle: 'bold' }).setOrigin(0.5);
     this.prepBand = scene.add.container(r.x, r.y + 2, [band, this.prepText]).setDepth(45).setVisible(false);
+    this.growthSeen = state.growthLog.length;
   }
 
   /** 입력 차단 중 (모달·일기장이 떠 있음) */
@@ -133,7 +133,9 @@ export class DayUi {
     if (key !== this.shownFor) {
       this.shownFor = key;
       this.closeModal();
-      if (s.phase === 'dayStart') {
+      const growth = s.growthLog[this.growthSeen];
+      if (growth && (s.phase === 'dayStart' || s.phase === 'lifeEnd')) this.showGrowth(growth); // 이벤트 카드·결과보다 먼저
+      else if (s.phase === 'dayStart') {
         if (this.hooks.canOpenDay()) this.showEventCard();
         else this.showSeeYouTomorrow();
       } else if (s.phase === 'diary') this.showDiaryPanel();
@@ -154,7 +156,7 @@ export class DayUi {
   private phaseKey(): string {
     const s = this.state;
     const open = s.phase === 'dayStart' ? `:${this.hooks.canOpenDay()}` : '';
-    return `${s.phase}:${s.day}:${s.today.id}${open}`;
+    return `${s.phase}:${s.day}:${s.today.id}${open}:g${this.growthSeen}`;
   }
 
   private closeModal(): void {
@@ -215,6 +217,68 @@ export class DayUi {
     } else {
       m.button(VIEW_W / 2, 158, 120, '확인', () => confirm());
     }
+    this.modal = m;
+  }
+
+  /**
+   * 자라기 연출 모달 (§5.14-2): 소진된 전설이 빛이 되어 해/달로 올라가고, 갈래·양분·기억·특성을 보여준다.
+   * [자라기] 한 번이면 끝 (core는 이미 처리됨). 다음은 이벤트 카드(5·10일) 또는 결과 화면(일생 끝).
+   */
+  private showGrowth(g: GrowthResult): void {
+    const s = this.state;
+    const scene = this.scene;
+    const cfg = this.data.balance.growth;
+    const last = s.phase === 'lifeEnd';
+    const m = new Modal(scene, 262);
+    // 하늘의 해·달 (막 위에 다시 그린다)
+    const sunAt = skyArc(0.25);
+    const moonAt = skyArc(0.75);
+    const d = OVERLAY_DEPTH + 3;
+    const sun = scene.add.circle(sunAt.x, sunAt.y, 11, 0xffd36b).setStrokeStyle(2, 0xfff1c4).setDepth(d);
+    const moon = scene.add.circle(moonAt.x, moonAt.y, 9, 0xe8ecff).setStrokeStyle(2, 0x9fb0e0).setDepth(d);
+    m.objects.push(sun, moon);
+    const { cols, rows } = s.grid;
+    const mid = cellCenter(cols, rows, Math.floor((cols * rows) / 2));
+    g.consumed.forEach((c, i) => {
+      const from = c.cell !== null ? cellCenter(cols, rows, c.cell) : mid;
+      const to = c.kind === 'happy' ? sunAt : moonAt;
+      const light = scene.add.star(from.x, from.y, 4, 4, 9, c.kind === 'happy' ? 0xffe08a : 0xc9d4ff).setDepth(d + 1);
+      m.objects.push(light);
+      scene.tweens.add({
+        targets: light,
+        x: to.x,
+        y: to.y,
+        scale: 0.4,
+        delay: i * GROWTH_LIGHT_STAGGER,
+        duration: GROWTH_LIGHT_MS,
+        ease: 'Sine.easeIn',
+        onComplete: () => {
+          light.setVisible(false);
+          scene.tweens.add({ targets: c.kind === 'happy' ? sun : moon, scale: 1.25, yoyo: true, duration: 140 });
+        },
+      });
+    });
+    m.text(14, `${last ? '마지막 자라기' : `${g.index}번째 자라기`} · ${g.age}살`, { fontSize: '11px', color: '#9fb4e0' });
+    m.text(32, '한 뼘 자랐다', { fontSize: '18px', color: '#f2c94c', fontStyle: 'bold' });
+    m.text(62, `${BRANCH_ICON[g.branch]}  ${BRANCH_LABEL[g.branch]}`, { fontSize: '13px', color: g.branch === 'slow' ? '#cfd6ea' : '#ffe08a' });
+    const given = g.consumed.length
+      ? `양분: 행복한 추억 ${g.happyCount} · 정화된 추억 ${g.purifiedCount}`
+      : '양분으로 줄 전설이 없었다. 그래도 아이는 자란다.';
+    m.text(90, given, { fontSize: '11px', lineSpacing: 3 });
+    m.text(112, `성장 ☀ +${g.gained.happy} · ☾ +${g.gained.unhappy}   기억 +${g.pairs} (모두 ${s.growth.memories})`, {
+      fontSize: '11px',
+      color: '#cfd6ea',
+    });
+    const up = Object.keys(g.traitsUp);
+    const upLine = up.length ? up.map((k) => `${traitName(this.data, k)} ${s.traits[k]}/${cfg.traitMaxStacks}`).join(' · ') : '새로 생긴 특성 없음';
+    m.text(136, `특성: ${upLine}`, { fontSize: '11px', color: '#9fe0a0', lineSpacing: 3 });
+    m.text(172, '다정함·포근함 = 낮에 / 용기·위로 = 밤에 그 계열이 강해진다', { fontSize: '9px', color: '#8a8f9e' });
+    if (!last) m.text(188, '자란 만큼 걱정도 조금 더 단단해진다', { fontSize: '9px', color: '#8a8f9e' });
+    m.button(VIEW_W / 2, 226, 120, '자라기', () => {
+      this.growthSeen += 1;
+      this.closeModal();
+      this.shownFor = ''; // 다음 모달(이벤트 카드·결과)을 띄운다
+    });
     this.modal = m;
   }
 
@@ -281,14 +345,19 @@ export class DayUi {
   }
 
   /**
-   * 결과 화면 (§5.8-3): 결말 이름, 한 줄 설명, 엔딩 제목(+ 상하 반전 alpha 0.35 반사), 두 점수, [일기장], [처음부터].
-   * ?debug=1이면 항목별 기여. preview(디버그 결말 미리보기)면 [처음부터] 대신 [닫기]이고 게임 상태는 바꾸지 않는다.
+   * 결과 화면 (§5.8-3, §5.14-3): 결말 이름, 엔딩 제목(+ 상하 반전 alpha 0.35 반사), 설명,
+   * 자라기 갈래(아이콘), 준 전설 수(행복/정화)·기억, 기억 앨범, 특성, [일기장], [처음부터].
+   * ?debug=1이면 판정 숫자(total·share). preview(디버그 결말 미리보기)면 [처음부터] 대신 [닫기]이고 게임 상태는 바꾸지 않는다.
    */
   showResult(result: EndingResult | null, preview: boolean): void {
     this.closeModal();
     const debug = showDebugUi();
     const agree = showRatings() && !preview && result !== null;
-    const m = new Modal(this.scene, (debug ? 330 : 300) + (agree ? 34 : 0));
+    const album = preview ? [] : this.state.growth.album;
+    const ALBUM_ROWS = 4;
+    const albumLines = Math.min(album.length, ALBUM_ROWS) + (album.length > ALBUM_ROWS ? 1 : 0);
+    const extra = (debug ? 18 : 0) + (agree ? 34 : 0) + albumLines * 14;
+    const m = new Modal(this.scene, 372 + extra);
     if (!result) {
       m.text(40, '결말 없음', { fontSize: '16px', color: '#ff9e9e' });
     } else {
@@ -299,26 +368,41 @@ export class DayUi {
       // 수면 반사: 같은 글자를 상하 반전·alpha 0.35로 한 번 더 (연출은 본 개발)
       m.text(46 + title.height, e.title, { fontSize: '22px', color: '#f2c94c', fontStyle: 'bold' }).setFlipY(true).setAlpha(0.35);
       m.text(46 + title.height * 2 + 12, e.desc, { fontSize: '12px', lineSpacing: 4 });
-      m.text(176, `Happy ${Math.round(result.happy)} · Unhappy ${Math.round(result.unhappy)}`, { fontSize: '13px' });
+      let y = 176;
+      const branches = result.branches.length ? result.branches.map((b) => BRANCH_ICON[b]).join('   ') : '-';
+      m.text(y, `자라기  ${branches}`, { fontSize: '15px', color: '#ffe08a' });
+      y += 26;
+      const bd = result.breakdown;
+      m.text(y, `양분으로 준 추억: 행복한 추억 ${bd.happyLegends} · 정화된 추억 ${bd.purifiedLegends}`, { fontSize: '11px' });
+      y += 18;
+      m.text(y, `기억 ${bd.memories}개`, { fontSize: '11px', color: '#f2c94c' });
+      y += 18;
+      album.slice(0, ALBUM_ROWS).forEach((a) => {
+        m.text(y, `${a.day}일 · ${recipeName(this.data, a.happy)} + ${recipeName(this.data, a.purified)}`, { fontSize: '10px', color: '#cfd6ea' });
+        y += 14;
+      });
+      if (album.length > ALBUM_ROWS) {
+        m.text(y, `외 ${album.length - ALBUM_ROWS}개`, { fontSize: '10px', color: '#8a8f9e' });
+        y += 14;
+      }
+      m.text(y + 4, `특성: ${preview ? '-' : traitsLine(this.data, this.state.traits)}`, { fontSize: '11px', color: '#9fe0a0', lineSpacing: 3 });
+      y += 26;
       if (debug) {
-        const lines = (Object.keys(BREAKDOWN_LABELS) as (keyof typeof BREAKDOWN_LABELS)[]).map(
-          (k) => `${BREAKDOWN_LABELS[k]} ${result.breakdown[k].toFixed(1)}`,
-        );
-        m.text(202, `[기여] ${lines.slice(0, 4).join(' · ')}\n${lines.slice(4).join(' · ')}`, {
+        m.text(y, `[판정] 총 ${Math.round(result.total)} (☀ ${Math.round(result.happy)} · ☾ ${Math.round(result.unhappy)}) · 행복 비율 ${result.share.toFixed(2)}`, {
           fontSize: '9px',
           color: '#ff9e6b',
-          lineSpacing: 3,
         });
       }
     }
+    const base = 278 + albumLines * 14 + (debug ? 18 : 0);
     if (agree) {
       const opts = [
         { value: true, label: '응' },
         { value: false, label: '아니' },
       ];
-      this.ratingRow(m, debug ? 250 : 214, '이 결말, 납득돼?', opts, () => this.hooks.endingAgree(), (v) => this.hooks.setEndingAgree(v));
+      this.ratingRow(m, base, '이 결말, 납득돼?', opts, () => this.hooks.endingAgree(), (v) => this.hooks.setEndingAgree(v));
     }
-    const by = (debug ? 290 : 260) + (agree ? 34 : 0);
+    const by = base + 54 + (agree ? 34 : 0);
     m.button(VIEW_W / 2 - 64, by, 110, '일기장', () => this.showDiaryList());
     if (preview) {
       m.button(VIEW_W / 2 + 64, by, 110, '닫기', () => {
@@ -355,7 +439,7 @@ export class DayUi {
     objs.push(scene.add.rectangle(0, 0, VIEW_W, VIEW_H, 0x0e1016, 0.96).setOrigin(0).setDepth(d).setInteractive());
     objs.push(text(scene, VIEW_W / 2, 14, '추억 조합', { fontSize: '15px', color: '#f2c94c', fontStyle: 'bold' }).setOrigin(0.5, 0).setDepth(d + 1));
     objs.push(
-      text(scene, VIEW_W / 2, 38, '빛나는 영웅(✦)은 밤에 정화하면 생겨요. 쉬는 영웅도 재료가 돼요.', { fontSize: '10px', color: '#8a8f9e' })
+      text(scene, VIEW_W / 2, 38, '✦ 빛나는 영웅(밤에 정화하면 생겨요) · ○ 빛나지 않은 영웅 · 쉬는 영웅도 재료', { fontSize: '10px', color: '#8a8f9e' })
         .setOrigin(0.5, 0)
         .setDepth(d + 1),
     );
@@ -368,11 +452,12 @@ export class DayUi {
         const c = chains.get(inp.chain);
         const box = scene.add.rectangle(x, y + 18, 34, 28, c ? parseInt(c.color.slice(1), 16) : 0x999999).setDepth(d + 1);
         box.setStrokeStyle(inp.shining ? 2 : 1, inp.shining ? 0xfff1a8 : 0x1b1d24);
+        const mark = inp.shining === true ? '✦' : inp.shining === false ? '○' : '';
         const lab = text(scene, x, y + 18, inp.tier >= maxTier ? '★' : String(inp.tier), { fontSize: '13px', color: '#1b1d24', fontStyle: 'bold' })
           .setOrigin(0.5)
           .setDepth(d + 2);
         const name = c ? c.tierNames[inp.tier - 1] : inp.chain;
-        const cap = text(scene, x, y + 36, `${inp.shining ? '✦' : ''}${name}`, { fontSize: '8px', color: '#cfd6ea' }).setOrigin(0.5, 0).setDepth(d + 1);
+        const cap = text(scene, x, y + 36, `${mark}${name}`, { fontSize: '8px', color: '#cfd6ea' }).setOrigin(0.5, 0).setDepth(d + 1);
         objs.push(box, lab, cap);
       };
       icon(52, r.inputs[0]);
@@ -384,7 +469,8 @@ export class DayUi {
       const done = (made[r.id] ?? 0) > 0;
       objs.push(
         text(scene, 232, y + 10, r.name, { fontSize: '12px', color: '#ffe08a', fontStyle: 'bold' }).setDepth(d + 1),
-        text(scene, 232, y + 28, `공격 ${r.legend.atk} · 체력 ${r.legend.hp}${done ? '  ✓ 만듦' : ''}`, {
+        text(scene, 232, y + 25, r.kind === 'happy' ? '행복한 추억' : '정화된 추억', { fontSize: '9px', color: r.kind === 'happy' ? '#ffd36b' : '#b9c6ff' }).setDepth(d + 1),
+        text(scene, 232, y + 37, `공격 ${r.legend.atk} · 체력 ${r.legend.hp}${done ? '  ✓ 만듦' : ''}`, {
           fontSize: '9px',
           color: done ? '#9fe0a0' : '#8a8f9e',
         }).setDepth(d + 1),

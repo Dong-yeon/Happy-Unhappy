@@ -4,5 +4,6 @@
   "fixed": { "7": "first_tooth", "10": "birthday" },
   "dailyEventChance": 0.5,
   "dailyEventCooldownDays": 3,
-  "quietDays": 2
+  "quietDays": 2,
+  "growthDays": [5, 10]
 }

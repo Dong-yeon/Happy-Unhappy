@@ -1,11 +1,11 @@
-// 결말 판정 (스펙 §5.6, §5.8-3, §5.8-5)
+// 결말 판정 (스펙 §5.14-3 — §5.6 대체, §5.8-3)
 import { describe, expect, it } from 'vitest';
 import { rawGameData } from '../src/data';
 import type { EndingId, Endings, GameData } from '../src/data/types';
 import { endingFixtures, judgeEnding } from '../src/core/ending';
 import { GameState } from '../src/core/game';
+import { emptyGrowth, type Branch, type GrowthState } from '../src/core/growth';
 import { mulberry32 } from '../src/core/rng';
-import { emptyGameStats, type GameStats } from '../src/core/stats';
 import { gameGeometry } from '../src/scenes/layout';
 
 const base = structuredClone(rawGameData) as unknown as GameData;
@@ -18,103 +18,76 @@ function cfg(edit: (c: Endings) => void = () => {}): Endings {
   return c;
 }
 
-/** 모든 가중치 1: happy = worriesDefeated, unhappy = layersCleared 로만 점수를 만든다 */
-const unit = cfg((c) => {
-  for (const k of Object.keys(c.weights) as (keyof Endings['weights'])[]) c.weights[k] = 1;
-  c.thresholds = { happy: 100, unhappy: 50 };
-  c.balanceRatio = 0.2;
+/** 단순 설정: totalThreshold 600, shareBand [0.3, 0.7], hiddenMinMemories 3 */
+const C = cfg((c) => {
+  c.totalThreshold = 600;
+  c.shareBand = [0.3, 0.7];
+  c.hiddenMinMemories = 3;
 });
-function stats(happy: number, unhappy: number, extra: Partial<GameStats> = {}): GameStats {
-  return { ...emptyGameStats(), worriesDefeated: happy, layersCleared: unhappy, ...extra };
+
+function g(happy: number, unhappy: number, branches: Branch[] = ['happy', 'unhappy', 'slow'], memories = 0): GrowthState {
+  return { ...emptyGrowth(), happy, unhappy, branches, memories };
 }
 
-describe('judgeEnding', () => {
+describe('judgeEnding (§5.14-3)', () => {
   it('fixture 5종이 각각 해당 결말 (현재 endings.json)', () => {
     const fx = endingFixtures(CFG);
-    for (const id of IDS) expect(judgeEnding(fx[id].stats, fx[id].flags, CFG).id, id).toBe(id);
+    for (const id of IDS) expect(judgeEnding(fx[id], CFG).id, id).toBe(id);
   });
 
-  it('fixture는 가중치·임계값이 바뀌어도 성립', () => {
+  it('fixture는 임계값이 바뀌어도 성립', () => {
     const c = cfg((x) => {
-      x.weights = { wUpTier: 0.7, wDefeat: 2, wJoy: 0, wSunk: 3, wDownTier: 0, wLayer: 0.3, wPurified: 5 };
-      x.thresholds = { happy: 333, unhappy: 47 };
-      x.balanceRatio = 0.05;
+      x.totalThreshold = 1234;
+      x.shareBand = [0.4, 0.55];
+      x.hiddenMinMemories = 5;
     });
     const fx = endingFixtures(c);
-    for (const id of IDS) expect(judgeEnding(fx[id].stats, fx[id].flags, c).id, id).toBe(id);
+    for (const id of IDS) expect(judgeEnding(fx[id], c).id, id).toBe(id);
   });
 
-  it('공식: 항목별 기여 = stats × 가중치 (가라앉음은 감점), happy·unhappy는 그 합', () => {
-    const s = {
-      ...emptyGameStats(),
-      sentUpTierSum: 10,
-      worriesDefeated: 20,
-      totalJoyEarned: 100,
-      sunkCount: 3,
-      sentDownTierSum: 5,
-      layersCleared: 2,
-      shadowPurified: 30,
-    };
-    const r = judgeEnding(s, [], CFG);
-    const w = CFG.weights;
-    expect(r.breakdown).toEqual({
-      upTier: 10 * w.wUpTier,
-      defeat: 20 * w.wDefeat,
-      joy: 100 * w.wJoy,
-      sunk: -3 * w.wSunk,
-      downTier: 5 * w.wDownTier,
-      layer: 2 * w.wLayer,
-      purified: 30 * w.wPurified,
-    });
-    expect(r.happy).toBeCloseTo(10 * w.wUpTier + 20 * w.wDefeat + 100 * w.wJoy - 3 * w.wSunk);
-    expect(r.unhappy).toBeCloseTo(5 * w.wDownTier + 2 * w.wLayer + 30 * w.wPurified);
+  it('total·share 공식, breakdown = 준 전설 수·기억', () => {
+    const s = { ...g(450, 150), given: { happy: 4, purified: 1 }, memories: 1 };
+    const r = judgeEnding(s, C);
+    expect(r.total).toBe(600);
+    expect(r.share).toBeCloseTo(0.75);
+    expect(r.breakdown).toEqual({ happyLegends: 4, purifiedLegends: 1, memories: 1 });
+    expect(r.id).toBe('mask');
   });
 
-  it('경계값: 임계값과 같으면 통과 (≥), 모자라면 미달 / 임계값은 쪽마다 따로', () => {
-    expect(judgeEnding(stats(100, 50), [], unit).id).toBe('solid');
-    expect(judgeEnding(stats(99, 50), [], unit).id).toBe('quiet');
-    expect(judgeEnding(stats(100, 49), [], unit).id).toBe('mask');
-    expect(judgeEnding(stats(99, 49), [], unit).id).toBe('rainy');
-  });
-
-  it('경계값: |happy − unhappy| = balanceRatio × max면 히든, 넘으면 solid', () => {
-    // max 100, ratio 0.2 → 차이 20까지
-    expect(judgeEnding(stats(100, 80), ['face'], unit).id).toBe('hidden');
-    expect(judgeEnding(stats(100, 79), ['face'], unit).id).toBe('solid');
-    expect(judgeEnding(stats(100, 125), ['face'], unit).id).toBe('hidden'); // 대칭: max 125 × 0.2 = 25
-    expect(judgeEnding(stats(100, 126), ['face'], unit).id).toBe('solid');
-  });
-
-  it('히든 조건에서 flag face가 없으면 solid', () => {
-    expect(judgeEnding(stats(100, 100), [], unit).id).toBe('solid');
-    expect(judgeEnding(stats(100, 100), ['avoid'], unit).id).toBe('solid');
-    expect(judgeEnding(stats(100, 100), ['avoid', 'face'], unit).id).toBe('hidden');
-  });
-
-  it('wSunk: 가라앉은 걱정 1마리당 Happy 점수 감점 → 임계값 아래로 떨어지면 결말이 바뀐다 (D-024)', () => {
-    const c = cfg((x) => {
-      x.weights = { wUpTier: 0, wDefeat: 1, wJoy: 0, wSunk: 2, wDownTier: 0, wLayer: 1, wPurified: 0 };
-      x.thresholds = { happy: 100, unhappy: 10 };
-    });
-    expect(judgeEnding(stats(120, 20), [], c)).toMatchObject({ id: 'solid', happy: 120 });
-    const r = judgeEnding(stats(120, 20, { sunkCount: 11 }), [], c);
-    expect(r).toMatchObject({ id: 'quiet', happy: 98 });
-    expect(r.breakdown.sunk).toBe(-22);
-  });
-
-  it('두 점수는 0 하한 (감점이 커도 음수가 아니다, breakdown은 0 하한 전 값)', () => {
-    const r = judgeEnding(stats(0, 0, { sunkCount: 300, sentUpTierSum: 5 }), [], CFG);
-    expect(r.happy).toBe(0);
-    expect(r.unhappy).toBe(0);
-    expect(r.breakdown.sunk).toBe(-300 * CFG.weights.wSunk);
+  it('total 0이면 share 0.5 (→ total < threshold라 rainy)', () => {
+    const r = judgeEnding(g(0, 0, ['slow', 'slow', 'slow']), C);
+    expect(r.share).toBe(0.5);
     expect(r.id).toBe('rainy');
+    // 임계값 0이면 share 0.5로 solid
+    expect(judgeEnding(g(0, 0, ['slow']), cfg((c) => (c.totalThreshold = 0))).id).toBe('solid');
   });
 
-  it('보스 승리 그림자 감소(shadowCalmed)는 점수에 들어가지 않는다 (D-023)', () => {
-    const a = judgeEnding(stats(0, 0), [], CFG);
-    const b = judgeEnding(stats(0, 0, { shadowCalmed: 500, bossWins: 10 }), [], CFG);
-    expect(b).toEqual(a);
-    expect(judgeEnding(stats(0, 0, { shadowPurified: 100 }), [], CFG).unhappy).toBeCloseTo(100 * CFG.weights.wPurified);
+  it('경계값: total = threshold면 통과, 1 모자라면 rainy', () => {
+    expect(judgeEnding(g(300, 300), C).id).toBe('solid');
+    expect(judgeEnding(g(300, 299), C).id).toBe('rainy');
+  });
+
+  it('경계값: share = shareBand[0]·[1]이면 solid (포함), 넘으면 mask / quiet', () => {
+    expect(judgeEnding(g(700, 300), C).id).toBe('solid'); // 0.7
+    expect(judgeEnding(g(300, 700), C).id).toBe('solid'); // 0.3
+    expect(judgeEnding(g(701, 299), C).id).toBe('mask');
+    expect(judgeEnding(g(299, 701), C).id).toBe('quiet');
+    expect(judgeEnding(g(1000, 0), C).id).toBe('mask');
+    expect(judgeEnding(g(0, 1000), C).id).toBe('quiet');
+  });
+
+  it('히든: 갈래가 모두 together + 기억 ≥ hiddenMinMemories (total·share보다 먼저)', () => {
+    const all3: Branch[] = ['together', 'together', 'together'];
+    expect(judgeEnding(g(500, 500, all3, 3), C).id).toBe('hidden');
+    // total이 모자라도 히든이 먼저
+    expect(judgeEnding(g(100, 100, all3, 3), C).id).toBe('hidden');
+    // 기억 하나 모자라면 아님
+    expect(judgeEnding(g(500, 500, all3, 2), C).id).toBe('solid');
+    // 한 번이라도 together가 아니면 아님
+    expect(judgeEnding(g(500, 500, ['together', 'happy', 'together'], 5), C).id).toBe('solid');
+    expect(judgeEnding(g(500, 500, ['together', 'together', 'slow'], 5), C).id).toBe('solid');
+    // 자라기가 한 번도 없으면 아님
+    expect(judgeEnding(g(500, 500, [], 5), C).id).toBe('solid');
   });
 });
 
@@ -123,29 +96,33 @@ describe('GameState: 판정 시점', () => {
     return new GameState(structuredClone(base), { cols: 5, rows: 4 }, mulberry32(3), gameGeometry(base.balance.lane.laneCap), 3);
   }
 
-  it('14일째 nextDay → lifeEnd 진입 시 1회 판정해 ending에 둔다 (그 전에는 null)', () => {
-    const g = fresh();
-    g.debugGotoDay(g.lifeLengthDays);
-    g.debugForceEvent('plain');
-    g.confirmDay();
-    expect(g.ending).toBeNull();
-    g.debugEndDay();
-    expect(g.phase).toBe('diary');
-    expect(g.ending).toBeNull();
-    g.nextDay();
-    expect(g.phase).toBe('lifeEnd');
-    expect(g.ending).toEqual(judgeEnding(g.stats, g.flags, base.endings));
-    expect(g.tick(0).some((e) => e.type === 'lifeEnd')).toBe(true);
+  it('14일째 nextDay → 마지막 자라기 → lifeEnd 진입 시 1회 판정 (그 전에는 null)', () => {
+    const s = fresh();
+    s.debugGotoDay(s.lifeLengthDays);
+    s.debugForceEvent('plain');
+    s.confirmDay();
+    expect(s.ending).toBeNull();
+    s.debugEndDay();
+    expect(s.phase).toBe('diary');
+    expect(s.ending).toBeNull();
+    const before = s.growthLog.length;
+    s.nextDay();
+    expect(s.phase).toBe('lifeEnd');
+    expect(s.growthLog.length).toBe(before + 1);
+    expect(s.ending).toEqual(judgeEnding(s.growth, base.endings));
+    const ev = s.tick(0);
+    expect(ev.findIndex((e) => e.type === 'growth')).toBeLessThan(ev.findIndex((e) => e.type === 'lifeEnd'));
   });
 
-  it('디버그 즉시 결말 판정: 현재 stats·flags로 lifeEnd, 레인은 비움', () => {
-    const g = fresh();
-    g.debugForceEvent('plain');
-    g.confirmDay();
-    g.summon(g.debugGrant('companion_animal', 1)!, 'happy');
-    g.debugJudgeEnding();
-    expect(g.phase).toBe('lifeEnd');
-    expect(g.defense.units).toHaveLength(0);
-    expect(g.ending?.id).toBe(judgeEnding(g.stats, g.flags, base.endings).id);
+  it('디버그 즉시 결말 판정: 지금 성장치로 lifeEnd (자라기 없음), 레인은 비움', () => {
+    const s = fresh();
+    s.debugForceEvent('plain');
+    s.confirmDay();
+    s.summon(s.debugGrant('companion_animal', 1)!, 'happy');
+    s.debugJudgeEnding();
+    expect(s.phase).toBe('lifeEnd');
+    expect(s.growthLog).toHaveLength(0);
+    expect(s.defense.units).toHaveLength(0);
+    expect(s.ending?.id).toBe(judgeEnding(s.growth, base.endings).id);
   });
 });

@@ -10,6 +10,7 @@ import type { DiaryCategory, DiaryEntry, NightCategory } from './diary';
 import { BREAKDOWN_KEYS, type EndingResult } from './ending';
 import type { BossRecord, GameState, SummonRecord } from './game';
 import { isValidDate, type GatingState } from './gating';
+import { BRANCHES, type GrowthResult, type GrowthState, type Traits } from './growth';
 import { WILDCARD, WILDCARD_TIER, type GridSize, type Piece } from './grid';
 import { LEGEND_TIER } from './recipes';
 import { GAME_STATS_KEYS, type GameStats } from './stats';
@@ -58,6 +59,12 @@ export interface SaveGame {
   summonLog: SummonRecord[];
   /** lifeEnd일 때만 */
   ending: EndingResult | null;
+  /** 자라기 누적 (§5.14-6) */
+  growth: GrowthState;
+  traits: Traits;
+  age: number;
+  /** 자라기마다의 결과 (리포트·metrics) */
+  growthLog: GrowthResult[];
 }
 
 export interface SaveData {
@@ -112,6 +119,10 @@ export function serializeGame(s: GameState): SaveGame {
     bossLog: s.bossLog,
     summonLog: s.summonLog,
     ending: s.phase === 'lifeEnd' ? s.ending : null,
+    growth: s.growth,
+    traits: s.traits,
+    age: s.age,
+    growthLog: s.growthLog,
   });
 }
 
@@ -146,7 +157,7 @@ const GAME_KEYS: (keyof SaveGame)[] = [
   'seed', 'rngState', 'day', 'phase', 'todayId', 'playTime', 'tickCount', 'nextPieceId', 'nextUnitId', 'spawnedToday',
   'joy', 'shadow', 'pendingBackflow', 'carryBackflow', 'grid', 'returnQueue', 'lostReturns', 'abyss', 'happyCd',
   'nextWorryId', 'waveDay', 'stats', 'heroFirstPurify', 'legendPurified', 'diary', 'flags', 'dailyUsed', 'lastDayStats', 'bossLog',
-  'summonLog', 'ending',
+  'summonLog', 'ending', 'growth', 'traits', 'age', 'growthLog',
 ];
 
 class SaveChecker extends Checker {
@@ -242,17 +253,72 @@ class SaveChecker extends Checker {
   }
 
   ending(v: unknown, path: string): void {
-    const o = this.obj(v, path, ['id', 'happy', 'unhappy', 'breakdown']);
+    const o = this.obj(v, path, ['id', 'happy', 'unhappy', 'total', 'share', 'branches', 'breakdown']);
     if (!o) return;
     this.oneOf(o.id, `${path}.id`, ENDING_IDS);
-    this.num(o.happy, `${path}.happy`);
-    this.num(o.unhappy, `${path}.unhappy`);
+    for (const k of ['happy', 'unhappy', 'total']) this.num(o[k], `${path}.${k}`, { min: 0 });
+    this.num(o.share, `${path}.share`, { min: 0, max: 1 });
+    this.list(o.branches, `${path}.branches`, (it, pp) => this.oneOf(it, pp, BRANCHES));
     this.nums(o.breakdown, `${path}.breakdown`, [...BREAKDOWN_KEYS]);
+  }
+
+  recipeId(v: unknown, path: string): void {
+    this.oneOf(v, path, this.data.recipes.recipes.map((r) => r.id));
+  }
+
+  growth(v: unknown, path: string): void {
+    const o = this.obj(v, path, ['happy', 'unhappy', 'memories', 'branches', 'album', 'given']);
+    if (!o) return;
+    for (const k of ['happy', 'unhappy']) this.num(o[k], `${path}.${k}`, { min: 0 });
+    this.num(o.memories, `${path}.memories`, { int: true, min: 0 });
+    this.list(o.branches, `${path}.branches`, (it, pp) => this.oneOf(it, pp, BRANCHES));
+    this.list(o.album, `${path}.album`, (it, pp) => {
+      const a = this.obj(it, pp, ['day', 'happy', 'purified']);
+      if (!a) return;
+      this.num(a.day, `${pp}.day`, { int: true, min: 1 });
+      this.recipeId(a.happy, `${pp}.happy`);
+      this.recipeId(a.purified, `${pp}.purified`);
+    });
+    this.nums(o.given, `${path}.given`, ['happy', 'purified'], { int: true, min: 0 });
+  }
+
+  traits(v: unknown, path: string): void {
+    const m = this.map(v, path);
+    if (!m) return;
+    const chainIds = this.data.chains.map((c) => c.archetypeId);
+    for (const [k, x] of Object.entries(m)) {
+      const [chain, kind] = k.split(':');
+      if (!chainIds.includes(chain) || (kind !== 'happy' && kind !== 'purified')) this.fail(`${path}.${k}`, '알 수 없는 특성 키');
+      this.num(x, `${path}.${k}`, { int: true, min: 0, max: this.data.balance.growth.traitMaxStacks });
+    }
+  }
+
+  growthResult(v: unknown, path: string): void {
+    const keys = ['day', 'index', 'age', 'consumed', 'happyCount', 'purifiedCount', 'pairs', 'branch', 'gained', 'traitsUp', 'traits'];
+    const o = this.obj(v, path, keys);
+    if (!o) return;
+    for (const k of ['day', 'index', 'age', 'happyCount', 'purifiedCount', 'pairs']) this.num(o[k], `${path}.${k}`, { int: true, min: 0 });
+    this.oneOf(o.branch, `${path}.branch`, BRANCHES);
+    this.nums(o.gained, `${path}.gained`, ['happy', 'unhappy'], { min: 0 });
+    this.traits(o.traitsUp, `${path}.traitsUp`);
+    this.traits(o.traits, `${path}.traits`);
+    this.list(o.consumed, `${path}.consumed`, (it, pp) => {
+      const c = this.obj(it, pp, ['recipe', 'kind', 'chain', 'cell']);
+      if (!c) return;
+      this.recipeId(c.recipe, `${pp}.recipe`);
+      this.oneOf(c.kind, `${pp}.kind`, ['happy', 'purified']);
+      this.str(c.chain, `${pp}.chain`);
+      if (c.cell !== null) this.num(c.cell, `${pp}.cell`, { int: true, min: 0 });
+    });
   }
 
   game(v: unknown, path: string, size: GridSize): void {
     const o = this.obj(v, path, GAME_KEYS);
     if (!o) return;
+    this.growth(o.growth, `${path}.growth`);
+    this.traits(o.traits, `${path}.traits`);
+    this.num(o.age, `${path}.age`, { int: true, min: 0 });
+    this.list(o.growthLog, `${path}.growthLog`, (it, pp) => this.growthResult(it, pp));
     const lifeDays = this.data.balance.days.lifeLengthDays;
     const p = (k: string) => `${path}.${k}`;
     for (const k of ['seed', 'rngState', 'tickCount', 'nextPieceId', 'nextUnitId', 'spawnedToday', 'lostReturns', 'nextWorryId']) {
@@ -301,10 +367,11 @@ class SaveChecker extends Checker {
       this.num(d.day, `${pp}.day`, { int: true, min: 1 });
     });
     this.list(o.diary, p('diary'), (it, pp) => {
-      const d = this.obj(it, pp, DIARY_KEYS);
+      const d = this.obj(it, pp, DIARY_KEYS, ['growthLine']);
       if (!d) return;
       this.num(d.day, `${pp}.day`, { int: true, min: 1 });
       for (const k of ['eventTitle', 'line', 'eventLine', 'resultLine', 'nightLine']) this.str(d[k], `${pp}.${k}`);
+      if ('growthLine' in d) this.str(d.growthLine, `${pp}.growthLine`);
       this.oneOf(d.category, `${pp}.category`, DIARY_CATEGORIES);
       this.oneOf(d.nightCategory, `${pp}.nightCategory`, NIGHT_CATEGORIES);
     });
