@@ -3,6 +3,7 @@
   "reactionDelay": 0.25,
   "reactionJitter": 0.2,
   "mistakeRate": 0.05,
+  "chainSkill": 0.5,
   "maxAttempts": 50,
   "maxGameSeconds": 20000,
   "m810Goals": {

@@ -59,12 +59,16 @@ export interface Obstacle {
   r: number;
 }
 
-export type ReleaseResult = { kind: 'merge'; from: number; to: number; kept: number } | { kind: 'swim' };
+/** chained = 연쇄로 이어 합쳐져 사라진 조각 (core가 합친 순서, D-073) — 화면이 단계별로 빨아들이는 연출에 씀 */
+export type ReleaseResult = { kind: 'merge'; from: number; to: number; kept: number; chained: Fish[] } | { kind: 'swim' };
 
 /** 놓은 조각을 core에 전달할 곳 (GameState.drop과 같은 모양) */
 export interface DropSink {
   readonly grid: Grid;
-  drop(from: number, to: number | null): DropKind;
+  /** touching = 결과 조각과 맞닿은 조각 id (가까운 순, 연쇄 D-073) */
+  drop(from: number, to: number | null, touching?: readonly number[]): DropKind;
+  /** 연쇄 맞닿음 여유 (px) */
+  readonly chainGap?: number;
 }
 
 export class Pond {
@@ -360,8 +364,18 @@ export class Pond {
     if (target) {
       const from = f.cell;
       const to = target.cell;
-      if (sink.drop(from, to) === 'merge') {
+      // 연쇄 (D-073): 머지 순간 결과 조각(짝 자리)과 맞닿은 조각 = 중심 거리 ≤ 2r + chainGap, 가까운 순
+      const reach = this.r * 2 + (sink.chainGap ?? 0);
+      const touching = [...this.fish.values()]
+        .filter((g) => g.id !== f.id && g.id !== target.id)
+        .map((g) => ({ g, d: Math.hypot(g.x - target.x, g.y - target.y) }))
+        .filter((o) => o.d <= reach)
+        .sort((a, b) => a.d - b.d)
+        .map((o) => o.g);
+      if (sink.drop(from, to, touching.map((g) => g.id)) === 'merge') {
         const kept = sink.grid.cells[to]!.id;
+        const live = new Set(sink.grid.cells.flatMap((p) => (p ? [p.id] : [])));
+        const chained = touching.filter((g) => !live.has(g.id)).sort((a, b) => a.tier - b.tier); // core는 낮은 단계부터 이어 합침
         this.sync(sink.grid);
         const k = this.fish.get(kept);
         if (k) {
@@ -371,7 +385,7 @@ export class Pond {
           k.vx = 0;
           k.vy = 0;
         }
-        return { kind: 'merge', from, to, kept };
+        return { kind: 'merge', from, to, kept, chained };
       }
     }
     f.x = x;

@@ -24,7 +24,9 @@
     "autoMergeMaxTier": 1,
     "autoMergeInterval": 0.5,
     "handoverRatio": 0.5,
-    "handoverTierValue": [1, 3, 7, 15, 50]
+    "handoverTierValue": [1, 3, 7, 15, 50],
+    "chainBonusPerStep": 0.25,
+    "chainGap": 6
   },
   "spawn": {
     "autoInterval": 2.5,

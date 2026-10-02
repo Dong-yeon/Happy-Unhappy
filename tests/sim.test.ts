@@ -78,7 +78,7 @@ describe('정책 기본 동작 (§5.20-10·13: 조각은 저절로 + 처치 드�
   it('balanced: 전투 중 머지로 병사·버프·스킬, 처치 드롭 조각도 들어온다', () => {
     const b = run('balanced', 1);
     expect(b.merges).toBeGreaterThan(0);
-    expect(b.battleMerges).toBe(b.merges + b.autoMerges); // 전투 밖 행동 없음 (자동 뭉침도 전투 중에만)
+    expect(b.battleMerges).toBe(b.merges + b.autoMerges + b.chainSteps); // 전투 밖 행동 없음 (자동 뭉침·연쇄도 전투 중에만)
     expect(b.soldiers).toBeGreaterThan(0);
     expect(Object.values(b.skillCasts).reduce((a, x) => a + x, 0)).toBeGreaterThan(0);
     expect(b.piecesDropped).toBeGreaterThan(0);

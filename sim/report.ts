@@ -141,6 +141,9 @@ export const METRICS: { key: string; label: string; get: (r: RunResult) => numbe
   // D-070 자동 뭉침
   { key: 'autoMerges', label: '자동 뭉침 수', get: (r) => r.autoMerges ?? 0 },
   { key: 'handMergesPerMin', label: '손 머지/분', get: (r) => (r.playTime > 0 ? r.merges / (r.playTime / 60) : null) },
+  // D-073 연쇄
+  { key: 'chainAvg', label: '평균 연쇄 수 (손 머지당)', get: (r) => (r.merges > 0 ? 1 + (r.chainSteps ?? 0) / r.merges : null) },
+  { key: 'chain2Ratio', label: '2연쇄 이상 비율', get: (r) => (r.merges > 0 ? (r.chains ?? 0) / r.merges : null) },
   // D-072 팀 교대 이어받기
   { key: 'handoverPieces', label: '교대 회수 조각', get: (r) => r.handoverPieces ?? 0 },
   { key: 'battleMergeRatio', label: '전투 중 머지 비율', get: (r) => (r.merges + (r.autoMerges ?? 0) ? r.battleMerges / (r.merges + (r.autoMerges ?? 0)) : null) },

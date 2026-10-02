@@ -44,6 +44,8 @@ const HOP_MS = 280;
 const ABSORB_MS = 200;
 /** 팀 교대 이어받기: 회수 조각이 이야기책으로 빨려 들어가는 시간 (D-072) */
 const HANDOVER_MS = 400;
+/** 연쇄: 단계 사이 간격 (D-073) */
+const CHAIN_STEP_MS = 250;
 const HOP_PX = 10;
 const RELEASE_FLOAT_PX = 36;
 const RELEASE_FLOAT_MS = 350;
@@ -371,9 +373,15 @@ export class WellView {
     const res = this.pond.release(w.x, w.y, this.state);
     if (res.kind === 'merge') {
       // pond가 이미 core와 맞췄다: 사라진 조각 표시를 지우고 남은 조각을 새 단계로
+      const chainedViews = res.chained.map((f) => {
+        const cv = this.views.get(f.id);
+        this.views.delete(f.id);
+        return cv;
+      });
       for (const vid of [...this.views.keys()]) if (!this.pond.fish.has(vid)) this.dropView(vid);
       const kf = this.pond.fish.get(res.kept);
-      if (kf) this.hop(this.rebuild(kf));
+      if (res.chained.length && kf) this.chainFx(kf, chainedViews);
+      else if (kf) this.hop(this.rebuild(kf));
       this.refresh();
       this.hooks.onChange();
     }
@@ -444,6 +452,50 @@ export class WellView {
       });
     });
     this.refresh();
+  }
+
+  /**
+   * 연쇄 연출 (D-073): core는 이미 다 합쳤다. 이어 합쳐진 조각이 CHAIN_STEP_MS 간격으로 하나씩 남은 조각에 빨려 들어가고,
+   * 끝나면 남은 조각이 새 단계로 톡 + "n연쇄!" 글자, 3연쇄 이상이면 화면이 살짝 흔들린다
+   */
+  private chainFx(kept: Fish, views: (View | undefined)[]): void {
+    const n = views.length + 1;
+    const kv = this.views.get(kept.id);
+    views.forEach((v, k) => {
+      if (!v) return;
+      v.c.setDepth(DEPTH + 1);
+      const sx = v.c.x;
+      const sy = v.c.y;
+      const t = { k: 0 };
+      this.scene.tweens.add({
+        targets: t,
+        k: 1,
+        delay: CHAIN_STEP_MS * (k + 1),
+        duration: ABSORB_MS,
+        ease: 'Quad.easeIn',
+        onUpdate: () => v.c.setPosition(sx + (kept.x - sx) * t.k, sy + (kept.y - sy) * t.k).setScale(1 - 0.4 * t.k),
+        onComplete: () => {
+          v.c.destroy();
+          this.sparkle(kept.x, kept.y);
+          if (kv?.c.active) {
+            this.scene.tweens.killTweensOf(kv.c);
+            kv.c.setScale(1.15);
+            this.scene.tweens.add({ targets: kv.c, scale: 1, duration: 160 });
+          }
+        },
+      });
+    });
+    this.scene.time.delayedCall(CHAIN_STEP_MS * n, () => {
+      const f = this.pond.fish.get(kept.id);
+      if (f) this.hop(this.rebuild(f));
+      const label = text(this.scene, kept.x, kept.y - this.pond.r - 6, `${n}연쇄!`, { fontSize: '14px', color: '#ffe08a', fontStyle: 'bold', stroke: '#1b1d24', strokeThickness: 3 })
+        .setOrigin(0.5, 1)
+        .setDepth(32)
+        .setScale(0.6);
+      this.scene.tweens.add({ targets: label, scale: 1.25 + 0.1 * n, duration: 260, ease: 'Back.easeOut' });
+      this.scene.tweens.add({ targets: label, y: label.y - 18, alpha: 0, delay: 520, duration: 360, onComplete: () => label.destroy() });
+      if (n >= 3) this.scene.cameras.main.shake(180, 0.004);
+    });
   }
 
   /** 작은 반짝임 (자동 뭉침) */

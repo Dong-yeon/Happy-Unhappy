@@ -5,7 +5,7 @@
 import type { GameState } from '../../src/core/game';
 import type { Formation } from '../../src/core/roster';
 import type { Action, Policy, PolicyContext } from '../types';
-import { bestMerge, isGridFull, lowestReleaseCell, pick, topTierCell } from './helpers';
+import { bestChainMerge, bestMerge, emptyCount, isGridFull, lowestReleaseCell, pick, topTierCell } from './helpers';
 
 const TEAM = 3;
 
@@ -94,6 +94,22 @@ function makeMerger(name: string, formation?: (s: GameState) => Formation, grow:
   };
 }
 
+/**
+ * chainer (D-073): 같은 체인을 단계별로 모아 두었다가 연쇄로 터뜨린다 — 2연쇄 이상 되는 머지가 있으면 가장 긴 것,
+ * 없으면 기다림 (빈 칸이 CHAINER_ROOM 이하로 줄면 보통 머지로 칸을 비움)
+ */
+const CHAINER_ROOM = 2;
+const chainer: Policy = {
+  name: 'chainer',
+  formation: alternateFormation,
+  decide({ state }) {
+    const c = bestChainMerge(state);
+    if (c) return c.action;
+    if (emptyCount(state) <= CHAINER_ROOM) return bestMerge(state) ?? tidy(state);
+    return null;
+  },
+};
+
 /** noMerge: 머지 안 함 (가득 차면 가장 낮은 조각을 놓아줌) */
 const noMerge: Policy = {
   name: 'noMerge',
@@ -128,6 +144,7 @@ export const POLICIES: Record<string, Policy> = {
 /** roster all 인연 비교용 (전 정책 목록에는 넣지 않음, --policy bondOn,bondOff) */
 export const EXTRA_POLICIES: Record<string, Policy> = {
   noMerge,
+  chainer,
   lazy,
   /** M8.11 편성 몰기 (보유 영웅을 한쪽 팀에) */
   dayHeavyTeam: makeMerger('dayHeavyTeam', (s) => heavyFormation(s, 'offense')),

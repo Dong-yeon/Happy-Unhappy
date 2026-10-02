@@ -136,7 +136,7 @@ function checkBalance(c: Checker, v: unknown): { maxTier?: number; chapterLength
 
   let maxTier: number | undefined;
   const g = c.obj(b.grid, `${p}.grid`, [
-    'gridCols', 'gridRows', 'gridPresets', 'maxTier', 'autoMergeMaxTier', 'autoMergeInterval', 'handoverRatio', 'handoverTierValue',
+    'gridCols', 'gridRows', 'gridPresets', 'maxTier', 'autoMergeMaxTier', 'autoMergeInterval', 'handoverRatio', 'handoverTierValue', 'chainBonusPerStep', 'chainGap',
   ]);
   if (g) {
     const cols = c.num(g.gridCols, `${p}.grid.gridCols`, { int: true, min: 1 });
@@ -165,6 +165,9 @@ function checkBalance(c: Checker, v: unknown): { maxTier?: number; chapterLength
     const hv = c.arr(g.handoverTierValue, `${p}.grid.handoverTierValue`, 1) ?? [];
     hv.forEach((v, i) => c.num(v, `${p}.grid.handoverTierValue[${i}]`, { min: 0 }));
     if (maxTier !== undefined && hv.length !== maxTier) c.fail(`${p}.grid.handoverTierValue`, `길이 ${maxTier}(maxTier)이어야 함`);
+    // 연쇄 (D-073): 보너스 0 이상, 맞닿음 여유 0 이상(px)
+    c.num(g.chainBonusPerStep, `${p}.grid.chainBonusPerStep`, { min: 0 });
+    c.num(g.chainGap, `${p}.grid.chainGap`, { min: 0 });
   }
 
   // 조각이 생기는 길 (§5.20-13): 저절로 + 처치 드롭

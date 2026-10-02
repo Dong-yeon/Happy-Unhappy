@@ -52,6 +52,8 @@ interface Args {
   out: string | null;
   compare: [string, string] | null;
   sets: Override[];
+  /** sim.json 봇 설정 덮어쓰기 (chainSkill 등) */
+  simSets: { key: string; value: number }[];
   sweep: { key: string; values: Override[] } | null;
   saveRoundTrip: boolean;
   maxAttempts: number;
@@ -88,7 +90,19 @@ function parseArgs(argv: string[]): Args {
   const sweepArgs = getAll('sweep');
   if (sweepArgs.length > 1) fail('--sweep은 한 번만 (키 하나)');
   const sweep = sweepArgs.length ? attempt(() => parseSweep(sweepArgs[0])) : null;
-  const sets = getAll('set').map((s) => attempt(() => parseSet(s)));
+  // sim.json 숫자 키(예: chainSkill)나 sim. 접두는 봇 설정 덮어쓰기, 그 밖은 데이터(balance 등)
+  const isSimKey = (k: string) => k.startsWith('sim.') || typeof (simJson as Record<string, unknown>)[k] === 'number';
+  const rawSets = getAll('set');
+  const simSets = rawSets
+    .filter((s) => isSimKey(s.slice(0, Math.max(0, s.indexOf('='))).trim()))
+    .map((s) => {
+      const i = s.indexOf('=');
+      const key = s.slice(0, i).trim().replace(/^sim\./, '');
+      const value = Number(s.slice(i + 1));
+      if (typeof (simJson as Record<string, unknown>)[key] !== 'number' || !Number.isFinite(value)) fail(`--set ${key}: sim.json의 숫자 키가 아님`);
+      return { key, value };
+    });
+  const sets = rawSets.filter((s) => !isSimKey(s.slice(0, Math.max(0, s.indexOf('='))).trim())).map((s) => attempt(() => parseSet(s)));
 
   const policyArg = get('policy') ?? (sweep ? 'all' : 'balanced');
   const policies =
@@ -135,6 +149,7 @@ function parseArgs(argv: string[]): Args {
     out: get('out') ?? null,
     compare,
     sets,
+    simSets,
     sweep,
     saveRoundTrip: argv.includes('--saveRoundTrip'),
     maxAttempts,
@@ -237,7 +252,9 @@ function main(): void {
   if (!isPreset(base.balance.grid.gridPresets, args.grid)) {
     fail(`--grid ${args.grid.cols}x${args.grid.rows}는 gridPresets에 없음`);
   }
-  const cfg = simJson as SimConfig;
+  const cfg = { ...(simJson as SimConfig) } as SimConfig;
+  for (const o of args.simSets) (cfg as unknown as Record<string, number>)[o.key] = o.value;
+  if (args.simSets.length) console.log(`봇 설정: ${args.simSets.map((o) => `${o.key}=${o.value}`).join(' ')}`);
   mkdirSync(OUT_DIR, { recursive: true });
 
   // ── --sweep: 값마다 전 정책 → 비교 표 ──

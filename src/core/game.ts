@@ -113,6 +113,8 @@ export type CoreEvent =
   | { type: 'stageStart'; stage: number; retry: FailReason | null }
   /** 자동 뭉침 (D-070): from 조각이 to 칸으로 합쳐짐 (보상은 손 머지와 같음). 화면은 이 쌍을 끌어다 붙이는 연출만 */
   | { type: 'autoMerge'; from: number; to: number }
+  /** 연쇄 (D-073): 손 머지 결과(to 칸)에 cells 칸 조각이 차례로 이어 합쳐짐 (n = 1 + cells.length ≥ 2) */
+  | { type: 'chain'; to: number; cells: number[]; n: number }
   /** 팀 교대 이어받기 (D-072): cells 칸의 조각이 회수되어 새 팀 게이지로 (gauges = 더한 뒤 값) */
   | { type: 'handover'; role: Role; cells: number[]; amount: number; gauges: { heroId: string; gauge: number; max: number }[] }
   /** 장면 카드를 닫고 낮 시작 */
@@ -227,6 +229,9 @@ export class GameState {
   readonly heldCells = new Set<number>();
   /** 이 판에서 자동 뭉침 횟수 (저장하지 않음, 시뮬 집계용) */
   autoMerges = 0;
+  /** 연쇄 (D-073): 2연쇄 이상 횟수 · 이어 합친 단계 수 합 (저장하지 않음, 시뮬 집계용) */
+  chains = 0;
+  chainSteps = 0;
   /** 팀 교대 이어받기 횟수·회수한 조각 수 (저장하지 않음, 시뮬 집계용) */
   handovers = 0;
   handoverPieces = 0;
@@ -1562,6 +1567,11 @@ export class GameState {
    * 자동 뭉침 쌍 (D-070): autoMergeMaxTier 이하, 와일드카드·잡고 있는 칸 제외, 같은 체인·같은 단계 두 조각.
    * 고르는 순서: 낮은 단계 먼저 → 합쳐질 칸(to, 작은 번호) → 옮겨 올 칸(from, to 다음으로 작은 번호). 없으면 null
    */
+  /** 연쇄 맞닿음 여유 (px, 화면이 씀: 중심 거리 ≤ 2r + chainGap) */
+  get chainGap(): number {
+    return this.data.balance.grid.chainGap;
+  }
+
   /** 자동 뭉침 단계 상한 (0 = 끔). 이 단계 이하 같은 조각은 손으로 합칠 필요가 없다 */
   get autoMergeMaxTier(): number {
     return this.data.balance.grid.autoMergeMaxTier;
@@ -1597,16 +1607,63 @@ export class GameState {
   }
 
   /** 드롭: 머지 / 교환·이동. 전투 중 머지면 버프 + 병사 + 스킬 게이지 */
-  drop(from: number, to: number | null): DropKind {
+  /**
+   * 드롭: 머지 / 교환·이동. 전투 중 머지면 버프 + 병사 + 스킬 게이지.
+   * touching (연쇄, D-073): 화면이 넘기는 "머지 순간 결과 조각과 맞닿은 조각 id" (가까운 순). 손 머지(와일드카드 없음) 결과 단계 t와
+   * 같은 체인·단계 t 조각이 그 안에 있으면 이어 합치고 t+1로 다시 — 최고 단계거나 짝이 없으면 끝. 맞지 않는 id는 무시 (결정적).
+   * n연쇄(n≥2)면 각 단계 보상(병사·버프·게이지) × (1 + chainBonusPerStep × (n−1)). 연쇄 뒤 자동 뭉침은 잠깐 쉰다
+   */
+  drop(from: number, to: number | null, touching: readonly number[] = []): DropKind {
+    const a = this.grid.cells[from];
+    const b = to === null ? null : this.grid.cells[to];
+    const wild = (a && isWildcard(a)) || (b && isWildcard(b));
     const kind = applyDrop(this.grid, from, to);
-    if (kind === 'merge') {
-      this.attemptStats.merges += 1;
-      const p = this.grid.cells[to!]!;
-      if (p.tier >= 3) this.stats.tier3ByChain[p.chain] = (this.stats.tier3ByChain[p.chain] ?? 0) + 1;
-      if (p.tier >= this.data.balance.grid.maxTier) this.stats.tier5Made += 1;
-      if (this.inBattle) this.battleMerge(p, to!);
+    if (kind !== 'merge') return kind;
+    // 연쇄 단계 미리 정하기 (보상 배율이 총 연쇄 수 n에 달려서)
+    const steps: number[] = []; // 이어 합칠 칸 (순서대로)
+    if (!wild && touching.length) {
+      const base = this.grid.cells[to!]!;
+      const used = new Set<number>();
+      let tier = base.tier;
+      while (tier < this.grid.maxTier) {
+        let found = -1;
+        for (const id of touching) {
+          if (used.has(id) || id === base.id) continue;
+          const cell = this.grid.cells.findIndex((q) => q !== null && q.id === id);
+          const q = cell >= 0 ? this.grid.cells[cell]! : null;
+          if (!q || isWildcard(q) || q.chain !== base.chain || q.tier !== tier || cell === to) continue;
+          found = cell;
+          used.add(id);
+          break;
+        }
+        if (found < 0) break;
+        steps.push(found);
+        tier += 1;
+      }
+    }
+    const n = 1 + steps.length;
+    const chainMult = n >= 2 ? 1 + this.data.balance.grid.chainBonusPerStep * (n - 1) : 1;
+    this.afterMerge(to!, chainMult);
+    for (const cell of steps) {
+      applyDrop(this.grid, cell, to);
+      this.afterMerge(to!, chainMult);
+    }
+    if (n >= 2) {
+      this.chains += 1;
+      this.chainSteps += n - 1;
+      this.autoMergeTimer = Math.max(this.autoMergeTimer, this.data.balance.grid.autoMergeInterval * n);
+      this.pending.push({ type: 'chain', to: to!, cells: steps, n });
     }
     return kind;
+  }
+
+  /** 머지 한 번의 집계 + 전투 중 보상 (결과 조각 = to 칸) */
+  private afterMerge(to: number, chainMult: number): void {
+    this.attemptStats.merges += 1;
+    const p = this.grid.cells[to]!;
+    if (p.tier >= 3) this.stats.tier3ByChain[p.chain] = (this.stats.tier3ByChain[p.chain] ?? 0) + 1;
+    if (p.tier >= this.data.balance.grid.maxTier) this.stats.tier5Made += 1;
+    if (this.inBattle) this.battleMerge(p, to, chainMult);
   }
 
   /** 지금 이 체인을 머지하면 때 맞춤인지 ([11]-2): 낮 sun / 밤 moon */
@@ -1623,13 +1680,15 @@ export class GameState {
    * 병사: 결과 2~5단계 = 1~4단. 상한이면 버프만. 때 맞춤이면 병사 능력치·버프·특별 버프 × affinityMult
    * 스킬 게이지: 레인에 있는 그 체인 주인 영웅 + tierPoints (5단계 = 즉시 가득). 5단계 = 특별 버프
    */
-  private battleMerge(p: Piece, cell: number): void {
+  private battleMerge(p: Piece, cell: number, chainMult = 1): void {
     const role = this.fightingRole!;
     const b = this.data.balance;
     const c = this.data.chains.find((x) => x.archetypeId === p.chain)!;
     const big = p.tier >= 3;
     const affinity = this.isAffinity(p.chain);
     const mult = affinity ? b.merge.affinityMult : 1;
+    // 연쇄 보너스 (D-073): 병사·버프·게이지에만 (특별 버프는 그대로)
+    const rew = mult * chainMult;
     this.stats.battleMerges += 1;
     this.attemptStats.battleMerges += 1;
     if (affinity) this.stats.affinityMerges += 1;
@@ -1639,7 +1698,7 @@ export class GameState {
       let healed = 0;
       for (const u of this.teamUnits(role)) {
         const before = u.hp;
-        u.hp = Math.min(u.maxHp, u.hp + u.maxHp * b.buff.healPct * (big ? b.buff.tier3Mult : 1) * mult);
+        u.hp = Math.min(u.maxHp, u.hp + u.maxHp * b.buff.healPct * (big ? b.buff.tier3Mult : 1) * rew);
         healed += u.hp - before;
       }
       this.stats.buffHeal += healed;
@@ -1649,7 +1708,7 @@ export class GameState {
       const add = big ? b.buff.tier3Mult : 1;
       for (let k = 0; k < add && m.stacks < b.buff.momentumMaxStacks; k++) {
         m.stacks += 1;
-        m.bonus += b.buff.momentumAtkPct * mult;
+        m.bonus += b.buff.momentumAtkPct * rew;
       }
       m.timer = b.buff.momentumSeconds;
       this.applyMomentum(role);
@@ -1666,7 +1725,7 @@ export class GameState {
       const prog = this.progressOf(id);
       const max = this.skillOf(id).gauge;
       if (top) prog.gauge = max;
-      else prog.gauge = Math.min(max, prog.gauge + (b.skill.tierPoints[p.tier - 1] ?? 0) * this.bondEffect(id).gaugeMult);
+      else prog.gauge = Math.min(max, prog.gauge + (b.skill.tierPoints[p.tier - 1] ?? 0) * this.bondEffect(id).gaugeMult * chainMult);
       this.pending.push({ type: 'gauge', heroId: id, gauge: prog.gauge, max });
       // 자동이면 차는 즉시, 수동이면 탭(castReady)을 기다린다. 5단계는 수동이어도 즉시 (§5.20-13)
       if ((this.autoSkill || top) && this.skillReady(id)) this.fireSkill(role, id, this.pending);
@@ -1683,7 +1742,7 @@ export class GameState {
       return;
     }
     const lv = c.soldier.levels[level - 1];
-    const stats: CombatStats = { hp: lv.hp * mult, atk: lv.atk * mult, atkInterval: lv.atkInterval, range: lv.range };
+    const stats: CombatStats = { hp: lv.hp * rew, atk: lv.atk * rew, atkInterval: lv.atkInterval, range: lv.range };
     const u = lane.addUnit(this.nextUnitId++, sideOf(role), p.chain, level, stats, {
       role: 'soldier',
       soldier: c.soldier.kind,

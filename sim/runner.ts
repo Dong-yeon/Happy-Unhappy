@@ -13,6 +13,7 @@ import { serializeGame, type SaveGame } from '../src/core/save';
 import type { GameData } from '../src/data/types';
 import { gameGeometry } from '../src/scenes/layout';
 import { alternateFormation } from './policies';
+import { chainLadder } from './policies/helpers';
 import type { Action, Policy, SimConfig } from './types';
 
 export type Roster = 'start' | 'all';
@@ -78,6 +79,9 @@ export interface RunResult {
   merges: number;
   /** 자동 뭉침 수 (D-070, core가 저절로) */
   autoMerges: number;
+  /** 연쇄 (D-073): 2연쇄 이상 횟수 · 이어 합친 단계 수 합 */
+  chains: number;
+  chainSteps: number;
   /** 팀 교대 이어받기 (D-072): 회수 횟수·회수한 조각 수 */
   handovers: number;
   handoverPieces: number;
@@ -178,7 +182,7 @@ export function runLife(data: GameData, cfg: SimConfig, policy: Policy, opt: Run
   const maxAttempts = opt.maxAttempts ?? cfg.maxAttempts;
   let kills = 0;
   let ticks = 0;
-  const counts = { merges: 0, autoMerges: 0, handovers: 0, handoverPieces: 0, releases: 0, mistakes: 0, staleActions: 0 };
+  const counts = { merges: 0, autoMerges: 0, handovers: 0, handoverPieces: 0, chains: 0, chainSteps: 0, releases: 0, mistakes: 0, staleActions: 0 };
   // 보유 영웅·편성 (판 시작, 장면 카드 앞 = 편성 화면 자리)
   if (opt.roster === 'all') {
     state.debugGrantAllHeroes();
@@ -203,7 +207,15 @@ export function runLife(data: GameData, cfg: SimConfig, policy: Policy, opt: Run
     }
     switch (a.type) {
       case 'drop': {
-        const kind = state.drop(a.from, a.to);
+        // 연쇄 (D-073): 그리드에 같은 체인 t, t+1 … 이 있으면 chainSkill 확률로 "맞닿게 놓았다"고 가정
+        const ladder = chainLadder(state, a.from, a.to);
+        const touching = ladder.length && botRng() < cfg.chainSkill ? ladder : [];
+        // 연쇄 집계는 drop 직후 state 카운터 차이로 (경계에서 저장·불러오기를 해도 이벤트를 잃지 않게)
+        const c0 = state.chains;
+        const s0 = state.chainSteps;
+        const kind = state.drop(a.from, a.to, touching);
+        counts.chains += state.chains - c0;
+        counts.chainSteps += state.chainSteps - s0;
         if (kind === 'merge') counts.merges += 1;
         else if (kind === 'none') counts.staleActions += 1;
         break;
