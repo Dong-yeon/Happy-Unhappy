@@ -18,6 +18,8 @@ import {
   summarizeMetrics,
   type AttemptMetrics,
   type MetricsData,
+  emptyPlay,
+  emptyUi,
 } from '../src/metrics/model';
 import { MetricsRecorder } from '../src/metrics/recorder';
 import { METRICS_KEY } from '../src/platform/storage';
@@ -46,13 +48,14 @@ function attemptMetrics(attempt: number, stage: number, result: AttemptResult): 
     nightRealSeconds: 20,
     speedUsed: 0,
     rating: null,
+    play: emptyPlay(),
   };
 }
 
 describe('상한 (500 / 20 / 크기)', () => {
   it('세션 500·판 20을 넘으면 오래된 것부터 버린다', () => {
     const m = emptyMetrics(NOW);
-    for (let i = 0; i < MAX_SESSIONS + 3; i++) m.sessions.push({ realDate: '2026-10-01', startedAt: String(i), foregroundSeconds: 0, attemptsCompleted: 0 });
+    for (let i = 0; i < MAX_SESSIONS + 3; i++) m.sessions.push({ realDate: '2026-10-01', startedAt: String(i), foregroundSeconds: 0, attemptsCompleted: 0, ui: emptyUi() });
     for (let i = 0; i < MAX_LIVES + 2; i++) m.lives.push(newLife(i, SIZE, NOW));
     const w = enforceLimits(m);
     expect(m.sessions).toHaveLength(MAX_SESSIONS);
@@ -215,7 +218,7 @@ describe('MetricsRecorder', () => {
     store.setItem(METRICS_KEY, '{broken');
     const rec = new MetricsRecorder(fresh(), SIZE);
     expect(rec.data.lives).toHaveLength(1);
-    expect(stored().version).toBe(5);
+    expect(stored().version).toBe(6);
     store.setItem = () => {
       throw new Error('QuotaExceededError');
     };
@@ -235,7 +238,7 @@ describe('요약·분석', () => {
     attemptMetrics(3, 2, 'dayFall'),
     { ...attemptMetrics(4, 2, 'success'), speedUsed: 5, realSeconds: 999 },
   );
-  const data4: MetricsData = { ...emptyMetrics(NOW), lives: [life], sessions: [{ realDate: '2026-10-01', startedAt: NOW, foregroundSeconds: 10, attemptsCompleted: 4 }] };
+  const data4: MetricsData = { ...emptyMetrics(NOW), lives: [life], sessions: [{ realDate: '2026-10-01', startedAt: NOW, foregroundSeconds: 10, attemptsCompleted: 4, ui: emptyUi() }] };
 
   it('배속 사용 시도는 길이 중앙값에서 제외, 결과별 수', () => {
     const s = summarizeMetrics([life], data4.sessions);
@@ -248,9 +251,9 @@ describe('요약·분석', () => {
     expect(longestStreak(['2026-10-01', '2026-10-02', '2026-10-04'])).toBe(2);
   });
 
-  it('분석 표: 개요 → 스테이지별 → 길이 → 편성·조각 → 주관 → 판별, --bot 비교', () => {
+  it('분석 표: 개요 → 스테이지별 → 길이 → 편성·조각 → 손맛 → 화면 → 세션별 → 주관 → 판별, --bot 비교', () => {
     const sections = analyze(data4);
-    expect(sections.map((x) => x.title.split(' ')[0])).toEqual(['개요', '스테이지별', '시도', '편성', '주관', '판별']);
+    expect(sections.map((x) => x.title.split(' ')[0])).toEqual(['개요', '스테이지별', '시도', '편성', '손맛', '화면', '세션별', '주관', '판별']);
     const st = sections[1];
     expect(st.rows.map((r) => r[0])).toEqual(['1-1', '1-2']);
     const bot = {
@@ -263,5 +266,67 @@ describe('요약·분석', () => {
     const cmp = compareWithBot(data4, bot);
     expect(cmp.rows[0][2]).toBe('15');
     expect(formatAnalysis([...sections, cmp])).toContain('사람 vs 봇');
+  });
+});
+
+describe('v6: 손맛·화면 카운터 (playtest-plan v2 §5)', () => {
+  it('v5 기록을 읽으면 없는 필드는 0으로 채우고 v6로 올린다', () => {
+    const life = newLife(1, SIZE, NOW);
+    const old = attemptMetrics(1, 1, 'success') as Partial<AttemptMetrics>;
+    delete old.play;
+    life.attempts.push(old as AttemptMetrics);
+    const v5 = { version: 5, firstSeen: NOW, inProgress: null, lives: [life], sessions: [{ realDate: '2026-10-01', startedAt: NOW, foregroundSeconds: 3, attemptsCompleted: 1 }] };
+    const r = parseMetrics(JSON.stringify(v5));
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.data.version).toBe(6);
+    expect(r.data.lives[0].attempts[0].play).toEqual(emptyPlay());
+    expect(r.data.sessions[0].ui).toEqual(emptyUi());
+    // 일부만 있는 필드는 남기고 나머지만 0
+    const part = { ...v5, version: 6, sessions: [{ ...v5.sessions[0], ui: { storybookOpened: 2 } }] };
+    const p2 = parseMetrics(JSON.stringify(part));
+    expect(p2.ok && p2.data.sessions[0].ui).toEqual({ ...emptyUi(), storybookOpened: 2 });
+  });
+
+  it('recorder: 시도 동안 core 카운터 차이를 play로, 화면 카운터는 세션 ui에', () => {
+    const store = new MemoryStorage();
+    const gw = globalThis as unknown as { window?: unknown };
+    gw.window = { localStorage: store, location: { search: '' } };
+    const g = new GameState(data, SIZE, mulberry32(1), GEO, 1);
+    const rec = new MetricsRecorder(g, SIZE);
+    g.chains = 5; // 시도 전 값은 빼고 센다
+    g.confirmDay();
+    rec.beginAttempt();
+    g.chains += 2;
+    g.chainSteps += 3;
+    g.autoMerges += 4;
+    g.handovers += 1;
+    g.handoverPieces += 6;
+    g.skillsAuto += 7;
+    g.skillsManual += 1;
+    rec.endAttempt({ ...g.attemptStats, result: 'success' });
+    expect(rec.life.attempts[0].play).toEqual({ chains: 2, chainSteps: 3, autoMerges: 4, handovers: 1, handoverPieces: 6, skillsAuto: 7, skillsManual: 1 });
+    rec.ui('formationOpened');
+    rec.ui('formationChanged');
+    rec.ui('storybookOpened');
+    rec.ui('heroDetailOpened');
+    rec.ui('inkPoured', 30);
+    const saved = parseMetrics(store.getItem(METRICS_KEY));
+    delete gw.window;
+    expect(saved.ok && saved.data.sessions.at(-1)!.ui).toEqual({ formationOpened: 1, formationChanged: 1, storybookOpened: 1, heroDetailOpened: 1, inkPoured: 30 });
+  });
+
+  it('core: 초상 탭(castReady) 발동은 수동, 자동 모드 발동은 자동으로 센다', () => {
+    const g = new GameState(data, SIZE, mulberry32(1), GEO, 1);
+    g.confirmDay();
+    g.tick(0);
+    g.setAutoSkill(false);
+    g.progressOf('sapsal').gauge = g.skillOf('sapsal').gauge;
+    expect(g.castReady('sapsal')).toBe(true);
+    expect([g.skillsAuto, g.skillsManual]).toEqual([0, 1]);
+    g.setAutoSkill(true);
+    g.progressOf('sapsal').gauge = g.skillOf('sapsal').gauge;
+    g.tick(1 / 60);
+    expect(g.skillsAuto).toBe(1);
   });
 });

@@ -67,6 +67,7 @@ export class GameScene extends Phaser.Scene {
     this.state = this.session.boot();
     // metrics (§5.10): 관찰만. 판 도중 복원 감지는 생성 시
     this.metrics = new MetricsRecorder(this.state, size);
+    this.registry.set('metrics', this.metrics);
 
     // 잉크 (§5.22-2): 자리를 비운 동안 쌓인 만큼 (저장된 마지막 시각 → 지금)
     const away = this.state.accrueInk(nowMs());
@@ -124,6 +125,7 @@ export class GameScene extends Phaser.Scene {
    */
   private openFormation(cancellable: boolean, done?: () => void): void {
     if (this.formationView?.isOpen) return;
+    this.metrics.ui('formationOpened');
     this.wellView.cancel();
     const data = this.registry.get('data') as GameData;
     this.formationView = new FormationView(this, this.state, data, () => {

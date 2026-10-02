@@ -8,6 +8,7 @@ import type { Aptitude, GameData, SkillDef } from '../data/types';
 import { heroChainColor } from './laneUnits';
 import { VIEW_H, VIEW_W } from './layout';
 import { Button, text } from './ui';
+import { countUi } from '../metrics/scene';
 
 const DEPTH = 90;
 const ROLE_LABEL: Record<string, string> = { tank: '탱커', attack: '공격', support: '서포트' };
@@ -43,6 +44,7 @@ export class HeroDetailView {
   ) {
     const bg = scene.add.rectangle(0, 0, VIEW_W, VIEW_H, 0x0e1016, 0.98).setOrigin(0).setDepth(DEPTH).setInteractive();
     this.objs.push(bg);
+    countUi(scene, 'heroDetailOpened');
     this.draw();
   }
 
@@ -155,6 +157,7 @@ export class HeroDetailView {
 
   private pour(n: number): void {
     const r = this.state.pourInk(this.heroId, n);
+    if (r.spent > 0) countUi(this.scene, 'inkPoured', r.spent);
     this.msg = r.spent ? `잉크 ${r.spent} → 경험치 ${r.spent * this.data.balance.ink.expPerInk}${r.levels ? ` · 레벨 업!` : ''}` : '';
     this.draw();
   }

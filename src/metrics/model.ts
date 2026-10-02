@@ -1,11 +1,13 @@
 // metrics 데이터 형식·순수 로직 (스펙 §5.10-3, §5.19). Phaser·브라우저 의존 없음 (저장·시간은 recorder.ts가 platform으로).
 // metrics는 관찰만 한다: 게임 규칙은 이 값을 읽지 않는다.
 // v4: 일차(day) 대신 시도(attempt) 단위 기록 (D-054). v5: 먹이기·갈림길 기록 삭제, 편성 기록 (§5.20).
+// v6 (playtest-plan v2 §5, 트랙 A): 시도별 손맛 카운터(연쇄·자동 뭉침·이어받기·자동/수동 스킬) + 세션별 화면 카운터
+//   (편성·이야기책·영웅 상세 연 횟수, 편성 바꿈, 잉크 부은 양). v5 기록은 읽을 때 없는 필드를 0으로 채워 v6로 올린다.
 
 import type { AttemptResult, AttemptStats } from '../core/day';
 import type { GameStats } from '../core/stats';
 
-export const METRICS_VERSION = 5;
+export const METRICS_VERSION = 6;
 export const MAX_SESSIONS = 500;
 export const MAX_LIVES = 20;
 /** 직렬화 결과 상한 (localStorage 5MB 대비) */
@@ -21,6 +23,44 @@ export interface DropFails {
   invalid: number;
   laneFull: number;
   wildcard: number;
+}
+
+/** 시도 하나 동안의 손맛 카운터 (core 런타임 카운터의 시도 시작~끝 차이) */
+export interface AttemptPlay {
+  /** 2연쇄 이상 횟수 · 이어 합친 단계 수 합 (D-073) */
+  chains: number;
+  chainSteps: number;
+  /** 자동 뭉침 (D-071) */
+  autoMerges: number;
+  /** 팀 교대 이어받기 횟수·회수 조각 수 (D-072) */
+  handovers: number;
+  handoverPieces: number;
+  /** 스킬 발동 자동 / 수동(초상 탭) */
+  skillsAuto: number;
+  skillsManual: number;
+}
+
+export const PLAY_KEYS = ['chains', 'chainSteps', 'autoMerges', 'handovers', 'handoverPieces', 'skillsAuto', 'skillsManual'] as const;
+
+export function emptyPlay(): AttemptPlay {
+  return { chains: 0, chainSteps: 0, autoMerges: 0, handovers: 0, handoverPieces: 0, skillsAuto: 0, skillsManual: 0 };
+}
+
+/** 세션(앱 실행 하나) 동안의 화면 카운터 */
+export interface SessionUi {
+  formationOpened: number;
+  /** 편성 확정 때 실제로 바뀐 횟수 */
+  formationChanged: number;
+  storybookOpened: number;
+  heroDetailOpened: number;
+  /** 잉크 부은 양 (합) */
+  inkPoured: number;
+}
+
+export const UI_KEYS = ['formationOpened', 'formationChanged', 'storybookOpened', 'heroDetailOpened', 'inkPoured'] as const;
+
+export function emptyUi(): SessionUi {
+  return { formationOpened: 0, formationChanged: 0, storybookOpened: 0, heroDetailOpened: 0, inkPoured: 0 };
 }
 
 export interface AttemptMetrics {
@@ -42,6 +82,8 @@ export interface AttemptMetrics {
   /** ×1이 아닌 배속을 쓴 실제 시간(초) */
   speedUsed: number;
   rating: DayRating | null;
+  /** v6: 손맛 카운터 */
+  play: AttemptPlay;
 }
 
 export interface LifeMetrics {
@@ -64,10 +106,12 @@ export interface SessionRecord {
   startedAt: string;
   foregroundSeconds: number;
   attemptsCompleted: number;
+  /** v6: 화면 카운터 */
+  ui: SessionUi;
 }
 
 export interface MetricsData {
-  version: 5;
+  version: 6;
   firstSeen: string;
   sessions: SessionRecord[];
   lives: LifeMetrics[];
@@ -114,7 +158,8 @@ export function parseMetrics(raw: string | null): { ok: true; data: MetricsData 
     return { ok: false, reason: `JSON 파싱 실패: ${(e as Error).message}` };
   }
   if (!isObj(v)) return { ok: false, reason: '객체가 아님' };
-  if (v.version !== METRICS_VERSION) return { ok: false, reason: `version 불일치: ${String(v.version)}` };
+  // v5 → v6: 구조는 같고 필드만 늘었다 (없는 필드 = 0)
+  if (v.version !== METRICS_VERSION && v.version !== 5) return { ok: false, reason: `version 불일치: ${String(v.version)}` };
   if (typeof v.firstSeen !== 'string' || !Array.isArray(v.sessions) || !Array.isArray(v.lives)) {
     return { ok: false, reason: '구조 불일치 (firstSeen·sessions·lives)' };
   }
@@ -130,7 +175,23 @@ export function parseMetrics(raw: string | null): { ok: true; data: MetricsData 
   }
   const data = v as unknown as MetricsData;
   if (data.inProgress === undefined) data.inProgress = null;
+  upgradeToV6(data);
   return { ok: true, data };
+}
+
+/** 없는 v6 필드를 0으로 채운다 (v5 기록·중간에 끊긴 기록). 제자리 수정 */
+export function upgradeToV6(data: MetricsData): void {
+  data.version = METRICS_VERSION;
+  for (const s of data.sessions as Partial<SessionRecord>[]) {
+    const ui = (s.ui ?? {}) as Partial<SessionUi>;
+    s.ui = { ...emptyUi(), ...Object.fromEntries(UI_KEYS.filter((k) => typeof ui[k] === 'number').map((k) => [k, ui[k]])) };
+  }
+  for (const l of data.lives) {
+    for (const a of l.attempts as Partial<AttemptMetrics>[]) {
+      const pl = (a.play ?? {}) as Partial<AttemptPlay>;
+      a.play = { ...emptyPlay(), ...Object.fromEntries(PLAY_KEYS.filter((k) => typeof pl[k] === 'number').map((k) => [k, pl[k]])) };
+    }
+  }
 }
 
 /**

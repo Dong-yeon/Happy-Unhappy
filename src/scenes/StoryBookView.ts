@@ -9,6 +9,10 @@ import { VIEW_H, VIEW_W } from './layout';
 import { stageTint } from './scenery';
 import { skinOf } from './skin/Skin';
 import { Button, text } from './ui';
+import { copyOrShow, exportFileName } from '../debug/exportModal';
+import { isPlaytest } from '../debug/gridPreset';
+import { countUi, metricsOf } from '../metrics/scene';
+import { realToday } from '../platform/clock';
 
 const DEPTH = 75;
 const PAGE_W = 168;
@@ -36,6 +40,7 @@ export class StoryBookView {
     /** 챕터 완성 뒤 [다시 읽기] (없으면 버튼 없음) */
     private readonly onReplay?: (stage: number) => void,
   ) {
+    countUi(scene, 'storybookOpened');
     const bg = scene.add.rectangle(0, 0, VIEW_W, VIEW_H, 0x0e1016, 0.96).setOrigin(0).setDepth(DEPTH).setInteractive();
     bg.on('pointerdown', (p: Phaser.Input.Pointer) => (this.dragX = p.worldX));
     bg.on('pointerup', (p: Phaser.Input.Pointer) => {
@@ -119,6 +124,17 @@ export class StoryBookView {
         const b = new Button(s, x + PAGE_W / 2, TOP + PAGE_H / 2, PAGE_W - 30, 30, '만든 사람들', () => this.showCredits(), '11px');
         b.container.setDepth(DEPTH + 4);
         this.pageButtons.push(b);
+      }
+      // 사람 플레이(?playtest=1)에서만: 작은 [기록 내보내기] — 클립보드가 안 되면(LAN http) 텍스트 상자로 (playtest-plan v2 §5)
+      const rec = metricsOf(s);
+      if (isPlaytest() && rec) {
+        const e = new Button(s, x + PAGE_W / 2, TOP + PAGE_H - 40, 110, 22, '기록 내보내기', () => {
+          void copyOrShow(rec.json(), exportFileName(realToday())).then((r) => {
+            if (r === 'copied') e.setLabel('복사했어요');
+          });
+        }, '10px');
+        e.container.setDepth(DEPTH + 4);
+        this.pageButtons.push(e);
       }
       return;
     }

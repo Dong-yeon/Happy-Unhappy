@@ -10,6 +10,7 @@ import { HeroDetailView } from './HeroDetailView';
 import { heroChainColor } from './laneUnits';
 import { VIEW_H, VIEW_W, inRect, type Rect } from './layout';
 import { Button, COLOR, text } from './ui';
+import { countUi } from '../metrics/scene';
 
 const DEPTH = 80;
 const SIDES = ['offense', 'defense'] as const;
@@ -283,11 +284,13 @@ export class FormationView {
   }
 
   private confirm(): void {
+    const before = JSON.stringify(this.state.formation);
     const r = this.state.setFormation(this.formation());
     if (!r.ok) {
       this.error.setText(r.reason);
       return;
     }
+    if (JSON.stringify(this.state.formation) !== before) countUi(this.scene, 'formationChanged');
     this.close(r.restarted || this.restarted);
   }
 

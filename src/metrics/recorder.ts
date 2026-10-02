@@ -10,11 +10,16 @@ import { METRICS_KEY, readKey, removeKey, writeKey } from '../platform/storage';
 import {
   detectMidAttemptRestore,
   emptyDropFails,
+  emptyPlay,
+  emptyUi,
+  PLAY_KEYS,
   emptyMetrics,
   enforceLimits,
   newLife,
   parseMetrics,
   type AttemptMetrics,
+  type AttemptPlay,
+  type SessionUi,
   type DayRating,
   type DropFails,
   type LifeMetrics,
@@ -38,6 +43,8 @@ export class MetricsRecorder {
   private dayRealSeconds = 0;
   private nightRealSeconds = 0;
   private speedUsed = 0;
+  /** 시도 시작 때 core 런타임 카운터 (끝에서 차이 = 이 시도 몫) */
+  private playStart: AttemptPlay = emptyPlay();
 
   constructor(
     private readonly state: GameState,
@@ -70,7 +77,7 @@ export class MetricsRecorder {
     const sess = this.data.sessions.find((x) => x.startedAt === sessionStartedAt);
     if (sess) this.session = sess;
     else {
-      this.session = { realDate: realToday(), startedAt: sessionStartedAt, foregroundSeconds: 0, attemptsCompleted: 0 };
+      this.session = { realDate: realToday(), startedAt: sessionStartedAt, foregroundSeconds: 0, attemptsCompleted: 0, ui: emptyUi() };
       this.data.sessions.push(this.session);
     }
   }
@@ -100,6 +107,7 @@ export class MetricsRecorder {
     this.dayRealSeconds = 0;
     this.nightRealSeconds = 0;
     this.speedUsed = 0;
+    this.playStart = this.playNow();
     this.data.inProgress = { lifeId: this.life.lifeId, attempt: s.attempt };
     this.write();
   }
@@ -121,6 +129,7 @@ export class MetricsRecorder {
       nightRealSeconds: this.nightRealSeconds,
       speedUsed: this.speedUsed,
       rating: null,
+      play: this.playDelta(),
     };
     const i = this.life.attempts.findIndex((d) => d.attempt === m.attempt);
     if (i >= 0) this.life.attempts[i] = m;
@@ -138,6 +147,34 @@ export class MetricsRecorder {
     this.life.stats = structuredClone(s.stats);
     this.life.endedAt = nowIso();
     this.data.inProgress = null;
+    this.write();
+  }
+
+  /** core 런타임 카운터 지금 값 */
+  private playNow(): AttemptPlay {
+    const s = this.state;
+    return {
+      chains: s.chains,
+      chainSteps: s.chainSteps,
+      autoMerges: s.autoMerges,
+      handovers: s.handovers,
+      handoverPieces: s.handoverPieces,
+      skillsAuto: s.skillsAuto,
+      skillsManual: s.skillsManual,
+    };
+  }
+
+  private playDelta(): AttemptPlay {
+    const now = this.playNow();
+    const out = emptyPlay();
+    // 카운터는 저장되지 않아 앱을 다시 열면 0부터 — 음수가 되지 않게
+    for (const k of PLAY_KEYS) out[k] = Math.max(0, now[k] - this.playStart[k]);
+    return out;
+  }
+
+  /** 화면 카운터 (편성·이야기책·영웅 상세 연 횟수, 편성 바꿈, 잉크 부은 양) — 세션 단위 */
+  ui(key: keyof SessionUi, amount = 1): void {
+    this.session.ui[key] += amount;
     this.write();
   }
 

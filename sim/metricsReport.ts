@@ -1,4 +1,4 @@
-// 사람 플레이 metrics 분석 (스펙 §5.10-6, §5.19). 내보낸 hau_metrics_v5 JSON → 시도·스테이지·편성·조각·주관 평가 표.
+// 사람 플레이 metrics 분석 (스펙 §5.10-6, §5.19). 내보낸 metrics JSON(v6, v5도 읽음) → 시도·스테이지·편성·조각·손맛·화면·주관 평가 표.
 // 순수 함수만 (CLI는 sim/metrics.ts). --bot: 같은 지표를 봇 리포트(balanced)와 나란히.
 import { ATTEMPT_RESULTS } from '../src/core/day';
 import type { AttemptMetrics, LifeMetrics, MetricsData } from '../src/metrics/model';
@@ -126,6 +126,52 @@ export function analyze(data: MetricsData): Section[] {
         fmt(median(atts.map((d) => d.record.gridFullSeconds))),
       ],
     ],
+  });
+
+  // 손맛 (v6, playtest-plan v2 §5): 손 머지 = 전체 머지 − 자동 뭉침 − 연쇄로 이어 합친 단계
+  const sum = (f: (a: AttemptMetrics) => number) => atts.reduce((n, a) => n + f(a), 0);
+  const chains = sum((a) => a.play?.chains ?? 0);
+  const chainSteps = sum((a) => a.play?.chainSteps ?? 0);
+  const autoMerges = sum((a) => a.play?.autoMerges ?? 0);
+  const handMerges = Math.max(0, sum((a) => a.record.merges) - autoMerges - chainSteps);
+  const sAuto = sum((a) => a.play?.skillsAuto ?? 0);
+  const sManual = sum((a) => a.play?.skillsManual ?? 0);
+  out.push({
+    title: '손맛 (연쇄 · 자동 뭉침 · 이어받기 · 스킬)',
+    header: ['손 머지', '평균 연쇄 수', '2연쇄 이상 비율', '자동 뭉침', '이어받기 (회수 조각)', '스킬 자동 / 수동', '수동 비율'],
+    rows: [
+      [
+        String(handMerges),
+        handMerges ? fmt(1 + chainSteps / handMerges, 2) : '—',
+        pct(chains, handMerges),
+        String(autoMerges),
+        `${sum((a) => a.play?.handovers ?? 0)} (${sum((a) => a.play?.handoverPieces ?? 0)})`,
+        `${sAuto} / ${sManual}`,
+        pct(sManual, sAuto + sManual),
+      ],
+    ],
+  });
+
+  // 화면 (세션 단위, v6)
+  const ses = data.sessions;
+  const u = (k: 'formationOpened' | 'formationChanged' | 'storybookOpened' | 'heroDetailOpened' | 'inkPoured') => ses.reduce((n, x) => n + (x.ui?.[k] ?? 0), 0);
+  const poured = ses.filter((x) => (x.ui?.inkPoured ?? 0) > 0);
+  out.push({
+    title: '화면 (세션 단위)',
+    header: ['세션', '편성 연 횟수', '편성 바꿈', '이야기책 연 횟수', '영웅 상세', '잉크 부은 양', '잉크 붓기 한 세션'],
+    rows: [[String(ses.length), String(u('formationOpened')), String(u('formationChanged')), String(u('storybookOpened')), String(u('heroDetailOpened')), String(u('inkPoured')), `${poured.length} (${pct(poured.length, ses.length)})`]],
+  });
+  out.push({
+    title: '세션별 잉크 붓기 (최근 30 세션)',
+    header: ['날짜', '시작', '앱 켠 시간(분)', '끝낸 시도', '잉크 부은 양', '편성 / 이야기책 / 상세'],
+    rows: ses.slice(-30).map((x) => [
+      x.realDate,
+      x.startedAt.slice(11, 16),
+      fmt(x.foregroundSeconds / 60),
+      String(x.attemptsCompleted),
+      String(x.ui?.inkPoured ?? 0),
+      `${x.ui?.formationOpened ?? 0} / ${x.ui?.storybookOpened ?? 0} / ${x.ui?.heroDetailOpened ?? 0}`,
+    ]),
   });
 
   // 주관 평가

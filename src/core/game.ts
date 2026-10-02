@@ -235,6 +235,9 @@ export class GameState {
   /** 팀 교대 이어받기 횟수·회수한 조각 수 (저장하지 않음, 시뮬 집계용) */
   handovers = 0;
   handoverPieces = 0;
+  /** 스킬 발동: 자동(자동 모드·5단계 즉시) / 수동(초상 탭 castReady) 횟수 (저장하지 않음, metrics 관찰용 — 규칙은 읽지 않음) */
+  skillsAuto = 0;
+  skillsManual = 0;
   /** 밤: 동시 적 상한을 넘어 아직 레인에 못 나온 적 */
   private readonly nightQueue: WorryStats[] = [];
   /** 지급할 칸이 없어 사라진 조각 수 */
@@ -1808,7 +1811,9 @@ export class GameState {
   }
 
   /** 게이지를 비우고 발동 */
-  private fireSkill(role: Role, id: string, out: CoreEvent[]): void {
+  private fireSkill(role: Role, id: string, out: CoreEvent[], manual = false): void {
+    if (manual) this.skillsManual += 1;
+    else this.skillsAuto += 1;
     this.progressOf(id).gauge = 0;
     this.castSkill(role, id, out);
   }
@@ -1817,7 +1822,7 @@ export class GameState {
   castReady(id: string): boolean {
     const role = this.fightingRole;
     if (!role || !this.skillReady(id)) return false;
-    this.fireSkill(role, id, this.pending);
+    this.fireSkill(role, id, this.pending, true);
     return true;
   }
 
