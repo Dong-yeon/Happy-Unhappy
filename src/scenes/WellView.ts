@@ -9,6 +9,7 @@ import type { GameData } from '../data/types';
 import { DRAG_THRESHOLD, REGION, RELEASE_HIT, SKILL_BTN_R, WELL, inRect, skillButtonCenter, toScreen } from './layout';
 import { Pond, type Fish } from './pond';
 import { releaseHoverLabel, type ReleaseHover } from './ReleaseZoneView';
+import { skinOf } from './skin/Skin';
 import { COLOR, text } from './ui';
 
 /** 드래그 중 조각이 올라가 있는 드롭 대상 */
@@ -105,8 +106,14 @@ export class WellView {
   static drawWell(scene: Phaser.Scene): void {
     const b = REGION.board;
     scene.add.rectangle(b.x, b.y, b.w, b.h, COLOR.grid).setOrigin(0).setDepth(0);
-    const g = scene.add.graphics().setDepth(1);
     const w = WELL;
+    // 스킨: 직접 그린 우물 (§5.23-1 ui.well)
+    const skin = skinOf(scene);
+    if (skin.has('ui.well')) {
+      skin.image(scene, 'ui.well', w.x + w.w / 2, w.y + w.h / 2, w.h + w.rim * 2).setDepth(1);
+      return;
+    }
+    const g = scene.add.graphics().setDepth(1);
     // 돌테 (바깥 → 안쪽 두 겹)
     g.fillStyle(0x5d5a52, 1).fillRoundedRect(w.x - w.rim, w.y - w.rim, w.w + w.rim * 2, w.h + w.rim * 2, w.r + w.rim);
     g.lineStyle(1, 0x8a857a, 1).strokeRoundedRect(w.x - w.rim, w.y - w.rim, w.w + w.rim * 2, w.h + w.rim * 2, w.r + w.rim);
@@ -209,8 +216,35 @@ export class WellView {
   }
 
   /** 조각 표시 (새로 만들거나 단계가 바뀌면 다시) */
+  /** 스킨 그림 키 (조각 4체인 × 5단계 + 와일드카드) */
+  private pieceKey(p: Piece): string {
+    return isWildcard(p) ? 'piece.wildcard' : `piece.${p.chain}.t${Math.min(5, p.tier)}`;
+  }
+
   private rebuild(f: Fish): View {
     const p = this.state.grid.cells[f.cell]!;
+    const skin = skinOf(this.scene);
+    const key = this.pieceKey(p);
+    if (skin.has(key)) {
+      // 그림 조각 (§5.23-1): 단계가 바뀌면 다시 만든다. 단계 라벨은 작게 남긴다 (§5.16-2)
+      const old = this.views.get(f.id);
+      const x = old?.c.x ?? f.x;
+      const y = old?.c.y ?? f.y;
+      if (old) this.dropView(f.id);
+      const img = skin.image(this.scene, key, 0, 0, this.pond.r * 2 + 2);
+      const disc = this.scene.add.circle(0, 0, this.pond.r, 0, 0);
+      const label = text(this.scene, this.pond.r * 0.62, this.pond.r * 0.55, isWildcard(p) ? '?' : pieceLabel(p, this.state.grid.maxTier), {
+        fontSize: '10px',
+        color: '#ffffff',
+        fontStyle: 'bold',
+        stroke: '#1b1d24',
+        strokeThickness: 3,
+      }).setOrigin(0.5);
+      const c = this.scene.add.container(x, y, [disc, img, label]).setDepth(DEPTH);
+      const v: View = { c, disc, label, lift: { v: 0 } };
+      this.views.set(f.id, v);
+      return v;
+    }
     const old = this.views.get(f.id);
     if (old) {
       old.disc.setFillStyle(this.colorOf(p));

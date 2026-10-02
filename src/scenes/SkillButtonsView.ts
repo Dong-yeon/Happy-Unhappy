@@ -5,6 +5,7 @@ import Phaser from 'phaser';
 import type { CoreEvent, GameState } from '../core/game';
 import type { GameData } from '../data/types';
 import { heroChainColor, heroName } from './laneUnits';
+import { skinOf } from './skin/Skin';
 import { SKILL_BTN_R, WELL, skillButtonCenter } from './layout';
 import { text } from './ui';
 
@@ -21,6 +22,8 @@ interface Orb {
   ring: Phaser.GameObjects.Graphics;
   glow: Phaser.GameObjects.Arc;
   heroId: string | null;
+  /** 스킨 초상 (§5.23-1: 영웅 그림 + 게이지 테두리) */
+  portrait: Phaser.GameObjects.Image | null;
   /** 마지막으로 그린 게이지 비율·준비 여부 (같으면 다시 그리지 않음) */
   drawn: string;
 }
@@ -52,7 +55,7 @@ export class SkillButtonsView {
       // 체인 이름은 원 안 아래쪽 (버튼 아래 물에 글씨가 걸치지 않게, §5.21-6)
       const chain = text(scene, 0, 10, '', { fontSize: '8px', color: '#1b1d24' }).setOrigin(0.5);
       const container = scene.add.container(0, 0, [shadow, glow, track, ring, disc, initial, chain]).setDepth(DEPTH);
-      const orb: Orb = { container, disc, initial, chain, ring, glow, heroId: null, drawn: '' };
+      const orb: Orb = { container, disc, initial, chain, ring, glow, heroId: null, portrait: null, drawn: '' };
       disc.on('pointerup', () => {
         if (orb.heroId) this.state.castReady(orb.heroId);
       });
@@ -95,6 +98,15 @@ export class SkillButtonsView {
         o.heroId = id;
         o.disc.setFillStyle(heroChainColor(this.data, id));
         o.initial.setText(heroName(this.data, id).slice(0, 1));
+        // 스킨이면 영웅 초상 그림을 원 안에 (게이지 테두리는 그대로)
+        o.portrait?.destroy();
+        o.portrait = null;
+        const skin = skinOf(this.scene);
+        if (skin.has(`hero.${id}`)) {
+          o.portrait = skin.image(this.scene, `hero.${id}`, 0, -2, SKILL_BTN_R * 2 - 4);
+          o.container.addAt(o.portrait, o.container.getIndex(o.disc) + 1);
+          o.initial.setText('');
+        }
         const c = this.data.chains.find((x) => x.archetypeId === s.heroDef(id).chain);
         o.chain.setText(c?.name ?? ''); // 체인 이름 (§5.21-6: 2단계 이름이 아니라 뼈다귀·방울·떡·동아줄)
         o.drawn = '';

@@ -1,6 +1,7 @@
 // 표시용 공통 헬퍼 (도형 + 텍스트만).
 import Phaser from 'phaser';
 import { RENDER_SCALE, VIEW_H, VIEW_W } from './layout';
+import { skinOf } from './skin/Skin';
 
 export const COLOR = {
   bg: 0x1b1d24,
@@ -59,6 +60,8 @@ export class Button {
   private readonly label: Phaser.GameObjects.Text;
   enabled = true;
   private active = false;
+  /** 스킨 버튼 그림 (§5.23-1 ui.button, 팩이 있을 때만) */
+  private readonly skinImg: Phaser.GameObjects.Image | null = null;
 
   constructor(
     scene: Phaser.Scene,
@@ -73,6 +76,12 @@ export class Button {
     this.rect = scene.add.rectangle(0, 0, w, h, COLOR.button).setStrokeStyle(1, COLOR.cellLine);
     this.label = text(scene, 0, 0, label, { fontSize, color: '#ffffff' }).setOrigin(0.5);
     this.container = scene.add.container(x, y, [this.rect, this.label]);
+    const skin = skinOf(scene);
+    if (skin.has('ui.button')) {
+      this.skinImg = skin.image(scene, 'ui.button', 0, 0).setDisplaySize(w, h);
+      this.container.addAt(this.skinImg, 1);
+      this.rect.setFillStyle(0x000000, 0.01).setStrokeStyle(0);
+    }
     if (onClick) {
       // 이 버튼 위에서 누른 경우만 (조각 드래그를 버튼 위에서 놓아도 눌리지 않게)
       let pressed = false;
@@ -95,6 +104,10 @@ export class Button {
   setEnabled(enabled: boolean): this {
     this.enabled = enabled;
     this.label.setColor(enabled ? '#ffffff' : '#8a8f9e');
+    if (this.skinImg) {
+      this.skinImg.setTint(this.active ? 0xc8d4ff : enabled ? 0xffffff : 0x8a8f9e);
+      return this;
+    }
     this.rect.setFillStyle(this.active ? COLOR.buttonOn : enabled ? COLOR.button : COLOR.buttonOff);
     return this;
   }

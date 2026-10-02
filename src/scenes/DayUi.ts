@@ -8,10 +8,13 @@ import type { GameState } from '../core/game';
 import type { GameData } from '../data/types';
 import { showRatings } from '../debug/gridPreset';
 import type { DayRating } from '../metrics/model';
-import { VIEW_H, VIEW_W } from './layout';
+import { REGION, VIEW_H, VIEW_W } from './layout';
+import { fillTemplate, hasBatchim } from '../core/roster';
 import { FAIL_LINE, stageLabel } from './labels';
 import { heroName } from './laneUnits';
 import { StoryBookView } from './StoryBookView';
+import { sceneCardColor } from './scenery';
+import { skinOf } from './skin/Skin';
 import { Button, COLOR, text } from './ui';
 
 const OVERLAY_DEPTH = 60;
@@ -61,14 +64,21 @@ class Modal {
     readonly scene: Phaser.Scene,
     height: number,
     readonly top = (VIEW_H - height) / 2,
+    color: number = COLOR.hud,
   ) {
     const overlay = scene.add.rectangle(0, 0, VIEW_W, VIEW_H, 0x000000, 0.55).setOrigin(0).setDepth(OVERLAY_DEPTH).setInteractive();
     const panel = scene.add
-      .rectangle((VIEW_W - PANEL_W) / 2, top, PANEL_W, height, COLOR.hud)
+      .rectangle((VIEW_W - PANEL_W) / 2, top, PANEL_W, height, color)
       .setOrigin(0)
       .setStrokeStyle(2, COLOR.mirror)
       .setDepth(OVERLAY_DEPTH + 1);
     this.objects.push(overlay, panel);
+    // 스킨 패널 그림 (§5.23-1 ui.panel, 팩이 있을 때만): 패널 위에 깔고 색은 tint로
+    const skin = skinOf(scene);
+    if (skin.has('ui.panel')) {
+      const img = skin.image(scene, 'ui.panel', VIEW_W / 2, top + height / 2).setDisplaySize(PANEL_W, height).setTint(color).setDepth(OVERLAY_DEPTH + 1);
+      this.objects.push(img);
+    }
   }
 
   text(y: number, s: string, style: Phaser.Types.GameObjects.Text.TextStyle = {}, originX = 0.5): Phaser.GameObjects.Text {
@@ -174,7 +184,9 @@ export class DayUi {
     const st = s.stageDef;
     const retry = s.retry;
     const replay = s.replay !== null;
-    const m = new Modal(this.scene, (retry ? 196 : 168) + (replay ? 34 : 0));
+    // 장면 카드 배경 tint (§5.23-2): 스테이지 색을 어둡게 섞은 패널
+    const h = (retry ? 196 : 168) + (replay ? 34 : 0);
+    const m = new Modal(this.scene, h, (VIEW_H - h) / 2, skinOf(this.scene).fx ? sceneCardColor(s.stage) : COLOR.hud);
     const tries = s.attempts[s.stage - 1];
     const head = replay
       ? `다시 읽기 · 적 ×${this.data.balance.replay.difficultyMult}${retry ? ' · 다시 도전' : ''}`
@@ -274,7 +286,8 @@ export class DayUi {
     const last = this.data.stages.stages[this.data.stages.stages.length - 1];
     const agree = showRatings();
     const joined = s.rewardHeroes.filter((h) => s.owned.includes(h.id)).map((h) => h.name);
-    const m = new Modal(this.scene, 96 + 70 + 110 + 112 + (agree ? 34 : 0) + 36 + (joined.length ? 68 : 0));
+    const fx = skinOf(this.scene).fx;
+    const m = new Modal(this.scene, 96 + 70 + 110 + 112 + (agree ? 34 : 0) + 36 + (joined.length ? 68 : 0) + (fx ? 24 : 0));
     m.text(16, cc.title, { fontSize: '12px', color: '#9fb4e0' });
     const page = m.text(36, last.page, { fontSize: '11px', color: '#e8e8e8', lineSpacing: 4 });
     let y = 36 + page.height + 12;
@@ -291,10 +304,43 @@ export class DayUi {
           .setDepth(OVERLAY_DEPTH + 3);
         m.objects.push(orb, cap);
         this.scene.tweens.add({ targets: orb, y: { from: m.top + y + 40, to: m.top + y + 14 }, duration: 900, delay: 300 * i, ease: 'Sine.easeOut' });
+        // 각성 (§5.23-2): 해·달이 하늘 띠로 올라가 자리 잡는다
+        if (skinOf(this.scene).fx) {
+          this.scene.tweens.add({
+            targets: orb,
+            x: sun ? VIEW_W * 0.3 : VIEW_W * 0.7,
+            y: REGION.sky.y + REGION.sky.h / 2,
+            scale: 0.75,
+            duration: 1200,
+            delay: 1300 + 400 * i,
+            ease: 'Sine.easeInOut',
+          });
+        }
       });
       y += 68;
+      if (fx) {
+        const names = joined.map((nm, i) => (i < joined.length - 1 ? `${nm}${hasBatchim(nm) ? '과' : '와'}` : nm)).join(' ');
+        const jl = m.text(y - 4, fillTemplate('{names}{이/가} 이야기 모험대에 합류했다', { names }), { fontSize: '11px', color: '#ffffff' });
+        y += jl.height + 6;
+      }
     }
-    {
+    if (fx) {
+      // 비법서 2권 카드 (§5.23-2): 이 챕터 이야기 비법서
+      const books = this.data.bookSkills.books.filter((b) => b.source === 'chapter' && b.chapter === this.data.chapter.id).slice(0, 2);
+      books.forEach((bk, i) => {
+        const cx = VIEW_W / 2 + (books.length > 1 ? (i === 0 ? -72 : 72) : 0);
+        const box = this.scene.add.rectangle(cx, m.top + y + 40, 132, 80, 0x2f1d2a).setStrokeStyle(2, 0xffb6c8).setDepth(OVERLAY_DEPTH + 2);
+        m.objects.push(box);
+        const t = (dy: number, str: string, style: Phaser.Types.GameObjects.Text.TextStyle) => {
+          const o = text(this.scene, cx, m.top + y + dy, str, { align: 'center', wordWrap: { width: 120 }, ...style }).setOrigin(0.5, 0).setDepth(OVERLAY_DEPTH + 3);
+          m.objects.push(o);
+        };
+        t(6, `📖 비법서 · ${bk.kind === 'start' ? '시작형' : '상시형'}`, { fontSize: '9px', color: '#ffb6c8' });
+        t(22, bk.name, { fontSize: '12px', color: '#ffffff', fontStyle: 'bold' });
+        t(42, bk.desc, { fontSize: '8px', color: '#cfd6ea' });
+      });
+      y += 92;
+    } else {
       const learned = m.text(y, `${cc.learnedRecipes.map((r) => r.name.replace(/^해와 달이 된 /, '')).join('와 ')}를 만드는 법을 알게 되었다`, { fontSize: '12px', color: '#ffe08a' });
       y += learned.height + 8;
       const cards = cc.learnedRecipes.slice(0, 2);

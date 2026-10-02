@@ -6,7 +6,9 @@ import Phaser from 'phaser';
 import type { CoreEvent, GameState } from '../core/game';
 import type { GameData } from '../data/types';
 import { CORE, HOME, REGION, progressX, toScreen } from './layout';
-import { flashUnit, makeEnemyView, storyBook, makeUnitView, syncEnemyView, syncUnitView, type EnemyView, type UnitView } from './laneUnits';
+import { flashBody, flashUnit, makeEnemyView, storyBook, makeUnitView, syncEnemyView, syncUnitView, type EnemyView, type UnitView } from './laneUnits';
+import { NIGHT_TINT } from './scenery';
+import { skinOf } from './skin/Skin';
 import { COLOR, text } from './ui';
 
 /** 걱정은 방어선에 닿도록 중심을 진행 축으로 이만큼 앞(오른쪽)에 그린다 (core y 기준) */
@@ -40,7 +42,11 @@ export class DefenseLaneView {
   ) {
     const g = REGION.ground;
     // 밤 땅 띠(1챕터: 오두막 앞마당에 내려앉은 이야기책, 도형 단계는 배경색만) + 방어선(세로) + Happy 거점
-    const bg = scene.add.rectangle(g.x, g.y, g.w, g.h, COLOR.abyss).setOrigin(0);
+    // 땅: 스킨이면 밤 마당 무늬 + 남색 tint (§5.23-2), 아니면 단색
+    const sk = skinOf(scene);
+    const bg = sk.has('bg.night')
+      ? scene.add.tileSprite(g.x, g.y, g.w, g.h, sk.frame('bg.night').texture).setOrigin(0).setTileScale(1 / 2).setTint(NIGHT_TINT)
+      : scene.add.rectangle(g.x, g.y, g.w, g.h, COLOR.abyss).setOrigin(0);
     const lineX = progressX(CORE.lineY);
     const line = scene.add.line(0, 0, lineX, g.y + 6, lineX, g.y + g.h - 6, COLOR.line).setOrigin(0).setLineWidth(1);
     this.spawnLabel = text(scene, g.x + g.w - 6, g.y + 4, '← 씨앗을 노리는 무리', { fontSize: '10px', color: '#c9b98a' }).setOrigin(1, 0);
@@ -49,6 +55,9 @@ export class DefenseLaneView {
     const home = HOME.defense;
     // 본거지 이야기책 (핵을 품고 있음, D-056)
     const happy = storyBook(scene, home.x, home.y);
+    // 밤: 이야기책 주변 은은한 빛 (§5.23-2)
+    const bookGlow = scene.add.circle(home.x, home.y, 18, 0xfff1c4, skinOf(scene).fx ? 0.12 : 0);
+    if (skinOf(scene).fx) scene.tweens.add({ targets: bookGlow, alpha: 0.04, scale: 1.25, duration: 1600, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' });
     // 핵 HP (§5.19-3): 레인 왼쪽 위 "◆ 핵 100/100" + 막대
     const cx = g.x + 8;
     const cy = g.y + 10;
@@ -60,7 +69,7 @@ export class DefenseLaneView {
       .setOrigin(0, 0.5)
       .setVisible(false);
     this.root = scene.add
-      .container(0, 0, [bg, line, this.spawnLabel, this.teamLabel, laneLabel, happy, coreGem, coreFrame, this.coreFill, this.coreText, this.downLabel])
+      .container(0, 0, [bg, line, this.spawnLabel, this.teamLabel, laneLabel, bookGlow, happy, coreGem, coreFrame, this.coreFill, this.coreText, this.downLabel])
       .setDepth(1)
       .setVisible(false);
   }
@@ -102,8 +111,7 @@ export class DefenseLaneView {
             const t = this.worries.get(e.targetId);
             if (t) {
               this.flash(t.container.x, t.container.y, HIT_BY_US);
-              t.body.setFillStyle(0xffffff);
-              this.scene.time.delayedCall(HIT_MS, () => t.body.active && t.body.setFillStyle(t.color));
+              flashBody(this.scene, t.body, t.color, HIT_MS);
             }
           }
           break;

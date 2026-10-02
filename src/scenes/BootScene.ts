@@ -4,7 +4,7 @@ import { resolveGridSize } from '../core/grid';
 import { isDebug, loadGridOverride } from '../debug/gridPreset';
 import { gridFits } from './layout';
 
-/** 데이터 로드·검증 → 실패 시 ErrorScene, 성공 시 GameScene */
+/** 데이터 로드·검증 → 실패 시 ErrorScene, 성공 시 PreloadScene(스킨) → GameScene */
 export class BootScene extends Phaser.Scene {
   constructor() {
     super('Boot');
@@ -29,6 +29,6 @@ export class BootScene extends Phaser.Scene {
 
     this.registry.set('data', data);
     this.registry.set('gridSize', gridSize);
-    this.scene.start('Game');
+    this.scene.start('Preload');
   }
 }

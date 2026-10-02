@@ -6,6 +6,8 @@ import Phaser from 'phaser';
 import type { GameState } from '../core/game';
 import type { GameData } from '../data/types';
 import { VIEW_H, VIEW_W } from './layout';
+import { stageTint } from './scenery';
+import { skinOf } from './skin/Skin';
 import { Button, text } from './ui';
 
 const DEPTH = 75;
@@ -111,6 +113,13 @@ export class StoryBookView {
     const cx = x + PAGE_W / 2;
     if (index >= this.pageCount) {
       this.pageObjs.push(s.add.rectangle(x, TOP, PAGE_W, PAGE_H, 0xe5dcc4).setOrigin(0).setDepth(DEPTH + 2));
+      // 마지막 장 뒤: [만든 사람들] — 로드된 팩만, 하나도 없으면 숨김 (§5.16-6, §5.23-4)
+      const credits = skinOf(s).credits();
+      if (credits.length) {
+        const b = new Button(s, x + PAGE_W / 2, TOP + PAGE_H / 2, PAGE_W - 30, 30, '만든 사람들', () => this.showCredits(), '11px');
+        b.container.setDepth(DEPTH + 4);
+        this.pageButtons.push(b);
+      }
       return;
     }
     this.pageObjs.push(s.add.rectangle(x, TOP, PAGE_W, PAGE_H, PAPER).setOrigin(0).setDepth(DEPTH + 2));
@@ -139,9 +148,19 @@ export class StoryBookView {
     let y = TOP + 28;
     y += this.t(cx, y, st.title, { fontSize: '13px', fontStyle: 'bold' }).height + 8;
     // 삽화 자리 (M9)
-    const ill = s.add.rectangle(cx, y + 36, PAGE_W - 24, 70, 0xe8dcbc).setStrokeStyle(1, 0xb8a888).setDepth(DEPTH + 3);
+    // 장면 삽화 자리 (§5.23-2): 장마다 배경 tint 썸네일 (그림은 본 개발)
+    const fx = skinOf(s).fx;
+    const ill = s.add.rectangle(cx, y + 36, PAGE_W - 24, 70, fx ? stageTint(stage) : 0xe8dcbc).setStrokeStyle(1, 0xb8a888).setDepth(DEPTH + 3);
     this.pageObjs.push(ill);
-    this.t(cx, y + 30, '(삽화)', { fontSize: '8px', color: '#b8a888' });
+    if (fx) {
+      // 해(낮)·달(밤)과 씨앗 하나 — 장면 그림 대신 아주 단순한 표시
+      this.pageObjs.push(
+        s.add.circle(cx - 44, y + 18, 7, 0xffd36b, 0.9).setDepth(DEPTH + 3),
+        s.add.circle(cx + 44, y + 18, 6, 0xf5f2e8, 0.9).setDepth(DEPTH + 3),
+        s.add.rectangle(cx, y + 50, 7, 7, 0xffe08a).setAngle(45).setStrokeStyle(1, 0xffffff).setDepth(DEPTH + 3),
+      );
+      if (this.state.perfect.includes(stage)) this.t(cx + (PAGE_W - 24) / 2 - 10, y + 4, '★', { fontSize: '12px', color: '#c08a1a' });
+    } else this.t(cx, y + 30, '(삽화)', { fontSize: '8px', color: '#b8a888' });
     y += 80;
     y += this.t(cx, y, `◆ ${st.coreName}`, { fontSize: '10px', color: '#a0702a' }).height + 8;
     y += this.t(cx, y, st.page, { fontSize: '10px', lineSpacing: 3 }).height + 10;
@@ -159,6 +178,24 @@ export class StoryBookView {
       b.container.setDepth(DEPTH + 4);
       this.pageButtons.push(b);
     }
+  }
+
+  /** 만든 사람들 패널 (로드된 팩만) */
+  private showCredits(): void {
+    const s = this.scene;
+    const list = skinOf(s).credits();
+    const objs: Phaser.GameObjects.GameObject[] = [];
+    const bg = s.add.rectangle(0, 0, VIEW_W, VIEW_H, 0x000000, 0.7).setOrigin(0).setDepth(DEPTH + 10).setInteractive();
+    const panel = s.add.rectangle(VIEW_W / 2, VIEW_H / 2, 280, 80 + list.length * 34, 0x2a2d38).setStrokeStyle(2, 0xb8c4d6).setDepth(DEPTH + 11);
+    objs.push(bg, panel);
+    const top = VIEW_H / 2 - (80 + list.length * 34) / 2;
+    objs.push(text(s, VIEW_W / 2, top + 14, '만든 사람들 (임시 그림)', { fontSize: '13px', color: '#f2c94c', fontStyle: 'bold' }).setOrigin(0.5, 0).setDepth(DEPTH + 12));
+    list.forEach((c, i) => {
+      objs.push(text(s, VIEW_W / 2, top + 44 + i * 34, `${c.name} — ${c.author}
+${c.url}`, { fontSize: '10px', color: '#e8e8e8', align: 'center' }).setOrigin(0.5, 0).setDepth(DEPTH + 12));
+    });
+    objs.push(text(s, VIEW_W / 2, top + 50 + list.length * 34, '탭하면 닫기', { fontSize: '8px', color: '#8a8f9e' }).setOrigin(0.5, 0).setDepth(DEPTH + 12));
+    bg.on('pointerup', () => objs.forEach((o) => o.destroy()));
   }
 
   close(): void {

@@ -18,6 +18,8 @@ import { stageLabel } from './labels';
 import { REGION, VIEW_W, skyArc, toScreen, type Rect } from './layout';
 import { Button, COLOR, setupCamera, text } from './ui';
 import { nowMs } from '../platform/clock';
+import { skinOf } from './skin/Skin';
+import { enemyName } from '../core/game';
 import type { Role } from '../core/game';
 
 /** 한 프레임에 넘기는 시간 상한 (백그라운드 복귀 직후 몰아서 처리하지 않도록) */
@@ -240,6 +242,13 @@ export class GameScene extends Phaser.Scene {
         this.banner(`${e.role === 'offense' ? '☀' : '☾'} ${e.team + 1}팀 출발`, '#ffffff');
       } else if (e.type === 'formationRestart') {
         this.banner('편성이 바뀌어 처음부터', '#ffb46b');
+      } else if (e.type === 'dayBegin' && this.state.stageDef.day.boss && skinOf(this).fx) {
+        // 1-5 털장갑 손 / 1-10 성난 호랑이 그림자: 등장 이름 띠 1초 (§5.23-2)
+        const st = this.state.stageDef;
+        this.nameBand(this.state.stage >= this.state.chapterLength ? data.chapter.bossName : enemyName(data, st.day.guardian));
+      } else if (e.type === 'spawnWorry' && e.boss && skinOf(this).fx && this.bossBandAt !== this.state.attempt) {
+        this.bossBandAt = this.state.attempt;
+        this.nameBand(enemyName(data, e.enemy));
       } else if (e.type === 'stageReward') {
         this.banner(`첫 클리어 · 잉크 +${e.ink} · 별가루 +${e.dust}`, '#ffe08a');
       } else if (e.type === 'booksGained') {
@@ -262,6 +271,21 @@ export class GameScene extends Phaser.Scene {
 
   /** 땅 띠 위쪽 한 줄 알림 (1.2초) */
   private banners = 0;
+  /** 밤 보스 이름 띠를 보여 준 시도 (한 번만) */
+  private bossBandAt = -1;
+
+  /** 보스 등장 이름 띠 1초: 전장 가운데 어두운 띠 + 이름 */
+  private nameBand(name: string): void {
+    const g = REGION.ground;
+    const y = g.y + g.h / 2;
+    const band = this.add.rectangle(VIEW_W / 2, y, VIEW_W, 34, 0x0e0a14, 0.82).setDepth(45).setScale(1, 0);
+    const t = text(this, VIEW_W / 2, y, name, { fontSize: '16px', color: '#ff9e9e', fontStyle: 'bold' }).setOrigin(0.5).setDepth(46).setAlpha(0);
+    this.tweens.add({ targets: band, scaleY: 1, duration: 140 });
+    this.tweens.add({ targets: t, alpha: 1, duration: 140 });
+    this.time.delayedCall(1000, () => {
+      this.tweens.add({ targets: [band, t], alpha: 0, duration: 200, onComplete: () => (band.destroy(), t.destroy()) });
+    });
+  }
 
   /** 같은 때 여러 줄이면 아래로 쌓는다 (보상·비법서·흠집 없음이 한꺼번에 오므로 조금 더 오래) */
   private banner(msg: string, color: string): void {
