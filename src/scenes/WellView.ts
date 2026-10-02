@@ -82,8 +82,8 @@ export class WellView {
       this.chainInitial.set(c.archetypeId, c.name.slice(0, 1));
     }
     const n = data.balance.team.teamSize;
-    // 스킬 버튼 + 아래 체인 이름까지 피해서 헤엄
-    const obstacles = Array.from({ length: n }, (_, i) => ({ ...skillButtonCenter(i, n), r: SKILL_BTN_R + 14 }));
+    // 스킬 버튼을 피해서 헤엄 (팀 인원 수와 상관없이 최대 줄 전체를 비워 둔다)
+    const obstacles = Array.from({ length: n }, (_, i) => ({ ...skillButtonCenter(i, n), r: SKILL_BTN_R + 6 }));
     this.pond = new Pond(Math.random, obstacles);
     this.tag = text(scene, 0, 0, '', { fontSize: '11px', backgroundColor: '#1b1d24', padding: { x: 4, y: 2 } })
       .setOrigin(0.5)

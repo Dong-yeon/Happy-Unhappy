@@ -6,6 +6,7 @@ import {
   CORE,
   DROP_R,
   HOME,
+  WELL,
   REGION,
   RELEASE_HIT,
   RELEASE_ZONE,
@@ -45,8 +46,8 @@ describe('레이아웃 영역 (§5.20-13 화면 배치 표)', () => {
   });
 });
 
-describe('원형 스킬 버튼 (§5.20-13)', () => {
-  it('전장과 머지 판 경계에 걸쳐 떠 있고, 오른쪽 정렬·겹치지 않음·화면 안', () => {
+describe('원형 스킬 버튼 (§5.20-13, §5.21-6)', () => {
+  it('우물 위쪽 테두리에 가로 한 줄 (같은 높이·가운데 정렬·겹치지 않음·화면 안), 전장과 판 경계에 걸침', () => {
     for (const n of [1, 2, 3]) {
       const cs = Array.from({ length: n }, (_, i) => skillButtonCenter(i, n));
       for (const c of cs) {
@@ -55,8 +56,16 @@ describe('원형 스킬 버튼 (§5.20-13)', () => {
         expect(c.x + SKILL_BTN_R).toBeLessThanOrEqual(VIEW_W);
         expect(c.x - SKILL_BTN_R).toBeGreaterThanOrEqual(0);
       }
-      for (let i = 1; i < n; i++) expect(cs[i].x - cs[i - 1].x).toBeGreaterThan(SKILL_BTN_R * 2);
-      expect(cs[n - 1].x).toBe(skillButtonCenter(2, 3).x);
+      for (let i = 1; i < n; i++) {
+        expect(cs[i].x - cs[i - 1].x).toBeGreaterThan(SKILL_BTN_R * 2);
+        expect(cs[i].y).toBe(cs[0].y); // 세로로 쌓이지 않는다
+      }
+      expect((cs[0].x + cs[n - 1].x) / 2).toBeCloseTo(WELL.x + WELL.w / 2, 9);
+      for (const c of cs) {
+        expect(c.y).toBeLessThanOrEqual(WELL.y); // 중심은 돌테 위
+        expect(c.x - SKILL_BTN_R).toBeGreaterThan(WELL.x + WELL.r); // 둥근 모서리가 아닌 곧은 위 테두리
+        expect(c.x + SKILL_BTN_R).toBeLessThan(WELL.x + WELL.w - WELL.r);
+      }
     }
   });
 

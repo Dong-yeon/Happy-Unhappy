@@ -1,6 +1,6 @@
 // 원형 스킬 버튼 (§5.20-13, D-064): 전장과 머지 판 경계에 떠 있는 지금 레인 팀(전투 밖이면 다음에 나갈 공격대 팀) 영웅 초상 3개.
 // 둘레 = 스킬 게이지, 아래 작은 글씨 = 자기 체인. 수동 모드([자동] 끔)에서 게이지가 찬 영웅은 빛나고 탭하면 발동.
-// 우물 왼쪽 위에 이 팀에 켜진 인연. 별도 "지금 팀" 줄·박스 없음. 도형 + 텍스트만, 상태는 core에서 읽기만 한다 (발동은 castReady).
+// 버튼 줄 오른쪽 돌테 위에 이 팀에 켜진 인연. 별도 "지금 팀" 줄·박스 없음. 도형 + 텍스트만, 상태는 core에서 읽기만 한다 (발동은 castReady).
 import Phaser from 'phaser';
 import type { CoreEvent, GameState } from '../core/game';
 import type { GameData } from '../data/types';
@@ -36,15 +36,21 @@ export class SkillButtonsView {
     private readonly data: GameData,
     teamSize: number,
   ) {
-    this.bonds = text(scene, WELL.x + 22, WELL.y + 6, '', { fontSize: '9px', color: '#ffd1dc' }).setDepth(DEPTH); // 우물 왼쪽 위 (§5.21)
+    // 켜진 인연: 버튼 줄 오른쪽 돌테 위 (물 위 조각과 겹치지 않게, §5.21-6)
+    const last = skillButtonCenter(teamSize - 1, teamSize);
+    const bx = last.x + SKILL_BTN_R + RING_W + 6;
+    this.bonds = text(scene, bx, last.y, '', { fontSize: '9px', color: '#ffd1dc', wordWrap: { width: WELL.x + WELL.w - bx } })
+      .setOrigin(0, 0.5)
+      .setDepth(DEPTH);
     for (let i = 0; i < teamSize; i++) {
       const shadow = scene.add.circle(0, 2, SKILL_BTN_R + RING_W, 0x000000, 0.45);
       const glow = scene.add.circle(0, 0, SKILL_BTN_R + RING_W + 3, READY_COLOR, 0.35).setVisible(false);
       const track = scene.add.circle(0, 0, SKILL_BTN_R + RING_W / 2, 0x000000, 0).setStrokeStyle(RING_W, 0x1b1d24, 0.9);
       const ring = scene.add.graphics();
       const disc = scene.add.circle(0, 0, SKILL_BTN_R, 0xffffff).setInteractive({ useHandCursor: true });
-      const initial = text(scene, 0, 0, '', { fontSize: '14px', color: '#1b1d24', fontStyle: 'bold' }).setOrigin(0.5);
-      const chain = text(scene, 0, SKILL_BTN_R + RING_W + 1, '', { fontSize: '9px', color: '#9aa1b5' }).setOrigin(0.5, 0);
+      const initial = text(scene, 0, -5, '', { fontSize: '14px', color: '#1b1d24', fontStyle: 'bold' }).setOrigin(0.5);
+      // 체인 이름은 원 안 아래쪽 (버튼 아래 물에 글씨가 걸치지 않게, §5.21-6)
+      const chain = text(scene, 0, 10, '', { fontSize: '8px', color: '#1b1d24' }).setOrigin(0.5);
       const container = scene.add.container(0, 0, [shadow, glow, track, ring, disc, initial, chain]).setDepth(DEPTH);
       const orb: Orb = { container, disc, initial, chain, ring, glow, heroId: null, drawn: '' };
       disc.on('pointerup', () => {

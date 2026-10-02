@@ -69,14 +69,14 @@ export function wellDistance(x: number, y: number): number {
   return Math.hypot(ox, oy) + Math.min(Math.max(qx, qy), 0) - WELL.r;
 }
 
-// ── 원형 스킬 버튼 (§5.20-13, §5.21-6): 우물 위쪽 테두리에 걸친 지금 팀 영웅 초상 3개 (오른쪽 정렬). 둘레 = 스킬 게이지 ──
+// ── 원형 스킬 버튼 (§5.20-13, §5.21-6): 우물 위쪽 테두리에 가로 한 줄로 걸친 지금 팀 영웅 초상 (가운데 정렬). 둘레 = 스킬 게이지 ──
+// 버튼 중심은 돌테 위: 아래쪽 일부만 물에 걸치고, 조각은 버튼을 피해서 헤엄친다 (pond 장애물).
 export const SKILL_BTN_R = 23;
 const SKILL_BTN_GAP = 8;
 /** i번째(0 = 앞) 버튼 중심. 팀 인원 n */
 export function skillButtonCenter(i: number, n: number): { x: number; y: number } {
-  const right = VIEW_W - 10 - SKILL_BTN_R;
   const step = SKILL_BTN_R * 2 + SKILL_BTN_GAP;
-  return { x: right - (n - 1 - i) * step, y: WELL.y };
+  return { x: WELL.x + WELL.w / 2 + (i - (n - 1) / 2) * step, y: WELL.y - WELL.rim / 2 };
 }
 
 // ── core 좌표 (v0.7 세로 레인 그대로. 바꾸면 core·시뮬 결과가 달라진다) ──
