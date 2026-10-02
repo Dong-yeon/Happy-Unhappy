@@ -21,6 +21,8 @@ const SPEED_CAP = 24;
 export const ATTRACT_RANGE = 120;
 export const ATTRACT_ACCEL = 4;
 export const WILD_ACCEL = 2;
+/** 자동 뭉침 단계(autoMergeMaxTier 이하) 같은 조각끼리는 더 세게 끌림 (D-070) — 판정은 core, 이건 보기만 */
+export const AUTO_ATTRACT_ACCEL = 14;
 /** 조각끼리 밀어냄: 이 간격까지 겹치지 않게 */
 const GAP = 2;
 /** 가장자리: 이만큼 안쪽부터 부드럽게 안으로 밀고, 닿으면 튕김 (감쇠) */
@@ -169,14 +171,15 @@ export class Pond {
   // ── 헤엄 ──
 
   /** 두 조각이 서로 끌리는 가속 (0이면 없음): 같은 체인·단계(최고 단계 아님) 4 / 와일드카드 ↔ 아무 조각 2 */
-  attraction(a: Fish, b: Fish, maxTier: number): number {
+  attraction(a: Fish, b: Fish, maxTier: number, autoMax = 0): number {
     if (a.wild && b.wild) return 0;
     if (a.wild || b.wild) return (a.wild ? b.tier : a.tier) < maxTier ? WILD_ACCEL : 0;
-    return a.chain === b.chain && a.tier === b.tier && a.tier < maxTier ? ATTRACT_ACCEL : 0;
+    if (a.chain !== b.chain || a.tier !== b.tier || a.tier >= maxTier) return 0;
+    return a.tier <= autoMax ? AUTO_ATTRACT_ACCEL : ATTRACT_ACCEL;
   }
 
   /** 한 프레임. 누르는 동안(frozen)은 아무것도 움직이지 않는다. core 상태는 읽지도 쓰지도 않는다 */
-  step(dt: number, maxTier: number): void {
+  step(dt: number, maxTier: number, autoMax = 0): void {
     if (this.frozen || dt <= 0) return;
     const list = [...this.fish.values()];
     const r = this.r;
@@ -199,7 +202,7 @@ export class Pond {
       // 같은 조각끼리 약한 끌림
       for (const g of list) {
         if (g === f || g.hold > 0) continue;
-        const a = this.attraction(f, g, maxTier);
+        const a = this.attraction(f, g, maxTier, autoMax);
         if (!a) continue;
         const dx = g.x - f.x;
         const dy = g.y - f.y;
@@ -377,6 +380,21 @@ export class Pond {
     f.vy = 0;
     this.bounce(f);
     return { kind: 'swim' };
+  }
+
+  /** 자동 뭉침 (D-070): core가 이미 합친 쌍에서 사라진 쪽 물고기를 뺀다 (표시 연출은 WellView). 남은 쪽은 그대로 */
+  absorb(fromCell: number, toCell: number): { from: Fish | null; to: Fish | null } {
+    let from: Fish | null = null;
+    let to: Fish | null = null;
+    for (const f of this.fish.values()) {
+      if (f.cell === fromCell) from = f;
+      else if (f.cell === toCell) to = f;
+    }
+    if (from) {
+      this.fish.delete(from.id);
+      if (this.dragging === from.id) this.dragging = null;
+    }
+    return { from, to };
   }
 
   /** 끌기 취소 (모달·단계 전환): 그 자리에서 다시 헤엄 */

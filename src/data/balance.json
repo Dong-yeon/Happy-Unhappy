@@ -20,7 +20,9 @@
         4
       ]
     ],
-    "maxTier": 5
+    "maxTier": 5,
+    "autoMergeMaxTier": 1,
+    "autoMergeInterval": 0.5
   },
   "spawn": {
     "autoInterval": 2.5,

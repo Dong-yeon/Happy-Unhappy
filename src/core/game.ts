@@ -27,6 +27,7 @@ import {
   applyDrop,
   createGrid,
   isFull,
+  isWildcard,
   pickChain,
   pickEmpty,
   releaseAt,
@@ -110,6 +111,8 @@ export type CoreEvent =
   | ExpeditionEvent
   /** 장면 카드 (스테이지 시작·실패 뒤 재도전) */
   | { type: 'stageStart'; stage: number; retry: FailReason | null }
+  /** 자동 뭉침 (D-070): from 조각이 to 칸으로 합쳐짐 (보상은 손 머지와 같음). 화면은 이 쌍을 끌어다 붙이는 연출만 */
+  | { type: 'autoMerge'; from: number; to: number }
   /** 장면 카드를 닫고 낮 시작 */
   | { type: 'dayBegin'; stage: number; attempt: number }
   /** 영웅이 레인에 섬 (팀 출발·일어남) */
@@ -216,6 +219,12 @@ export class GameState {
   autoSkill = true;
   /** 저절로 조각까지 남은 초 (단계 시작마다 autoInterval) */
   autoTimer = 0;
+  /** 자동 뭉침 (D-070): 다음 자동 머지까지 남은 초 (머지 뒤 autoMergeInterval, 짝이 없으면 0에 멈춤. 단계 시작마다 0) */
+  autoMergeTimer = 0;
+  /** 화면이 잡고 있는 칸 (자동 뭉침 대상에서 제외). 저장하지 않는 화면 상태 */
+  readonly heldCells = new Set<number>();
+  /** 이 판에서 자동 뭉침 횟수 (저장하지 않음, 시뮬 집계용) */
+  autoMerges = 0;
   /** 밤: 동시 적 상한을 넘어 아직 레인에 못 나온 적 */
   private readonly nightQueue: WorryStats[] = [];
   /** 지급할 칸이 없어 사라진 조각 수 */
@@ -711,6 +720,8 @@ export class GameState {
         this.makePiece('auto', 1, null, out);
       }
     }
+    // 자동 뭉침 (D-070): autoMergeMaxTier 이하 같은 조각 한 쌍을 autoMergeInterval마다
+    this.stepAutoMerge(out);
     // 자동 모드: 게이지가 찬 레인 영웅은 바로 발동 (수동 → 자동 전환·찬 채로 다시 나온 영웅)
     if (this.autoSkill) {
       const role = this.fightingRole;
@@ -1087,6 +1098,7 @@ export class GameState {
     this.phaseExp = new Map();
     this.coresDone = 0;
     this.autoTimer = this.data.balance.spawn.autoInterval;
+    this.autoMergeTimer = 0;
     this.activeTeam.offense = 0;
     for (const r of ROLES) this.resetMomentum(r);
     this.resetExpedition();
@@ -1126,6 +1138,7 @@ export class GameState {
     this.foughtNight.clear();
     this.coreHp = this.data.balance.core.hp;
     this.autoTimer = this.data.balance.spawn.autoInterval;
+    this.autoMergeTimer = 0;
     this.activeTeam.defense = 0;
     const n = this.stageDef.night;
     this.wave.start(
@@ -1505,6 +1518,44 @@ export class GameState {
   }
 
   // ── 드래그 ──
+
+  /**
+   * 자동 뭉침 쌍 (D-070): autoMergeMaxTier 이하, 와일드카드·잡고 있는 칸 제외, 같은 체인·같은 단계 두 조각.
+   * 고르는 순서: 낮은 단계 먼저 → 합쳐질 칸(to, 작은 번호) → 옮겨 올 칸(from, to 다음으로 작은 번호). 없으면 null
+   */
+  /** 자동 뭉침 단계 상한 (0 = 끔). 이 단계 이하 같은 조각은 손으로 합칠 필요가 없다 */
+  get autoMergeMaxTier(): number {
+    return this.data.balance.grid.autoMergeMaxTier;
+  }
+
+  autoMergePair(): { from: number; to: number } | null {
+    const max = this.autoMergeMaxTier;
+    const cells = this.grid.cells;
+    let best: { from: number; to: number; tier: number } | null = null;
+    for (let to = 0; to < cells.length; to++) {
+      const a = cells[to];
+      if (!a || isWildcard(a) || a.tier > max || a.tier >= this.grid.maxTier || this.heldCells.has(to)) continue;
+      if (best && a.tier >= best.tier) continue;
+      for (let from = to + 1; from < cells.length; from++) {
+        const b = cells[from];
+        if (!b || isWildcard(b) || this.heldCells.has(from) || b.chain !== a.chain || b.tier !== a.tier) continue;
+        best = { from, to, tier: a.tier };
+        break;
+      }
+    }
+    return best && { from: best.from, to: best.to };
+  }
+
+  private stepAutoMerge(out: CoreEvent[]): void {
+    this.autoMergeTimer = Math.max(0, this.autoMergeTimer - FIXED_DT);
+    if (this.autoMergeTimer > TICK_EPS) return;
+    const pair = this.autoMergePair();
+    if (!pair) return;
+    this.autoMergeTimer = this.data.balance.grid.autoMergeInterval;
+    this.autoMerges += 1;
+    out.push({ type: 'autoMerge', from: pair.from, to: pair.to });
+    this.drop(pair.from, pair.to);
+  }
 
   /** 드롭: 머지 / 교환·이동. 전투 중 머지면 버프 + 병사 + 스킬 게이지 */
   drop(from: number, to: number | null): DropKind {

@@ -71,7 +71,8 @@ describe('GameState — 조각이 생기는 길 (§5.20-13)', () => {
 
   it('그리드가 가득이면 버림 (piecesDiscarded, 이벤트 index null)', () => {
     const g = gameWith(calm);
-    for (let i = 0; i < g.grid.cells.length; i++) g.grid.cells[i] = g.newPiece(DOG, (i % 3) + 1);
+    // 2~4단계만 (1단계 둘은 자동 뭉침으로 합쳐져 칸이 빈다, D-070)
+    for (let i = 0; i < g.grid.cells.length; i++) g.grid.cells[i] = g.newPiece(DOG, (i % 3) + 2);
     const before = JSON.stringify(g.grid.cells);
     const es = pieces(ticks(g, SP.autoInterval + 0.05));
     expect(es).toHaveLength(1);

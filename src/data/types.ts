@@ -16,6 +16,10 @@ export interface Balance {
     gridRows: number;
     gridPresets: [number, number][];
     maxTier: number;
+    /** 자동 뭉침 (D-070): 이 단계 이하 같은 조각 둘은 저절로 합쳐짐 (0 = 끔). maxTier 미만 */
+    autoMergeMaxTier: number;
+    /** 자동 뭉침 간격(초): 한 번에 한 쌍씩 */
+    autoMergeInterval: number;
   };
   /** 조각이 생기는 길 (§5.20-13, D-064): 전투 중 autoInterval초마다 1단계 1개 + 처치 시 killDropChance로 1단계 1개.
    *  밤 보스·guardian은 bossDropTier단계 bossDropCount개 확정. 그리드가 가득이면 버림 */

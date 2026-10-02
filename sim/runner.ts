@@ -74,7 +74,10 @@ export interface RunResult {
   /** 지급할 칸이 없어 사라진 조각 */
   lostReturns: number;
   offenseSoldierDeaths: number;
+  /** 봇 손 머지 수 */
   merges: number;
+  /** 자동 뭉침 수 (D-070, core가 저절로) */
+  autoMerges: number;
   releases: number;
   /** 실수(엉뚱한 곳 드롭 → 원위치)로 버린 행동 */
   mistakes: number;
@@ -172,7 +175,7 @@ export function runLife(data: GameData, cfg: SimConfig, policy: Policy, opt: Run
   const maxAttempts = opt.maxAttempts ?? cfg.maxAttempts;
   let kills = 0;
   let ticks = 0;
-  const counts = { merges: 0, releases: 0, mistakes: 0, staleActions: 0 };
+  const counts = { merges: 0, autoMerges: 0, releases: 0, mistakes: 0, staleActions: 0 };
   // 보유 영웅·편성 (판 시작, 장면 카드 앞 = 편성 화면 자리)
   if (opt.roster === 'all') {
     state.debugGrantAllHeroes();
@@ -347,7 +350,10 @@ export function runLife(data: GameData, cfg: SimConfig, policy: Policy, opt: Run
 
     const events = state.tick(FIXED_DT);
     ticks += 1;
-    for (const e of events) if (e.type === 'worryDie' || e.type === 'enemyDie') kills += 1;
+    for (const e of events) {
+      if (e.type === 'worryDie' || e.type === 'enemyDie') kills += 1;
+      else if (e.type === 'autoMerge') counts.autoMerges += 1;
+    }
   }
 
   const result: RunResult = {

@@ -137,8 +137,11 @@ export const METRICS: { key: string; label: string; get: (r: RunResult) => numbe
   { key: 'specials', label: '특별 버프 발동', get: (r) => r.specials },
   { key: 'skillShare', label: '피해 중 스킬 비중', get: (r) => (totalDamage(r) + r.damageSkill > 0 ? r.damageSkill / (totalDamage(r) + r.damageSkill) : null) },
   { key: 'levelAvg', label: '최종 레벨 평균', get: (r) => { const v = Object.values(r.levels); return v.length ? v.reduce((a, b) => a + b, 0) / v.length : null; } },
-  { key: 'merges', label: '머지 수', get: (r) => r.merges },
-  { key: 'battleMergeRatio', label: '전투 중 머지 비율', get: (r) => (r.merges ? r.battleMerges / r.merges : null) },
+  { key: 'merges', label: '손 머지 수', get: (r) => r.merges },
+  // D-070 자동 뭉침
+  { key: 'autoMerges', label: '자동 뭉침 수', get: (r) => r.autoMerges ?? 0 },
+  { key: 'handMergesPerMin', label: '손 머지/분', get: (r) => (r.playTime > 0 ? r.merges / (r.playTime / 60) : null) },
+  { key: 'battleMergeRatio', label: '전투 중 머지 비율', get: (r) => (r.merges + (r.autoMerges ?? 0) ? r.battleMerges / (r.merges + (r.autoMerges ?? 0)) : null) },
   { key: 'momentumAvg', label: '기세 평균 중첩', get: (r) => r.momentumAvg },
   { key: 'offenseFalls', label: '쓰러짐 (낮)', get: (r) => r.offenseFalls },
   { key: 'defenseFalls', label: '쓰러짐 (밤)', get: (r) => r.defenseFalls },

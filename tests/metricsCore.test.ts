@@ -10,6 +10,8 @@ import { serializeGame } from '../src/core/save';
 import { gameGeometry } from '../src/scenes/layout';
 
 const data = structuredClone(rawGameData) as unknown as GameData;
+// 집계 테스트는 손 머지만 센다: 자동 뭉침(D-070) 끔 (자동 뭉침은 autoMerge.test.ts)
+data.balance.grid.autoMergeMaxTier = 0;
 const DOG = 'companion_animal';
 const BLANKET = 'comfort_object';
 const MAX = data.balance.grid.maxTier;

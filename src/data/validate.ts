@@ -136,7 +136,7 @@ function checkBalance(c: Checker, v: unknown): { maxTier?: number; chapterLength
 
   let maxTier: number | undefined;
   const g = c.obj(b.grid, `${p}.grid`, [
-    'gridCols', 'gridRows', 'gridPresets', 'maxTier',
+    'gridCols', 'gridRows', 'gridPresets', 'maxTier', 'autoMergeMaxTier', 'autoMergeInterval',
   ]);
   if (g) {
     const cols = c.num(g.gridCols, `${p}.grid.gridCols`, { int: true, min: 1 });
@@ -156,6 +156,10 @@ function checkBalance(c: Checker, v: unknown): { maxTier?: number; chapterLength
       c.fail(`${p}.grid`, `기본 그리드 ${cols}×${rows}가 gridPresets에 없음`);
     }
     maxTier = c.num(g.maxTier, `${p}.grid.maxTier`, { int: true, min: 1 });
+    // 자동 뭉침 (D-070): 0 = 끔, maxTier 미만 (최고 단계는 더 합쳐지지 않음)
+    const am = c.num(g.autoMergeMaxTier, `${p}.grid.autoMergeMaxTier`, { int: true, min: 0 });
+    if (am !== undefined && maxTier !== undefined && am >= maxTier) c.fail(`${p}.grid.autoMergeMaxTier`, `grid.maxTier(${maxTier}) 미만이어야 함`);
+    c.num(g.autoMergeInterval, `${p}.grid.autoMergeInterval`, { min: 0.05 });
   }
 
   // 조각이 생기는 길 (§5.20-13): 저절로 + 처치 드롭

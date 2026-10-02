@@ -65,10 +65,11 @@ describe('한 판 = 1챕터, 시도 상한 (§5.19-6)', () => {
 });
 
 describe('정책 기본 동작 (§5.20-10·13: 조각은 저절로 + 처치 드롭, 손은 머지·놓아주기뿐)', () => {
-  it('idle: 행동 없음 → 영웅만 싸운다, 조각은 저절로 쌓이다 가득 차면 버려진다', () => {
+  it('idle: 손 행동 없음 → 1단계만 저절로 뭉치고(D-070) 나머지는 쌓이다 가득 차면 버려진다', () => {
     const r = run('idle', 1);
     expect(r.merges + r.releases + r.mistakes).toBe(0);
-    expect(r.soldiers).toBe(0);
+    expect(r.autoMerges).toBeGreaterThan(0);
+    expect(r.battleMerges).toBe(r.autoMerges);
     expect(r.piecesAuto).toBeGreaterThan(0);
     expect(r.piecesDiscarded).toBeGreaterThan(0);
     expect(r.gridFullRatio).toBeGreaterThan(0);
@@ -77,7 +78,7 @@ describe('정책 기본 동작 (§5.20-10·13: 조각은 저절로 + 처치 드�
   it('balanced: 전투 중 머지로 병사·버프·스킬, 처치 드롭 조각도 들어온다', () => {
     const b = run('balanced', 1);
     expect(b.merges).toBeGreaterThan(0);
-    expect(b.battleMerges).toBe(b.merges); // 전투 밖 행동 없음
+    expect(b.battleMerges).toBe(b.merges + b.autoMerges); // 전투 밖 행동 없음 (자동 뭉침도 전투 중에만)
     expect(b.soldiers).toBeGreaterThan(0);
     expect(Object.values(b.skillCasts).reduce((a, x) => a + x, 0)).toBeGreaterThan(0);
     expect(b.piecesDropped).toBeGreaterThan(0);
@@ -110,8 +111,7 @@ describe('정책 기본 동작 (§5.20-10·13: 조각은 저절로 + 처치 드�
   it('lazy: 전투 중에는 머지하지 않는다 (병사·버프 없음), 전투 밖에서 몰아서 머지', () => {
     const l = run('lazy', 1);
     expect(l.merges).toBeGreaterThan(0);
-    expect(l.battleMerges).toBe(0);
-    expect(l.soldiers).toBe(0);
+    expect(l.battleMerges).toBe(l.autoMerges); // 전투 중 머지는 자동 뭉침뿐
   });
 
   it('noMerge: 머지 안 함 (가득이면 놓아주기만)', () => {

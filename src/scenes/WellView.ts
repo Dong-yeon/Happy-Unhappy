@@ -38,6 +38,8 @@ const FLY_MS = 420;
 const RIPPLE_MS = 300;
 const POP_MS = 260;
 const HOP_MS = 280;
+/** 자동 뭉침: 사라진 조각이 짝에게 빨려 들어가는 시간 (D-070) */
+const ABSORB_MS = 200;
 const HOP_PX = 10;
 const RELEASE_FLOAT_PX = 36;
 const RELEASE_FLOAT_MS = 350;
@@ -135,6 +137,7 @@ export class WellView {
   cancel(): void {
     if (!this.press) return;
     this.press = null;
+    this.state.heldCells.clear();
     this.setHover(null);
     this.pond.cancel();
   }
@@ -147,6 +150,8 @@ export class WellView {
         if (e.index !== null) this.arrivals.set(e.piece.id, e);
         else if (e.from) this.discardFx(e);
         any = true;
+      } else if (e.type === 'autoMerge') {
+        this.absorbFx(e.from, e.to);
       }
     }
     if (any) this.syncArrivals();
@@ -154,7 +159,7 @@ export class WellView {
 
   /** 매 프레임: 헤엄 → 표시 위치 */
   update(dtMs: number): void {
-    this.pond.step(Math.min(MAX_DT, dtMs / 1000), this.state.grid.maxTier);
+    this.pond.step(Math.min(MAX_DT, dtMs / 1000), this.state.grid.maxTier, this.state.autoMergeMaxTier);
     for (const [id, v] of this.views) {
       const f = this.pond.fish.get(id);
       if (f) v.c.setPosition(f.x, f.y - v.lift.v);
@@ -297,6 +302,10 @@ export class WellView {
     // 판을 누르는 순간 전부 정지 (§5.21-3)
     const id = this.pond.press(w.x, w.y);
     this.press = { pointerId: p.id, id, startX: w.x, startY: w.y, dragging: false };
+    // 잡은 조각은 자동 뭉침 대상에서 뺀다 (D-070)
+    this.state.heldCells.clear();
+    const held = id === null ? undefined : this.pond.fish.get(id);
+    if (held) this.state.heldCells.add(held.cell);
   }
 
   private onMove(p: Phaser.Input.Pointer): void {
@@ -332,6 +341,7 @@ export class WellView {
     const press = this.press;
     if (!press || press.pointerId !== p.id) return;
     this.press = null;
+    this.state.heldCells.clear();
     this.setHover(null);
     const id = press.id;
     if (id === null || !press.dragging) {
@@ -366,6 +376,55 @@ export class WellView {
       if (kf) this.hop(this.rebuild(kf));
       this.refresh();
       this.hooks.onChange();
+    }
+  }
+
+  /**
+   * 자동 뭉침 연출 (D-070): core가 정한 쌍 — 사라진 조각이 남은 조각 쪽으로 0.2초 빨려 들어가고 작은 반짝임, 남은 조각은 새 단계로 톡.
+   * 판정·보상은 core가 이미 끝냈다 (화면은 보기만)
+   */
+  private absorbFx(fromCell: number, toCell: number): void {
+    const { from, to } = this.pond.absorb(fromCell, toCell);
+    const v = from ? this.views.get(from.id) : undefined;
+    if (from) this.views.delete(from.id);
+    const target = to;
+    const done = () => {
+      if (target) {
+        this.sparkle(target.x, target.y);
+        const kv = this.views.get(target.id);
+        if (kv) this.hop(kv);
+      }
+    };
+    if (v && target) {
+      v.c.setDepth(DEPTH + 1);
+      const sx = v.c.x;
+      const sy = v.c.y;
+      const t = { k: 0 };
+      this.scene.tweens.add({
+        targets: t,
+        k: 1,
+        duration: ABSORB_MS,
+        ease: 'Quad.easeIn',
+        onUpdate: () => v.c.setPosition(sx + (target.x - sx) * t.k, sy + (target.y - sy) * t.k).setScale(1 - 0.4 * t.k),
+        onComplete: () => {
+          v.c.destroy();
+          done();
+        },
+      });
+    } else {
+      v?.c.destroy();
+      done();
+    }
+    // 남은 조각 단계 갱신 (rebuild)
+    this.refresh();
+  }
+
+  /** 작은 반짝임 (자동 뭉침) */
+  private sparkle(x: number, y: number): void {
+    for (let i = 0; i < 6; i++) {
+      const a = (Math.PI * 2 * i) / 6;
+      const p = this.scene.add.circle(x, y, 2, 0xfff1c4).setDepth(DEPTH + 2);
+      this.scene.tweens.add({ targets: p, x: x + Math.cos(a) * 16, y: y + Math.sin(a) * 16, alpha: 0, duration: 260, ease: 'Sine.easeOut', onComplete: () => p.destroy() });
     }
   }
 

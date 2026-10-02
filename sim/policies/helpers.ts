@@ -4,9 +4,13 @@ import { isWildcard, resolveDrop } from '../../src/core/grid';
 import { randInt, type Rng } from '../../src/core/rng';
 import type { Action } from '../types';
 
-/** 머지 가능한 (from, to) 중 결과 단계가 가장 높은 것. 같으면 먼저 찾은 것 */
+/**
+ * 머지 가능한 (from, to) 중 결과 단계가 가장 높은 것. 같으면 먼저 찾은 것.
+ * 자동 뭉침 (D-070): 와일드카드 없이 autoMergeMaxTier 이하끼리는 core가 저절로 합치므로 손으로 하지 않는다
+ */
 export function bestMerge(state: GameState): Action | null {
   const { grid } = state;
+  const autoMax = state.autoMergeMaxTier;
   let best: { from: number; to: number; tier: number } | null = null;
   for (let from = 0; from < grid.cells.length; from++) {
     if (!grid.cells[from]) continue;
@@ -14,6 +18,7 @@ export function bestMerge(state: GameState): Action | null {
       if (resolveDrop(grid, from, to) !== 'merge') continue;
       const a = grid.cells[from]!;
       const b = grid.cells[to]!;
+      if (!isWildcard(a) && !isWildcard(b) && a.tier <= autoMax) continue;
       const tier = (isWildcard(b) ? a.tier : b.tier) + 1;
       if (!best || tier > best.tier) best = { from, to, tier };
     }
