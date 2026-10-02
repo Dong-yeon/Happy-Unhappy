@@ -1,9 +1,9 @@
 // localStorage 읽기/쓰기 (스펙 §5.8-2). 브라우저 의존은 platform/에만.
 // 모든 접근은 try/catch: 실패하면 console.warn 후 저장 없이 계속 진행하고, 디버그 패널에 "저장 실패"를 표시한다.
 
-export const SAVE_KEY = 'hau_save_v5';
+export const SAVE_KEY = 'hau_save_v6';
 /** 옛 저장 (M8.10까지)·gating 디버그 날짜: 스키마가 바뀌어 읽지 않고 지운다 (§5.20-11) */
-export const LEGACY_SAVE_KEYS = ['hau_save_v2', 'hau_save_v3', 'hau_save_v4', 'hau_debug_date_offset', 'hau_metrics_v3', 'hau_metrics_v4'];
+export const LEGACY_SAVE_KEYS = ['hau_save_v2', 'hau_save_v3', 'hau_save_v4', 'hau_save_v5', 'hau_debug_date_offset', 'hau_metrics_v3', 'hau_metrics_v4'];
 export const METRICS_KEY = 'hau_metrics_v5';
 
 /** 마지막 쓰기 실패 사유 (디버그 표시). 성공하면 null로 돌아온다 */

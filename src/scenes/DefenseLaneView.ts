@@ -43,9 +43,9 @@ export class DefenseLaneView {
     const bg = scene.add.rectangle(g.x, g.y, g.w, g.h, COLOR.abyss).setOrigin(0);
     const lineX = progressX(CORE.lineY);
     const line = scene.add.line(0, 0, lineX, g.y + 6, lineX, g.y + g.h - 6, COLOR.line).setOrigin(0).setLineWidth(1);
-    this.spawnLabel = text(scene, g.x + g.w - 6, g.y + 4, '← 핵을 노리는 무리', { fontSize: '10px', color: '#c9b98a' }).setOrigin(1, 0);
+    this.spawnLabel = text(scene, g.x + g.w - 6, g.y + 4, '← 씨앗을 노리는 무리', { fontSize: '10px', color: '#c9b98a' }).setOrigin(1, 0);
     this.teamLabel = text(scene, g.x + 8, g.y + 20, '', { fontSize: '10px', color: '#cfd6ea' });
-    const laneLabel = text(scene, g.x + g.w * 0.38, g.y + g.h - 4, '밤 · 핵 지키기', { fontSize: '9px', color: '#8f835f' }).setOrigin(0.5, 1);
+    const laneLabel = text(scene, g.x + g.w * 0.38, g.y + g.h - 4, '밤 · 이야기 씨앗 지키기', { fontSize: '9px', color: '#8f835f' }).setOrigin(0.5, 1);
     const home = HOME.defense;
     // 본거지 이야기책 (핵을 품고 있음, D-056)
     const happy = storyBook(scene, home.x, home.y);
@@ -152,7 +152,7 @@ export class DefenseLaneView {
     const max = this.data.balance.core.hp;
     const hp = this.state.coreHp;
     this.coreFill.width = CORE_BAR_W * Math.max(0, Math.min(1, hp / max));
-    const ct = `핵 ${Math.ceil(hp)}/${max}`;
+    const ct = `씨앗 ${Math.ceil(hp)}/${max}`;
     if (this.coreText.text !== ct) this.coreText.setText(ct);
 
     // 쓰러짐 카운트다운 (§5.17-9)
@@ -167,7 +167,7 @@ export class DefenseLaneView {
     const tl = s.phase === 'night' ? `${at + 1}팀 출격${at + 1 < teams ? ` · ${at + 2}팀 대기` : ''}` : '';
     if (this.teamLabel.text !== tl) this.teamLabel.setText(tl);
     const q = s.nightQueued;
-    const sl = `← 핵을 노리는 무리${q > 0 ? ` (+${q} 대기)` : ''}`;
+    const sl = `← 씨앗을 노리는 무리${q > 0 ? ` (+${q} 대기)` : ''}`;
     if (this.spawnLabel.text !== sl) this.spawnLabel.setText(sl);
   }
 

@@ -262,7 +262,7 @@ describe('인연 (§5.20-6, bonds.json)', () => {
     const g = fresh(quiet, true);
     g.setFormation({ offense: [['haetae', 'sapsal', 'orabi']], defense: [['nui']] });
     expect(g.heroStats('sapsal').dmgMult).toBeCloseTo(1 - 0.1, 9);
-    expect(g.heroStats('sapsal').atk).toBeCloseTo(hero('sapsal').atk * 1.1, 9);
+    expect(g.heroStats('sapsal').atk).toBeCloseTo(hero('sapsal').atk * 1.1 * g.aptitudeMult('sapsal', 'offense'), 9); // 적성(§5.22-4) 포함
     const h = fresh(quiet, true);
     h.setFormation({ offense: [['nui']], defense: [['orabi']] });
     h.confirmDay();

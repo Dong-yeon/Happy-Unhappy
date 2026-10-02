@@ -13,8 +13,12 @@
 // §5.20-13 (D-064): 기쁨·[조각 생성] 삭제 → 조각은 전투 중 spawn.autoInterval마다 저절로 + 처치 시 killDropChance로 드롭
 //   (밤 보스·guardian은 bossDropTier단계 bossDropCount개 확정). 그리드가 가득이면 버림. 적은 × swarm.countMult 떼(한 마리 hp × hpMult),
 //   레인 동시 적 최대 laneMaxEnemies (넘으면 대기열). 스킬은 autoSkill(기본)이면 게이지가 차는 즉시, 끄면 castReady(영웅)로 발동.
+// v0.18 (§5.22, D-060·D-066·D-067): 영웅 성장 — 레벨(경험치 + 잉크 붓기), 성급(별가루 진급, ★은 고유 스킬만 강화), 낮·밤 적성 배율,
+//   배우는 칸(Lv·★ 해금)에 비법서 장착(시작형 = 팀이 레인에 나갈 때, 상시형 = 단계마다 1회 버팀), 잉크(실제 시간 누적 + 첫 클리어 보상),
+//   챕터 완성 뒤 다시 읽기(그 장 하나, 난이도 × replay.difficultyMult, 성공 시 잉크), 장별 흠집 없음 → 숨은 비법서.
+//   실제 시각은 core가 읽지 않는다: scene·시뮬이 accrueInk(지금 ms)를 부른다.
 
-import type { CombatStats, EnemyGroup, GameData, HeroDef, SkillDef, StageDef } from '../data/types';
+import type { BookSkill, CombatStats, EnemyGroup, GameData, HeroDef, SkillDef, StageDef } from '../data/types';
 import { emptyAttemptStats, type AttemptResult, type AttemptStats, type DayPhase, type FailReason } from './day';
 import { Expedition, type EnemyStats, type ExpeditionEvent } from './expedition';
 import {
@@ -53,7 +57,10 @@ import {
   emptyProgress,
   fillTemplate,
   formationError,
+  levelNeed,
   sameFormation,
+  skillAtStar,
+  slotCount,
   statsAtLevel,
   teamsOf,
   type ActiveBond,
@@ -143,7 +150,17 @@ export type CoreEvent =
   | { type: 'stageClear'; stage: number; record: AttemptStats; notes: string[] }
   | { type: 'chapterComplete'; completed: true }
   /** 영웅 합류 (챕터 완성 보상·디버그, D-057) */
-  | { type: 'heroesJoined'; ids: string[] };
+  | { type: 'heroesJoined'; ids: string[] }
+  /** 첫 클리어 보상 (§5.22-2·3): 잉크·별가루 */
+  | { type: 'stageReward'; stage: number; ink: number; dust: number }
+  /** 비법서 얻음 (챕터 완성 / 10장 흠집 없음) */
+  | { type: 'booksGained'; ids: string[]; source: BookSkill['source'] }
+  /** 비법서 발동 (시작형: 팀 출발 / 상시형: 버팀) */
+  | { type: 'bookSkill'; role: Role; heroId: string; bookId: string }
+  /** 장이 흠집 없음이 됨 (밤 핵 HP 가득) */
+  | { type: 'perfectPage'; stage: number }
+  /** 다시 읽기 끝: 성공(잉크) / 그만 읽기 */
+  | { type: 'replayEnd'; stage: number; success: boolean; perfect: boolean; ink: number };
 
 export type ConfirmResult = { ok: true } | { ok: false; reason: 'notDayStart' };
 export type FormationResult = { ok: true; restarted: boolean } | { ok: false; reason: string };
@@ -271,6 +288,26 @@ export class GameState {
   readonly pageNotes: Record<number, string[]> = {};
   /** 판의 끝 (chapterComplete): 완성 true. 그 전에는 null */
   completed: true | null = null;
+
+  // ── 성장 (§5.22) ──
+  /** 잉크 (소수 포함, 표시는 내림) */
+  ink = 0;
+  /** 마지막으로 잉크를 계산한 실제 시각 (ms, null = 아직 없음) */
+  inkAt: number | null = null;
+  /** 별가루 */
+  stardust = 0;
+  /** 가진 비법서 (얻은 순서) */
+  readonly ownedBooks: string[] = [];
+  /** 장착: 영웅 id → 칸별 비법서 id (빈 칸 null). 편성처럼 단계 스냅샷 밖 */
+  readonly equipped: Record<string, (string | null)[]> = {};
+  /** 흠집 없음 장 (스테이지 번호, 그 장 밤을 핵 HP 가득으로 지킴) */
+  readonly perfect: number[] = [];
+  /** 다시 읽기 중인 장 (null = 아님) */
+  replay: number | null = null;
+  /** 이번 단계에 버팀(상시형)을 쓴 영웅 */
+  private readonly endureUsed = new Set<string>();
+  /** 시간이 정해진 보호막 (떡 나눠 주기): 끝나면 남은 만큼 걷음 */
+  private timedShields: { unitId: number; amount: number; left: number }[] = [];
 
   /** 저장(save.ts)이 읽고 쓴다 */
   nextUnitId = 1;
@@ -405,12 +442,29 @@ export class GameState {
     return out;
   }
 
-  /** 영웅 능력치 (레벨 + 인연, 기세·한낮 제외) */
-  heroStats(id: string): CombatStats & { dmgMult: number } {
+  /** 영웅 능력치 (레벨 + 적성 + 인연, 기세·한낮 제외). role = 그 단계(낮 공격대 / 밤 수비대), 없으면 편성 쪽 */
+  heroStats(id: string, role: Role = this.sideOfHero(id)): CombatStats & { dmgMult: number } {
     const p = this.progressOf(id);
     const s = statsAtLevel(this.heroDef(id), p.level, this.data.balance.exp);
+    const apt = this.aptitudeMult(id, role);
     const bond = this.bondEffect(id);
-    return { ...s, atk: s.atk * (1 + bond.atkPct), dmgMult: 1 - Math.min(0.95, bond.dmgReduce) };
+    return { ...s, hp: s.hp * apt, atk: s.atk * apt * (1 + bond.atkPct), dmgMult: 1 - Math.min(0.95, bond.dmgReduce) };
+  }
+
+  /** 편성에서 이 영웅이 있는 쪽 (없으면 공격대) */
+  sideOfHero(id: string): Role {
+    return this.formation.defense.some((t) => t.includes(id)) ? 'defense' : 'offense';
+  }
+
+  /** 낮·밤 적성 배율 (§5.22-4): 공격대 = 낮 적성, 수비대 = 밤 적성 */
+  aptitudeMult(id: string, role: Role): number {
+    const a = this.heroDef(id).aptitude;
+    return this.data.balance.aptitude[role === 'offense' ? a.day : a.night];
+  }
+
+  /** ★ 반영 고유 스킬 (§5.22-3) */
+  skillOf(id: string): SkillDef {
+    return skillAtStar(this.heroDef(id), this.progressOf(id).star);
   }
 
   /** 레인 위 영웅 유닛 (없으면 null) */
@@ -438,7 +492,7 @@ export class GameState {
 
   /** 영웅을 레인에 (팀 출발: hp 가득 / 일어남: hp × 비율) */
   private enterHero(role: Role, id: string, out: CoreEvent[], opts: { hpRatio?: number; revive?: boolean; y?: number } = {}): void {
-    const s = this.heroStats(id);
+    const s = this.heroStats(id, role);
     const def = this.heroDef(id);
     const lane = this.laneOf(role);
     const u = lane.addUnit(this.nextUnitId++, sideOf(role), id, 0, s, {
@@ -449,6 +503,8 @@ export class GameState {
       ...(opts.y !== undefined ? { y: opts.y } : {}),
     });
     if (!u) return;
+    // 상시형 비법서: 이번 단계에 아직 안 썼으면 버팀 1회
+    if (this.bookEffects(id).some((b) => b.kind === 'passive' && b.effect.endure) && !this.endureUsed.has(id)) u.endure = true;
     this.heroUnits.set(id, u.id);
     this.unitRoles.set(u.id, 'hero');
     if (role === 'defense') this.foughtNight.add(id);
@@ -463,6 +519,55 @@ export class GameState {
     ids.forEach((id, i) => {
       this.enterHero(role, id, out, role === 'offense' ? { y: this.abyss.teamStartY(i, ids.length, sp) } : {});
     });
+    this.startBooks(role, ids, out);
+  }
+
+  /** 시작형 비법서 (§5.22-5): 팀이 레인에 나갈 때(낮 출발·밤 구간 시작·교대) 그 팀에 1회 */
+  private startBooks(role: Role, ids: string[], out: CoreEvent[]): void {
+    for (const id of ids) {
+      for (const b of this.bookEffects(id)) {
+        if (b.kind !== 'start') continue;
+        const e = b.effect;
+        for (const tid of ids) {
+          const u = this.heroUnit(tid);
+          if (u && e.healPct) u.hp = Math.min(u.maxHp, u.hp + u.maxHp * e.healPct);
+          if (u && e.shieldPct) {
+            const amount = u.maxHp * e.shieldPct;
+            u.shield += amount;
+            this.timedShields.push({ unitId: u.id, amount, left: e.shieldSeconds ?? 0 });
+          }
+          if (e.gaugePct) {
+            const p = this.progressOf(tid);
+            p.gauge = Math.max(p.gauge, this.skillOf(tid).gauge * e.gaugePct);
+          }
+        }
+        out.push({ type: 'bookSkill', role, heroId: id, bookId: b.id });
+      }
+    }
+  }
+
+  /** 시간이 정해진 보호막이 끝나면 남은 만큼 걷는다 */
+  private tickTimedShields(): void {
+    if (!this.timedShields.length) return;
+    for (const t of this.timedShields) t.left -= FIXED_DT;
+    for (const t of this.timedShields.filter((x) => x.left <= TICK_EPS)) {
+      for (const lane of [this.abyss, this.defense] as UnitHost[]) {
+        const u = lane.units.find((x) => x.id === t.unitId);
+        if (u) u.shield = Math.max(0, u.shield - t.amount);
+      }
+    }
+    this.timedShields = this.timedShields.filter((x) => x.left > TICK_EPS);
+  }
+
+  /** 상시형 버팀을 쓴 영웅 기록 (유닛의 endure가 꺼졌으면) */
+  private checkEndure(role: Role, out: CoreEvent[]): void {
+    for (const id of this.activeTeamIds(role)) {
+      const u = this.heroUnit(id);
+      if (!u || u.endure !== false || this.endureUsed.has(id)) continue;
+      this.endureUsed.add(id);
+      const b = this.bookEffects(id).find((x) => x.kind === 'passive' && x.effect.endure);
+      if (b) out.push({ type: 'bookSkill', role, heroId: id, bookId: b.id });
+    }
   }
 
   /** 레인 위 영웅 유닛을 모두 내린다 (교대) */
@@ -591,9 +696,12 @@ export class GameState {
       if (this.inBattle) this.stats.gridFullSeconds += FIXED_DT;
     }
 
+    const role: Role = this.phase === 'day' ? 'offense' : 'defense';
     if (this.phase === 'day') this.stepOffense(out);
     else this.stepDefense(out);
     if (!this.timeFlows) return; // 단계가 끝남
+    this.checkEndure(role, out);
+    this.tickTimedShields();
 
     // 저절로 조각 (§5.20-13): 전투 중 autoInterval마다 1단계 1개
     if (this.inBattle) {
@@ -803,6 +911,7 @@ export class GameState {
       }
       out.push({ type: 'bossReward', rewards });
     }
+    if (this.replay !== null && this.stage >= this.chapterLength) return this.replaySuccess(out);
     if (this.stage >= this.chapterLength) {
       const record = this.finishAttempt('success');
       this.openPage(record);
@@ -884,7 +993,7 @@ export class GameState {
     const lane = this.defense;
     const geo = lane.geo;
     for (const s of this.wave.step(FIXED_DT, lane.worries.length === 0 && this.nightQueue.length === 0)) {
-      this.nightQueue.push({ ...enemyStats(this.data, s.type, this.stage, !s.boss), boss: s.boss });
+      this.nightQueue.push({ ...this.harder(enemyStats(this.data, s.type, this.stage, !s.boss)), boss: s.boss });
     }
     const max = this.data.balance.swarm.laneMaxEnemies;
     while (this.nightQueue.length && lane.worries.length < max) {
@@ -913,7 +1022,18 @@ export class GameState {
 
   /** 적 묶음 × 떼 → 능력치 줄 (종류별로 번갈아) */
   private expand(groups: readonly EnemyGroup[]): EnemyStats[] {
-    return interleave(swarmGroups(this.data, groups)).map((t) => enemyStats(this.data, t, this.stage));
+    return interleave(swarmGroups(this.data, groups)).map((t) => this.harder(enemyStats(this.data, t, this.stage)));
+  }
+
+  /** 다시 읽기 난이도 배수 (§5.22-6, 아니면 1) */
+  get difficulty(): number {
+    return this.replay !== null ? this.data.balance.replay.difficultyMult : 1;
+  }
+
+  /** 적 hp·atk × 난이도 */
+  private harder<T extends { hp: number; atk: number }>(s: T): T {
+    const k = this.difficulty;
+    return k === 1 ? s : { ...s, hp: s.hp * k, atk: s.atk * k };
   }
 
   /** 장면 카드를 닫는다 → 시도 수 + 1, 낮 시작 */
@@ -923,9 +1043,13 @@ export class GameState {
     const out = this.pending;
     this.formationSeen = true;
     this.attempt += 1;
-    this.attempts[this.stage - 1] += 1;
-    this.stats.attempts += 1;
+    if (this.replay !== null) this.stats.replayAttempts += 1;
+    else {
+      this.attempts[this.stage - 1] += 1;
+      this.stats.attempts += 1;
+    }
     this.attemptStats = emptyAttemptStats(this.stage, this.attempt, b.grid.maxTier);
+    this.attemptStats.replay = this.replay !== null ? 1 : 0;
     this.phase = 'day';
     this.startDay(out);
     out.push({ type: 'dayBegin', stage: this.stage, attempt: this.attempt });
@@ -939,8 +1063,8 @@ export class GameState {
     this.abyss.reset(
       {
         type: st.day.guardian,
-        hp: st.day.guardianHp,
-        atk: g.counterAtk * (st.day.boss ? g.bossCounterMult : 1),
+        hp: st.day.guardianHp * this.difficulty,
+        atk: g.counterAtk * (st.day.boss ? g.bossCounterMult : 1) * this.difficulty,
         atkInterval: g.counterAtkInterval,
         range: g.counterRange,
         boss: st.day.boss ?? false,
@@ -959,6 +1083,7 @@ export class GameState {
     this.wave.stop();
     this.fallen.clear();
     this.siblingsUsed.clear();
+    this.endureUsed.clear();
     this.phaseExp = new Map();
     this.coresDone = 0;
     this.autoTimer = this.data.balance.spawn.autoInterval;
@@ -974,6 +1099,7 @@ export class GameState {
     this.defense.units.length = 0;
     this.defense.worries.length = 0;
     this.nightQueue.length = 0;
+    this.timedShields = [];
     this.heroUnits.clear();
     this.unitRoles.clear();
     this.reviveTimers.clear();
@@ -995,6 +1121,7 @@ export class GameState {
     this.clearLaneUnits();
     for (const r of ROLES) this.resetMomentum(r);
     this.siblingsUsed.clear();
+    this.endureUsed.clear();
     this.phaseExp = new Map();
     this.foughtNight.clear();
     this.coreHp = this.data.balance.core.hp;
@@ -1015,10 +1142,12 @@ export class GameState {
     a.carrySeconds = this.abyss.carryTime;
     if (this.phase === 'night') a.coreHpEnd = this.coreHp;
     this.stats.carrySeconds += a.carrySeconds;
-    if (result === 'dayTime') this.stats.dayFailTime += 1;
-    else if (result === 'dayFall') this.stats.dayFailFall += 1;
-    else if (result === 'returnTime') this.stats.returnFails += 1;
-    else if (result === 'night') this.stats.nightFails += 1;
+    if (this.replay === null) {
+      if (result === 'dayTime') this.stats.dayFailTime += 1;
+      else if (result === 'dayFall') this.stats.dayFailFall += 1;
+      else if (result === 'returnTime') this.stats.returnFails += 1;
+      else if (result === 'night') this.stats.nightFails += 1;
+    }
     this.lastAttempt = a;
     this.attemptLog.push(structuredClone(a));
     return a;
@@ -1044,6 +1173,7 @@ export class GameState {
     const fought = [...this.foughtNight];
     for (const id of fought) this.phaseExp.set(id, (this.phaseExp.get(id) ?? 0) + this.data.balance.exp.nightWin / fought.length);
     this.commitExp(true, out);
+    if (this.replay !== null) return this.replaySuccess(out);
     const record = this.finishAttempt('success');
     this.clearLaneUnits();
     for (const r of ROLES) this.resetMomentum(r);
@@ -1056,7 +1186,10 @@ export class GameState {
 
   /** 이야기책에 장을 펼치고 플레이 문장을 덧붙인다 (§5.20-8) */
   private openPage(record: AttemptStats): void {
+    const first = !this.pages.includes(this.stage);
     this.pages.push(this.stage);
+    if (first) this.stageReward(this.pending);
+    this.markPerfect(record, this.pending);
     const pl = this.data.chapter.pageLines;
     const st = this.stageDef;
     const notes: string[] = [];
@@ -1091,6 +1224,7 @@ export class GameState {
     this.phase = 'chapterComplete';
     out.push({ type: 'chapterComplete', completed: true });
     this.joinHeroes((h) => h.reward === this.data.chapter.id, out);
+    this.gainBooks('chapter', out);
   }
 
   /** 이 챕터의 보상 영웅 (heroes.json reward = 챕터 id) */
@@ -1140,10 +1274,225 @@ export class GameState {
     g.formationSeen = save.formationSeen;
     refill(g.roster, save.roster);
     g.formation = cloneFormation(save.formation);
+    g.ink = save.ink;
+    g.inkAt = save.inkAt;
+    g.stardust = save.stardust;
+    refill(g.ownedBooks, save.ownedBooks);
+    for (const [k, v] of Object.entries(save.equipped)) g.equipped[k] = [...v];
+    refill(g.perfect, save.perfect);
+    g.replay = save.replay;
     g.attemptStats = emptyAttemptStats(g.stage, g.attempt + 1, data.balance.grid.maxTier);
     g.pending = [];
     rng.setState(save.rngState);
     return g;
+  }
+
+  // ── 성장 (§5.22) ──
+
+  /** 전투 밖 (장면 카드·이야기 한 장·챕터 완성): 잉크 붓기·진급은 여기서만 (단계 스냅샷이 되돌리지 않게) */
+  get atBoundary(): boolean {
+    return !this.timeFlows;
+  }
+
+  /** 잉크 시간 누적 상한 (perHour × capHours) */
+  get inkCap(): number {
+    const c = this.data.balance.ink;
+    return c.perHour * c.capHours;
+  }
+
+  /**
+   * 잉크 시간 누적 (§5.22-2): 마지막 계산 시각 → now(ms) 사이 시간 × perHour. 시간 누적으로는 inkCap까지만 (보상 잉크는 넘을 수 있음).
+   * 시계가 되돌아갔으면 0 (기준 시각만 now로). 처음 부르면 기준 시각만 잡는다. 얻은 잉크를 돌려준다.
+   */
+  accrueInk(nowMs: number): number {
+    if (this.inkAt === null || nowMs < this.inkAt) {
+      this.inkAt = nowMs;
+      return 0;
+    }
+    const hours = (nowMs - this.inkAt) / 3_600_000;
+    this.inkAt = nowMs;
+    const gain = Math.max(0, Math.min(hours * this.data.balance.ink.perHour, this.inkCap - this.ink));
+    this.ink += gain;
+    this.stats.inkTime += gain;
+    return gain;
+  }
+
+  /** 다음 레벨까지 필요한 잉크 (상한이면 0) */
+  inkToNext(id: string): number {
+    const p = this.progressOf(id);
+    const cfg = this.data.balance.exp;
+    if (p.level >= cfg.maxLevel) return 0;
+    return Math.max(0, Math.ceil((levelNeed(cfg, p.level) - p.exp) / this.data.balance.ink.expPerInk - 1e-9));
+  }
+
+  /** 잉크 붓기 (§5.22-1): 잉크 amount(내림, 가진 만큼) → 경험치 × expPerInk. 전투 밖에서만. 쓴 잉크·오른 레벨 */
+  pourInk(id: string, amount: number): { spent: number; levels: number } {
+    const p = this.progressOf(id);
+    const cfg = this.data.balance.exp;
+    if (!this.atBoundary || p.level >= cfg.maxLevel) return { spent: 0, levels: 0 };
+    const spent = Math.max(0, Math.min(Math.floor(amount), Math.floor(this.ink + 1e-9)));
+    if (!spent) return { spent: 0, levels: 0 };
+    this.ink = Math.max(0, this.ink - spent);
+    this.stats.inkSpent += spent;
+    const levels = addExp(p, spent * this.data.balance.ink.expPerInk, cfg);
+    if (levels) this.pending.push({ type: 'levelUp', heroId: id, level: p.level });
+    return { spent, levels };
+  }
+
+  /** 진급 비용 (별가루). 최고 ★이면 null */
+  promoteCost(id: string): number | null {
+    const st = this.data.balance.star;
+    const star = this.progressOf(id).star;
+    return star >= st.maxStar ? null : (st.cost[star - 1] ?? null);
+  }
+
+  /** 진급 (§5.22-3): 별가루를 써서 ★ + 1. 전투 밖에서만 */
+  promote(id: string): boolean {
+    const cost = this.promoteCost(id);
+    if (cost === null || !this.atBoundary || this.stardust < cost) return false;
+    this.stardust -= cost;
+    this.progressOf(id).star += 1;
+    this.stats.dustSpent += cost;
+    this.stats.promotions += 1;
+    return true;
+  }
+
+  /** 배우는 칸 수 (Lv·★ 해금) */
+  slotsOf(id: string): number {
+    return slotCount(this.progressOf(id), this.data.balance.learn);
+  }
+
+  bookDef(bookId: string): BookSkill {
+    const b = this.data.bookSkills.books.find((x) => x.id === bookId);
+    if (!b) throw new Error(`알 수 없는 비법서: ${bookId}`);
+    return b;
+  }
+
+  /** 이 영웅이 지금 끼고 있는 비법서 (열린 칸만) */
+  booksOf(id: string): string[] {
+    const n = this.slotsOf(id);
+    return (this.equipped[id] ?? []).slice(0, n).filter((b): b is string => b !== null);
+  }
+
+  private bookEffects(id: string): BookSkill[] {
+    return this.booksOf(id).map((b) => this.bookDef(b));
+  }
+
+  /** 그 비법서를 끼고 있는 영웅 (없으면 null) */
+  bookHolder(bookId: string): string | null {
+    for (const [id, list] of Object.entries(this.equipped)) if (list.includes(bookId)) return id;
+    return null;
+  }
+
+  /**
+   * 비법서 장착 (§5.22-5, D-067): 영웅 id의 slot 칸에 bookId (null = 빼기). 한 권 = 한 영웅 (다른 영웅이 끼고 있으면 옮겨 옴).
+   * 바뀌었고 전투 중이면 편성 변경처럼 단계 재시작.
+   */
+  equip(id: string, slot: number, bookId: string | null): FormationResult {
+    this.progressOf(id);
+    if (slot < 0 || slot >= this.slotsOf(id)) return { ok: false, reason: '잠긴 칸' };
+    if (bookId !== null && !this.ownedBooks.includes(bookId)) return { ok: false, reason: '없는 비법서' };
+    const list = (this.equipped[id] ??= []);
+    if ((list[slot] ?? null) === bookId) return { ok: true, restarted: false };
+    if (bookId !== null) {
+      for (const l of Object.values(this.equipped)) {
+        const i = l.indexOf(bookId);
+        if (i >= 0) l[i] = null;
+      }
+    }
+    while (list.length <= slot) list.push(null);
+    list[slot] = bookId;
+    if (this.phase === 'day' || this.phase === 'night') {
+      this.restartPhase(this.pending);
+      return { ok: true, restarted: true };
+    }
+    return { ok: true, restarted: false };
+  }
+
+  /** 처음 깬 스테이지 보상 (§5.22-2·3): 마지막 장 / 보스 장 / 그 밖 */
+  private stageReward(out: CoreEvent[]): void {
+    const ink = this.data.balance.ink;
+    const st = this.data.balance.star;
+    const last = this.stage >= this.chapterLength;
+    const boss = this.stageDef.day.boss ?? false;
+    const gi = last ? ink.finalClear : boss ? ink.bossClear : ink.firstClear;
+    const gd = last ? st.dustFinal : boss ? st.dustBoss : st.dustFirstClear;
+    this.ink += gi;
+    this.stats.inkReward += gi;
+    this.stardust += gd;
+    this.stats.dustEarned += gd;
+    out.push({ type: 'stageReward', stage: this.stage, ink: gi, dust: gd });
+  }
+
+  /**
+   * 흠집 없음 (§5.22-6): 그 장 밤을 핵 HP 가득으로 지킴. 밤이 없는 마지막 장은 깨면 흠집 없음.
+   * 챕터 모든 장이 흠집 없음이면 숨은 비법서. 이번에 흠집 없음이었는지 돌려준다
+   */
+  private markPerfect(record: AttemptStats, out: CoreEvent[]): boolean {
+    const ok = record.coreHpEnd === null ? this.stage >= this.chapterLength : record.coreHpEnd >= this.data.balance.core.hp - 1e-9;
+    if (!ok) return false;
+    if (!this.perfect.includes(this.stage)) {
+      this.perfect.push(this.stage);
+      out.push({ type: 'perfectPage', stage: this.stage });
+      if (this.perfect.length >= this.chapterLength) this.gainBooks('perfect', out);
+    }
+    return true;
+  }
+
+  /** 비법서 얻기 (그 챕터·얻는 법, 이미 있으면 건너뜀) */
+  private gainBooks(source: BookSkill['source'], out: CoreEvent[]): void {
+    const ids = this.data.bookSkills.books
+      .filter((b) => b.source === source && b.chapter === this.data.chapter.id && !this.ownedBooks.includes(b.id))
+      .map((b) => b.id);
+    if (!ids.length) return;
+    this.ownedBooks.push(...ids);
+    out.push({ type: 'booksGained', ids, source });
+  }
+
+  /** 다시 읽기 시작 (§5.22-6): 챕터 완성 뒤, 장 하나를 장면 카드부터 */
+  startReplay(stage: number): boolean {
+    if (this.phase !== 'chapterComplete' || this.completed !== true) return false;
+    if (stage < 1 || stage > this.chapterLength) return false;
+    this.replay = stage;
+    this.stage = stage;
+    this.retry = null;
+    this.phase = 'dayStart';
+    this.pending.push({ type: 'stageStart', stage, retry: null });
+    return true;
+  }
+
+  /** 다시 읽기 그만 (장면 카드에서): 이야기책(챕터 완성)으로 */
+  exitReplay(): boolean {
+    if (this.replay === null || this.phase !== 'dayStart') return false;
+    const stage = this.replay;
+    this.endReplay();
+    this.pending.push({ type: 'replayEnd', stage, success: false, perfect: false, ink: 0 });
+    return true;
+  }
+
+  private endReplay(): void {
+    this.replay = null;
+    this.retry = null;
+    this.stage = this.chapterLength;
+    this.phase = 'chapterComplete';
+  }
+
+  /** 다시 읽기 성공: 잉크 + 흠집 없음 판정 → 챕터 완성 화면으로 */
+  private replaySuccess(out: CoreEvent[]): void {
+    const record = this.finishAttempt('success');
+    this.clearLaneUnits();
+    for (const r of ROLES) this.resetMomentum(r);
+    this.wave.stop();
+    this.snapshot = null;
+    this.offenseTimer = 0;
+    const stage = this.stage;
+    const ink = this.data.balance.ink.replayWin;
+    this.ink += ink;
+    this.stats.inkReward += ink;
+    this.stats.replayWins += 1;
+    const perfect = this.markPerfect(record, out);
+    this.endReplay();
+    out.push({ type: 'replayEnd', stage, success: true, perfect, ink });
   }
 
   // ── 조각 생성 (§5.20-4·13): 저절로·처치 드롭만 (makePiece) ──
@@ -1225,7 +1574,7 @@ export class GameState {
     for (const id of this.activeTeamIds(role)) {
       if (this.heroDef(id).chain !== p.chain || !this.heroUnit(id)) continue;
       const prog = this.progressOf(id);
-      const max = this.heroDef(id).skill.gauge;
+      const max = this.skillOf(id).gauge;
       if (top) prog.gauge = max;
       else prog.gauge = Math.min(max, prog.gauge + (b.skill.tierPoints[p.tier - 1] ?? 0) * this.bondEffect(id).gaugeMult);
       this.pending.push({ type: 'gauge', heroId: id, gauge: prog.gauge, max });
@@ -1306,7 +1655,7 @@ export class GameState {
   skillReady(id: string): boolean {
     const role = this.fightingRole;
     if (!role || !this.activeTeamIds(role).includes(id) || !this.heroUnit(id)) return false;
-    return this.progressOf(id).gauge >= this.heroDef(id).skill.gauge - 1e-9;
+    return this.progressOf(id).gauge >= this.skillOf(id).gauge - 1e-9;
   }
 
   /** 게이지를 비우고 발동 */
@@ -1334,7 +1683,7 @@ export class GameState {
   private castSkill(role: Role, id: string, out: CoreEvent[]): void {
     const u = this.heroUnit(id);
     if (!u) return;
-    const sk = this.heroDef(id).skill;
+    const sk = this.skillOf(id);
     const mult = this.laneOf(role).atkMult;
     this.stats.skillCasts[id] = (this.stats.skillCasts[id] ?? 0) + 1;
     this.attemptStats.skills += 1;
@@ -1482,6 +1831,17 @@ export class GameState {
   /** 영웅 전부 지급: 시작 + 챕터 보상 (테스트 영웅 제외, §5.20-1) */
   debugGrantAllHeroes(): void {
     this.joinHeroes((h) => h.reward !== 'debug', this.pending);
+  }
+
+  /** 별가루 지급 */
+  debugAddDust(n: number): void {
+    this.stardust += n;
+  }
+
+  /** 이 챕터 비법서 전부 지급 */
+  debugGrantBooks(): void {
+    this.gainBooks('chapter', this.pending);
+    this.gainBooks('perfect', this.pending);
   }
 
   /** 테스트 영웅 2명 추가 (reward "debug") */

@@ -123,12 +123,12 @@ function checkBalance(c: Checker, v: unknown): { maxTier?: number; chapterLength
   // v0.15 (D-054·D-055): shadow·diary 블록, chapter.maxDays·days.dailyLimit/storeCap는 삭제 → 남아 있으면 "알 수 없는 키"
   const b = c.obj(v, p, [
     'version', 'start', 'grid', 'spawn', 'lane', 'happy', 'wave', 'enemy', 'swarm', 'guardian', 'carry', 'core', 'hero', 'buff', 'merge', 'skill', 'special',
-    'team', 'exp', 'offense', 'chapter',
+    'team', 'ink', 'star', 'aptitude', 'learn', 'replay', 'exp', 'offense', 'chapter',
   ]);
   if (!b) return {};
   // v0.16 (§5.20): feed 블록·hero.dmgReduceMax/atkIntervalMin 삭제 → 남아 있으면 "알 수 없는 키"
   // §5.20-13 (D-064): 기쁨 삭제 — start.joy·grid.spawnCostBase/spawnCostStep/releaseRefund·days(morningJoyFloor)도 "알 수 없는 키"
-  if (b.version !== 5) c.fail(`${p}.version`, `5여야 함 (현재 ${String(b.version)})`);
+  if (b.version !== 6) c.fail(`${p}.version`, `6이어야 함 (현재 ${String(b.version)})`);
   const st = c.obj(b.start, `${p}.start`, ['swapHeroes']);
   if (st) {
     c.bool(st.swapHeroes, `${p}.start.swapHeroes`);
@@ -220,6 +220,19 @@ function checkBalance(c: Checker, v: unknown): { maxTier?: number; chapterLength
     c.num(tm.maxTeams, `${p}.team.maxTeams`, { int: true, min: 1 });
     c.num(tm.teamSize, `${p}.team.teamSize`, { int: true, min: 1 });
   }
+  // 성장 (§5.22)
+  c.nums(b.ink, `${p}.ink`, ['perHour', 'capHours', 'firstClear', 'bossClear', 'finalClear', 'replayWin', 'expPerInk', 'pourStep'], { min: 0 });
+  const st2 = c.obj(b.star, `${p}.star`, ['maxStar', 'cost', 'dustFirstClear', 'dustBoss', 'dustFinal']);
+  if (st2) {
+    const ms = c.num(st2.maxStar, `${p}.star.maxStar`, { int: true, min: 1 });
+    const cost = c.arr(st2.cost, `${p}.star.cost`) ?? [];
+    if (ms !== undefined && cost.length !== ms - 1) c.fail(`${p}.star.cost`, `maxStar − 1(${ms - 1})개여야 함`);
+    cost.forEach((x, i) => c.num(x, `${p}.star.cost[${i}]`, { int: true, min: 0 }));
+    for (const k of ['dustFirstClear', 'dustBoss', 'dustFinal']) c.num(st2[k], `${p}.star.${k}`, { int: true, min: 0 });
+  }
+  c.nums(b.aptitude, `${p}.aptitude`, ['S', 'A', 'B'], { min: 0 });
+  c.nums(b.learn, `${p}.learn`, ['levelSlot', 'starSlot'], { int: true, min: 1 });
+  c.nums(b.replay, `${p}.replay`, ['difficultyMult'], { min: 0.01 });
   const ex = c.nums(b.exp, `${p}.exp`, ['kill', 'guardian', 'nightWin', 'failMult', 'levelBase', 'levelStep', 'perLevelPct', 'maxLevel'], { min: 0 });
   if (ex) {
     c.num(ex.failMult, `${p}.exp.failMult`, { max: 1 });
@@ -258,14 +271,14 @@ const SKILL_KEYS: Record<string, string[]> = {
 };
 
 /** heroes.json (§5.17-1, §5.19-9, §5.20-1): 능력치·체인·역할·공격 방식·스킬, 기본 편성 offense ≠ defense (보상 영웅 아님) */
-function checkHeroes(c: Checker, v: unknown, chainIds: string[]): string[] {
+function checkHeroes(c: Checker, v: unknown, chainIds: string[], maxStar: number | undefined): string[] {
   const o = c.obj(v, 'heroes', ['heroes', 'offense', 'defense']);
   if (!o) return [];
   const list = c.arr(o.heroes, 'heroes.heroes', 2) ?? [];
   const rewards = new Set<string>();
   const ids = list.map((e, i) => {
     const p = `heroes.heroes[${i}]`;
-    const h = checkCombat(c, e, p, ['id', 'name', 'chain', 'role', 'attackType', 'skill'], ['reward']);
+    const h = checkCombat(c, e, p, ['id', 'name', 'chain', 'role', 'attackType', 'aptitude', 'skill'], ['reward']);
     if (!h) return undefined;
     c.str(h.name, `${p}.name`);
     const id = c.str(h.id, `${p}.id`);
@@ -273,16 +286,29 @@ function checkHeroes(c: Checker, v: unknown, chainIds: string[]): string[] {
     if (ch !== undefined && !chainIds.includes(ch)) c.fail(`${p}.chain`, `chains.json에 없는 체인 "${ch}"`);
     if (!['tank', 'attack', 'support'].includes(h.role as string)) c.fail(`${p}.role`, 'tank·attack·support 중 하나여야 함');
     if (h.attackType !== 'melee' && h.attackType !== 'ranged') c.fail(`${p}.attackType`, 'melee 또는 ranged여야 함');
+    const apt = c.obj(h.aptitude, `${p}.aptitude`, ['day', 'night']);
+    if (apt) for (const k of ['day', 'night']) if (!['S', 'A', 'B'].includes(apt[k] as string)) c.fail(`${p}.aptitude.${k}`, 'S·A·B 중 하나여야 함');
     const sk = h.skill as Obj | undefined;
     const kind = typeof sk === 'object' && sk ? (sk.kind as string) : undefined;
     const extra = kind && SKILL_KEYS[kind];
     if (!extra) c.fail(`${p}.skill.kind`, `${Object.keys(SKILL_KEYS).join('·')} 중 하나여야 함`);
     else {
-      const so = c.obj(h.skill, `${p}.skill`, ['kind', 'name', 'gauge', ...extra]);
+      const so = c.obj(h.skill, `${p}.skill`, ['kind', 'name', 'gauge', 'perStar', ...extra]);
       if (so) {
         c.str(so.name, `${p}.skill.name`);
         c.num(so.gauge, `${p}.skill.gauge`, { min: 1 });
         for (const k of extra) c.num(so[k], `${p}.skill.${k}`, { min: 0 });
+        // ★별 값 (§5.22-3): 스킬 필드(gauge 포함)만, 배열 길이 = star.maxStar
+        const ps = c.map(so.perStar, `${p}.skill.perStar`);
+        if (ps) {
+          for (const [k, arr] of Object.entries(ps)) {
+            const pp = `${p}.skill.perStar.${k}`;
+            if (k !== 'gauge' && !extra.includes(k)) c.fail(pp, `${kind} 스킬에 없는 값`);
+            const a = c.arr(arr, pp) ?? [];
+            if (maxStar !== undefined && a.length !== maxStar) c.fail(pp, `star.maxStar(${maxStar})개여야 함`);
+            a.forEach((x, i) => c.num(x, `${pp}[${i}]`, { min: k === 'gauge' ? 1 : 0 }));
+          }
+        }
       }
     }
     if ('reward' in h && c.str(h.reward, `${p}.reward`) !== undefined && id !== undefined) rewards.add(id);
@@ -298,6 +324,30 @@ function checkHeroes(c: Checker, v: unknown, chainIds: string[]): string[] {
   }
   if (off !== undefined && off === def) c.fail('heroes.defense', 'offense와 다른 영웅이어야 함 (양쪽 최소 1명)');
   return ids.filter((x): x is string => x !== undefined);
+}
+
+/** bookSkills.json (§5.22-5, D-067): 비법서 종류·효과·얻는 법 */
+function checkBookSkills(c: Checker, v: unknown): void {
+  const o = c.obj(v, 'bookSkills', ['books']);
+  if (!o) return;
+  const list = c.arr(o.books, 'bookSkills.books', 1) ?? [];
+  const ids = list.map((e, i) => {
+    const p = `bookSkills.books[${i}]`;
+    const b = c.obj(e, p, ['id', 'name', 'kind', 'desc', 'effect', 'source', 'chapter']);
+    if (!b) return undefined;
+    c.str(b.name, `${p}.name`);
+    c.str(b.desc, `${p}.desc`);
+    c.str(b.chapter, `${p}.chapter`);
+    if (b.kind !== 'start' && b.kind !== 'passive') c.fail(`${p}.kind`, 'start 또는 passive여야 함');
+    if (b.source !== 'chapter' && b.source !== 'perfect') c.fail(`${p}.source`, 'chapter 또는 perfect여야 함');
+    const ef = c.obj(b.effect, `${p}.effect`, [], ['healPct', 'shieldPct', 'shieldSeconds', 'gaugePct', 'endure']);
+    if (ef) {
+      for (const k of Object.keys(ef)) c.num(ef[k], `${p}.effect.${k}`, { min: 0 });
+      if (Object.keys(ef).length === 0) c.fail(`${p}.effect`, '효과가 하나 이상 있어야 함');
+    }
+    return c.str(b.id, `${p}.id`);
+  });
+  c.unique(ids, 'bookSkills.books', '비법서 id');
 }
 
 /** bonds.json (§5.20-6): 영웅 id·역할 참조, 효과 키 */
@@ -643,7 +693,9 @@ export function validateGameData(raw: Record<keyof GameData, unknown>): Validati
   const { maxTier, chapterLength } = checkBalance(c, raw.balance);
   const world = typeof (raw.chapter as Obj | null)?.world === 'string' ? ((raw.chapter as Obj).world as string) : undefined;
   const chainIds = checkChains(c, raw.chains, maxTier, world);
-  const heroIds = checkHeroes(c, raw.heroes, chainIds);
+  const maxStar = (raw.balance as { star?: { maxStar?: unknown } } | null)?.star?.maxStar;
+  const heroIds = checkHeroes(c, raw.heroes, chainIds, typeof maxStar === 'number' ? maxStar : undefined);
+  checkBookSkills(c, raw.bookSkills);
   checkBonds(c, raw.bonds, heroIds);
   const enemyIds = checkMonsters(c, raw.monsters);
   checkStages(c, raw.stages, enemyIds, chapterLength);

@@ -27,4 +27,9 @@ export interface Policy {
   boundary?(ctx: PolicyContext): Action | null;
   /** 판 시작 편성 (보유 영웅으로). 없으면 balanced 편성 */
   formation?(state: GameState): Formation;
+  /** 성장 (§5.22-8): 잉크 붓기 대상 — alternate(공격대·수비대 번갈아, 기본) / offense / defense (한쪽 몰기) / none (안 씀) / random.
+   *  진급도 같은 쪽으로 (none이면 번갈아) */
+  readonly grow?: 'alternate' | 'offense' | 'defense' | 'none' | 'random';
+  /** 진급 (false = 안 함, 기본 true) */
+  readonly promote?: boolean;
 }

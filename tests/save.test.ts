@@ -8,7 +8,7 @@ import { FIXED_DT } from '../src/core/lane';
 import { mulberry32 } from '../src/core/rng';
 import { SAVE_VERSION, makeSaveData, parseSave, serializeGame, type SaveGame } from '../src/core/save';
 import { gameGeometry } from '../src/scenes/layout';
-import { POLICIES } from '../sim/policies';
+import { EXTRA_POLICIES, POLICIES } from '../sim/policies';
 import { runLife } from '../sim/runner';
 import simJson from '../sim/sim.json';
 import type { SimConfig } from '../sim/types';
@@ -132,12 +132,12 @@ describe('parseSave (초기화 규칙)', () => {
     expect(parseSave(raw((o) => (o.game = null)), data, SIZE).ok).toBe(true);
   });
 
-  it('키 없음 / JSON 파싱 실패 / version 불일치 (v4 = 옛 저장)', () => {
+  it('키 없음 / JSON 파싱 실패 / version 불일치 (v5 = 옛 저장)', () => {
     expect(parseSave(null, data, SIZE)).toEqual({ ok: false, reason: '저장 없음' });
     expect(parseSave('{', data, SIZE).ok).toBe(false);
-    const r = parseSave(raw((o) => (o.version = 4)), data, SIZE);
+    const r = parseSave(raw((o) => (o.version = 5)), data, SIZE);
     expect(r.ok).toBe(false);
-    expect(SAVE_VERSION).toBe(5);
+    expect(SAVE_VERSION).toBe(6);
   });
 
   it('먹이기·갈림길·기쁨 필드가 남아 있으면 오류, autoSkill 필수 (§5.20-13)', () => {
@@ -200,8 +200,8 @@ describe('결정성: 끊김 없이 한 판 vs 매 경계 round-trip (§5.19-7)',
     it(name, () => {
       for (const seed of [1, 2]) {
         const opt = { seed, grid: SIZE, maxAttempts: 12 };
-        const a = runLife(data, cfg, POLICIES[name], opt);
-        const b = runLife(data, cfg, POLICIES[name], { ...opt, saveRoundTrip: true });
+        const a = runLife(data, cfg, { ...POLICIES, ...EXTRA_POLICIES }[name], opt);
+        const b = runLife(data, cfg, { ...POLICIES, ...EXTRA_POLICIES }[name], { ...opt, saveRoundTrip: true });
         expect(JSON.stringify(b.result)).toBe(JSON.stringify(a.result));
       }
     });

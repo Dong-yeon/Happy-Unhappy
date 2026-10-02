@@ -1,7 +1,7 @@
-// 영웅 보유·성장·편성·인연 (스펙 §5.20-1·2·6·7, D-058·D-060). Phaser 의존 없음.
+// 영웅 보유·성장·편성·인연 (스펙 §5.20-1·2·6·7, §5.22, D-058·D-060·D-066). Phaser 의존 없음.
 // 편성 = 낮 공격대(offense) · 밤 수비대(defense), 각각 팀 배열, 팀 = 영웅 id 배열(앞 → 뒤, 최대 teamSize).
 
-import type { BondDef, CombatStats, GameData, HeroDef, HeroRole } from '../data/types';
+import type { BondDef, CombatStats, GameData, HeroDef, HeroRole, SkillDef } from '../data/types';
 
 export type Side2 = 'offense' | 'defense';
 
@@ -11,8 +11,10 @@ export interface HeroProgress {
   /** 지금 레벨 안에서 쌓인 경험치 */
   exp: number;
   level: number;
-  /** 스킬 게이지 0 ~ skill.gauge */
+  /** 스킬 게이지 0 ~ 지금 ★의 게이지 필요량 */
   gauge: number;
+  /** 성급 1 ~ star.maxStar (§5.22-3) */
+  star: number;
 }
 
 export interface Formation {
@@ -21,7 +23,22 @@ export interface Formation {
 }
 
 export function emptyProgress(id: string): HeroProgress {
-  return { id, exp: 0, level: 1, gauge: 0 };
+  return { id, exp: 0, level: 1, gauge: 0, star: 1 };
+}
+
+/** ★ 반영 고유 스킬 (§5.22-3): perStar[필드][★−1]로 기본값을 덮음 (게이지 필요량 포함) */
+export function skillAtStar(def: HeroDef, star: number): SkillDef {
+  const { perStar, ...base } = def.skill;
+  const out = { ...base } as Record<string, unknown>;
+  for (const [k, arr] of Object.entries(perStar)) {
+    if (arr.length) out[k] = arr[Math.max(0, Math.min(arr.length - 1, star - 1))];
+  }
+  return out as unknown as SkillDef;
+}
+
+/** 배우는 칸 수 (§5.22-5): 레벨 levelSlot 이상 1칸 + ★ starSlot 이상 1칸 */
+export function slotCount(p: HeroProgress, cfg: GameData['balance']['learn']): number {
+  return (p.level >= cfg.levelSlot ? 1 : 0) + (p.star >= cfg.starSlot ? 1 : 0);
 }
 
 type ExpCfg = GameData['balance']['exp'];

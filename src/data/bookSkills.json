@@ -1,0 +1,39 @@
+{
+  "books": [
+    {
+      "id": "share_rice_cake",
+      "name": "떡 나눠 주기",
+      "kind": "start",
+      "desc": "전투 시작 때 그 팀 hp 20% 회복 + 2초 보호막 10%",
+      "effect": {
+        "healPct": 0.2,
+        "shieldPct": 0.1,
+        "shieldSeconds": 2
+      },
+      "source": "chapter",
+      "chapter": "ch01"
+    },
+    {
+      "id": "sturdy_rope",
+      "name": "튼튼한 동아줄",
+      "kind": "passive",
+      "desc": "단계마다 한 번, 쓰러질 피해를 받으면 hp 1로 버팀",
+      "effect": {
+        "endure": 1
+      },
+      "source": "chapter",
+      "chapter": "ch01"
+    },
+    {
+      "id": "promise_sun_moon",
+      "name": "해와 달의 약속",
+      "kind": "start",
+      "desc": "그 팀 스킬 게이지 50%로 시작",
+      "effect": {
+        "gaugePct": 0.5
+      },
+      "source": "perfect",
+      "chapter": "ch01"
+    }
+  ]
+}

@@ -240,6 +240,19 @@ describe('validateGameData', () => {
     expectIssue(issuesAfter((d) => ((d.recipes.recipes[0] as Record<string, unknown>).kind = 'sad')), 'recipes.recipes[0].kind', /.+/);
   });
 
+  it('M8.12 (§5.22): 적성 S·A·B, perStar는 스킬 필드·maxStar개, 진급 비용 maxStar−1개, 비법서 종류·얻는 법', () => {
+    const h = (d: Raw) => d.heroes.heroes[0] as unknown as Record<string, any>;
+    expectIssue(issuesAfter((d) => (h(d).aptitude.day = 'C')), 'heroes.heroes[0].aptitude.day', /S·A·B/);
+    expectIssue(issuesAfter((d) => h(d).skill.perStar.mult.pop()), 'heroes.heroes[0].skill.perStar.mult', /maxStar/);
+    expectIssue(issuesAfter((d) => (h(d).skill.perStar.radius = [1, 1, 1, 1, 1])), 'heroes.heroes[0].skill.perStar.radius', /없는 값/);
+    expectIssue(issuesAfter((d) => d.balance.star.cost.pop()), 'balance.star.cost', /maxStar − 1/);
+    const bk = (d: Raw) => d.bookSkills.books[0] as unknown as Record<string, any>;
+    expectIssue(issuesAfter((d) => (bk(d).kind = 'gauge')), 'bookSkills.books[0].kind', /start 또는 passive/);
+    expectIssue(issuesAfter((d) => (bk(d).source = 'shop')), 'bookSkills.books[0].source', /chapter 또는 perfect/);
+    expectIssue(issuesAfter((d) => (bk(d).effect.atkPct = 1)), 'bookSkills.books[0].effect.atkPct', /알 수 없는 키/);
+    expect(rawGameData.bookSkills.books.map((b) => b.id)).toEqual(['share_rice_cake', 'sturdy_rope', 'promise_sun_moon']);
+  });
+
   it('M6.5: days.quietDays 필수', () => {
     expectIssue(issuesAfter((d) => delete (d.days as Record<string, unknown>).quietDays), 'days.quietDays', /필수 키/);
   });

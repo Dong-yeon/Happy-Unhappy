@@ -10,12 +10,39 @@
       "chain": "bone",
       "role": "attack",
       "attackType": "melee",
+      "aptitude": {
+        "day": "S",
+        "night": "B"
+      },
       "skill": {
         "kind": "strike",
         "name": "쫓는 울음",
         "gauge": 20,
         "mult": 3,
-        "pierce": 2
+        "pierce": 2,
+        "perStar": {
+          "gauge": [
+            20,
+            20,
+            18,
+            18,
+            16
+          ],
+          "mult": [
+            3,
+            3.6,
+            4.2,
+            4.8,
+            5.5
+          ],
+          "pierce": [
+            2,
+            2,
+            3,
+            3,
+            4
+          ]
+        }
       }
     },
     {
@@ -28,13 +55,40 @@
       "chain": "bell",
       "role": "tank",
       "attackType": "melee",
+      "aptitude": {
+        "day": "B",
+        "night": "S"
+      },
       "skill": {
         "kind": "ward",
         "name": "수호의 울타리",
         "gauge": 20,
         "radius": 80,
         "stunSeconds": 1.5,
-        "shieldPct": 0.15
+        "shieldPct": 0.15,
+        "perStar": {
+          "gauge": [
+            20,
+            20,
+            18,
+            18,
+            16
+          ],
+          "stunSeconds": [
+            1.5,
+            1.8,
+            2.1,
+            2.4,
+            3.0
+          ],
+          "shieldPct": [
+            0.15,
+            0.2,
+            0.25,
+            0.3,
+            0.35
+          ]
+        }
       }
     },
     {
@@ -47,11 +101,31 @@
       "chain": "companion_animal",
       "role": "attack",
       "attackType": "ranged",
+      "aptitude": {
+        "day": "S",
+        "night": "A"
+      },
       "skill": {
         "kind": "beam",
         "name": "햇살 한 줄기",
         "gauge": 20,
-        "mult": 2
+        "mult": 2,
+        "perStar": {
+          "gauge": [
+            20,
+            20,
+            18,
+            18,
+            16
+          ],
+          "mult": [
+            2,
+            2.4,
+            2.8,
+            3.2,
+            3.8
+          ]
+        }
       },
       "reward": "ch01"
     },
@@ -65,12 +139,39 @@
       "chain": "comfort_object",
       "role": "support",
       "attackType": "ranged",
+      "aptitude": {
+        "day": "A",
+        "night": "S"
+      },
       "skill": {
         "kind": "mend",
         "name": "달빛 동아줄",
         "gauge": 20,
         "healPct": 0.2,
-        "revive": 1
+        "revive": 1,
+        "perStar": {
+          "gauge": [
+            20,
+            20,
+            18,
+            18,
+            16
+          ],
+          "healPct": [
+            0.2,
+            0.25,
+            0.3,
+            0.35,
+            0.45
+          ],
+          "revive": [
+            1,
+            1,
+            1,
+            2,
+            2
+          ]
+        }
       },
       "reward": "ch01"
     },
@@ -84,11 +185,24 @@
       "chain": "companion_animal",
       "role": "attack",
       "attackType": "ranged",
+      "aptitude": {
+        "day": "A",
+        "night": "A"
+      },
       "skill": {
         "kind": "beam",
         "name": "시험 빛줄기",
         "gauge": 20,
-        "mult": 2
+        "mult": 2,
+        "perStar": {
+          "gauge": [
+            20,
+            20,
+            18,
+            18,
+            16
+          ]
+        }
       },
       "reward": "debug"
     },
@@ -102,13 +216,26 @@
       "chain": "bell",
       "role": "tank",
       "attackType": "melee",
+      "aptitude": {
+        "day": "A",
+        "night": "A"
+      },
       "skill": {
         "kind": "ward",
         "name": "시험 울타리",
         "gauge": 20,
         "radius": 80,
         "stunSeconds": 1.5,
-        "shieldPct": 0.15
+        "shieldPct": 0.15,
+        "perStar": {
+          "gauge": [
+            20,
+            20,
+            18,
+            18,
+            16
+          ]
+        }
       },
       "reward": "debug"
     }

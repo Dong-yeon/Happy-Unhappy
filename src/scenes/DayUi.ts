@@ -30,6 +30,8 @@ export interface DayUiHooks {
   onRestart(): void;
   /** 판 시작 편성 화면 (취소 없음). 닫히면 done */
   openFormation(done: () => void): void;
+  /** 편성 화면 (취소 가능, 챕터 완성 화면에서 다시 읽기 전) */
+  editFormation(): void;
   /** 시도 끝 주관 평가 (§5.10-4, ?playtest=1에서만 표시). 키 = 판 통산 시도 번호 */
   rating(attempt: number): DayRating | null;
   rate<K extends keyof DayRating>(attempt: number, key: K, value: DayRating[K]): void;
@@ -171,11 +173,19 @@ export class DayUi {
     const s = this.state;
     const st = s.stageDef;
     const retry = s.retry;
-    const m = new Modal(this.scene, retry ? 196 : 168);
+    const replay = s.replay !== null;
+    const m = new Modal(this.scene, (retry ? 196 : 168) + (replay ? 34 : 0));
     const tries = s.attempts[s.stage - 1];
-    m.text(16, retry ? `다시 도전 · ${tries + 1}번째` : s.stage === s.chapterLength ? '마지막 장' : '이야기의 다음 장', {
+    const head = replay
+      ? `다시 읽기 · 적 ×${this.data.balance.replay.difficultyMult}${retry ? ' · 다시 도전' : ''}`
+      : retry
+        ? `다시 도전 · ${tries + 1}번째`
+        : s.stage === s.chapterLength
+          ? '마지막 장'
+          : '이야기의 다음 장';
+    m.text(16, head, {
       fontSize: '11px',
-      color: retry ? '#ffb46b' : '#9fb4e0',
+      color: replay ? '#9fd8ff' : retry ? '#ffb46b' : '#9fb4e0',
     });
     m.text(36, stageLabel(this.data, s.stage), { fontSize: '17px', color: '#f2c94c', fontStyle: 'bold' });
     let y = 70;
@@ -185,6 +195,13 @@ export class DayUi {
     }
     m.text(y, retry ? st.retryIntro : st.intro, { fontSize: '12px', lineSpacing: 4 });
     m.text((retry ? 196 : 168) - 20, '탭하면 바로', { fontSize: '8px', color: '#8a8f9e' });
+    // 다시 읽기는 그만두고 이야기책(챕터 완성)으로 돌아갈 수 있다 (§5.22-6)
+    if (replay) {
+      m.button(VIEW_W / 2, (retry ? 196 : 168) + 12, 140, '그만 읽기', () => {
+        this.closeModal();
+        if (this.state.exitReplay()) this.hooks.onChange();
+      }, '11px', 26);
+    }
     this.modal = m;
     this.auto(m, retry ? RETRY_MS : SCENE_MS, () => {
       if (this.state.confirmDay().ok) {
@@ -257,7 +274,7 @@ export class DayUi {
     const last = this.data.stages.stages[this.data.stages.stages.length - 1];
     const agree = showRatings();
     const joined = s.rewardHeroes.filter((h) => s.owned.includes(h.id)).map((h) => h.name);
-    const m = new Modal(this.scene, 96 + 70 + 110 + 112 + (agree ? 34 : 0) + 26 + (joined.length ? 68 : 0));
+    const m = new Modal(this.scene, 96 + 70 + 110 + 112 + (agree ? 34 : 0) + 36 + (joined.length ? 68 : 0));
     m.text(16, cc.title, { fontSize: '12px', color: '#9fb4e0' });
     const page = m.text(36, last.page, { fontSize: '11px', color: '#e8e8e8', lineSpacing: 4 });
     let y = 36 + page.height + 12;
@@ -315,10 +332,15 @@ export class DayUi {
       this.ratingRow(m, y, '이 챕터의 끝, 납득돼?', opts, () => this.hooks.endingAgree(), (v) => this.hooks.setEndingAgree(v));
       y += 34;
     }
-    const by = y + 24;
-    m.button(VIEW_W / 2 - 64, by, 110, '이야기책', () => this.showDiaryList());
+    // 성장 (§5.22): 비법서·흠집 없음, 다시 읽기는 이야기책에서 장을 골라
+    const books = s.ownedBooks.map((b) => s.bookDef(b).name).join(' · ');
+    m.text(y - 18, `비법서 ${books || '없음'} · ✦ 흠집 없음 ${s.perfect.length}/${s.chapterLength}`, { fontSize: '10px', color: '#ffb6c8' });
+    m.text(y, '이야기책에서 장을 골라 [다시 읽기] — 오누이도 함께', { fontSize: '9px', color: '#9fb4e0' });
+    const by = y + 34;
+    m.button(VIEW_W / 2 - 96, by, 90, '이야기책', () => this.showDiaryList());
+    m.button(VIEW_W / 2, by, 90, '편성', () => this.hooks.editFormation());
     let armedAt = -Infinity;
-    m.button(VIEW_W / 2 + 64, by, 110, '처음부터', (b) => {
+    m.button(VIEW_W / 2 + 96, by, 90, '처음부터', (b) => {
       const now = this.scene.time.now;
       if (now - armedAt <= RESTART_CONFIRM_MS) {
         this.hooks.onRestart();
@@ -337,9 +359,18 @@ export class DayUi {
   showDiaryList(): void {
     if (this.book) return;
     if (this.timer) this.timer.paused = true;
-    this.book = new StoryBookView(this.scene, this.state, this.data, () => {
-      this.book = null;
-      if (this.timer) this.timer.paused = false;
-    });
+    this.book = new StoryBookView(
+      this.scene,
+      this.state,
+      this.data,
+      () => {
+        this.book = null;
+        if (this.timer) this.timer.paused = false;
+      },
+      // 다시 읽기 (§5.22-6): 그 장 하나를 장면 카드부터
+      (stage) => {
+        if (this.state.startReplay(stage)) this.hooks.onChange();
+      },
+    );
   }
 }

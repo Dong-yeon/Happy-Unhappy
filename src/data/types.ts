@@ -8,7 +8,7 @@ export interface CombatStats {
 }
 
 export interface Balance {
-  version: 5;
+  version: 6;
   /** swapHeroes: true면 기본 배정(heroes.json offense/defense)을 맞바꾼다 (영웅 배정 기본값, [11]-3) */
   start: { swapHeroes: boolean };
   grid: {
@@ -103,6 +103,17 @@ export interface Balance {
   special: { noonAtkPct: number; noonSeconds: number; fullMoonStunSeconds: number; fullMoonShieldPct: number };
   /** 편성·팀 릴레이 (§5.20-2·3): 팀 수 상한·팀 인원·무리 간격(px)·교대 연출(초) */
   team: { maxTeams: number; teamSize: number; spacing: number; swapSeconds: number };
+  /** 잉크 (§5.22-2, D-060): 실제 시간 시간당 perHour, 시간 누적은 capHours분까지. 첫 클리어·보스·마지막 장·다시 읽기 보상.
+   *  잉크 1 = 경험치 expPerInk, 붓기 버튼 한 번 = pourStep */
+  ink: { perHour: number; capHours: number; firstClear: number; bossClear: number; finalClear: number; replayWin: number; expPerInk: number; pourStep: number };
+  /** 성급 (§5.22-3): 1~maxStar★, 진급 비용(별가루, 단계별 cost[★−1]), 첫 클리어 별가루 (보스 장·마지막 장은 따로) */
+  star: { maxStar: number; cost: number[]; dustFirstClear: number; dustBoss: number; dustFinal: number };
+  /** 낮·밤 적성 배율 (§5.22-4, D-066): 그 단계 maxHp·atk × */
+  aptitude: Record<Aptitude, number>;
+  /** 배우는 칸 (§5.22-5): levelSlot 레벨에 1칸, starSlot★에 1칸 더 */
+  learn: { levelSlot: number; starSlot: number };
+  /** 다시 읽기 (§5.22-6): 적 hp·atk·guardian hp·반격 × difficultyMult */
+  replay: { difficultyMult: number };
   /** 경험치 → 레벨 임시 (§5.20-7) */
   exp: {
     kill: number;
@@ -139,6 +150,27 @@ export type SkillDef =
   | { kind: 'mend'; name: string; gauge: number; healPct: number; revive: number };
 
 export type HeroRole = 'tank' | 'attack' | 'support';
+export type Aptitude = 'S' | 'A' | 'B';
+
+/** ★별 스킬 값 (§5.22-3): 키 = 스킬 필드(gauge 포함), 값 = 1★~maxStar★ 배열 */
+export type PerStar = Record<string, number[]>;
+
+/** 비법서 = 배우는 스킬 (§5.22-5, D-067, bookSkills.json) */
+export interface BookSkill {
+  id: string;
+  name: string;
+  /** start = 팀이 레인에 처음 나갈 때 1회 / passive = 상시 */
+  kind: 'start' | 'passive';
+  desc: string;
+  effect: { healPct?: number; shieldPct?: number; shieldSeconds?: number; gaugePct?: number; endure?: number };
+  /** chapter = 챕터 완성 / perfect = 그 챕터 10장 모두 흠집 없음 */
+  source: 'chapter' | 'perfect';
+  chapter: string;
+}
+
+export interface BookSkills {
+  books: BookSkill[];
+}
 
 /** 영웅 (§5.17-1, §5.19-9, §5.20-1, heroes.json): 시작 모험대(삽살·해태) + 보상 영웅(reward = 챕터 id, "debug" = 테스트) */
 export interface HeroDef extends CombatStats {
@@ -149,7 +181,9 @@ export interface HeroDef extends CombatStats {
   role: HeroRole;
   /** 근접 = 붙어서 / 원거리 = 사거리 끝에서 (§5.20-3-1) */
   attackType: 'melee' | 'ranged';
-  skill: SkillDef;
+  /** 낮·밤 적성 (§5.22-4) */
+  aptitude: { day: Aptitude; night: Aptitude };
+  skill: SkillDef & { perStar: PerStar };
   reward?: string;
 }
 
@@ -386,4 +420,5 @@ export interface GameData {
   chapter: Chapter;
   chapterComplete: ChapterComplete;
   recipes: Recipes;
+  bookSkills: BookSkills;
 }

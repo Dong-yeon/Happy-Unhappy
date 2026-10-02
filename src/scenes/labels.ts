@@ -10,10 +10,10 @@ export function stageLabel(data: GameData, stage: number): string {
 
 /** 실패 사유 한 줄 (재도전 장면 카드) */
 export const FAIL_LINE: Record<FailReason, string> = {
-  dayTime: '해가 졌다 — 핵을 찾지 못했다.',
-  dayFall: '가는 길에 쓰러졌다 — 핵을 찾지 못했다.',
-  returnTime: '해가 졌다 — 핵을 이야기책까지 가져오지 못했다.',
-  night: '밤에 핵을 빼앗겼다.',
+  dayTime: '해가 졌다 — 이야기 씨앗을 찾지 못했다.',
+  dayFall: '가는 길에 쓰러졌다 — 이야기 씨앗을 찾지 못했다.',
+  returnTime: '해가 졌다 — 이야기 씨앗을 이야기책까지 가져오지 못했다.',
+  night: '밤에 이야기 씨앗을 빼앗겼다.',
 };
 
 export function recipeName(data: GameData, id: string): string {

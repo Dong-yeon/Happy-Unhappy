@@ -4,6 +4,7 @@
 // 파싱은 알 수 없는 키도 오류로 본다 (data/validate.ts의 Checker 재사용) → 일차(day)·gating 필드가 남아 있으면 오류.
 // v4 (hau_save_v4): 스테이지·시도 수·핵 상태·펼친 장, 일차·gating·그림자 제거.
 // v5 (hau_save_v5): 보유 영웅(경험치·레벨·스킬 게이지)·편성·장마다 덧붙인 문장. 먹이기 점수·영웅 배정·갈림길 필드 삭제.
+// v6 (hau_save_v6, §5.22-9): 영웅 ★, 잉크·마지막 계산 시각, 별가루, 비법서 보유·장착, 장별 흠집 없음, 다시 읽기 중인 장.
 
 import type { GameData } from '../data/types';
 import { Checker } from '../data/validate';
@@ -13,7 +14,7 @@ import type { Formation, HeroProgress } from './roster';
 import { WILDCARD, WILDCARD_TIER, type GridSize, type Piece } from './grid';
 import { GAME_STATS_KEYS, RECORD_STATS_KEYS, type GameStats } from './stats';
 
-export const SAVE_VERSION = 5;
+export const SAVE_VERSION = 6;
 
 export type SavePhase = 'dayStart' | 'diary' | 'chapterComplete';
 const SAVE_PHASES: readonly SavePhase[] = ['dayStart', 'diary', 'chapterComplete'];
@@ -58,12 +59,24 @@ export interface SaveGame {
   formation: Formation;
   /** 판 시작 편성 화면을 지났는지 */
   formationSeen: boolean;
-  /** chapterComplete일 때만 true */
+  /** 챕터를 완성했으면 true (다시 읽기 중에도 유지) */
   completed: true | null;
+  // ── 성장 (§5.22) ──
+  ink: number;
+  /** 마지막 잉크 계산 실제 시각 (ms) */
+  inkAt: number | null;
+  stardust: number;
+  ownedBooks: string[];
+  /** 영웅 id → 칸별 비법서 (빈 칸 null) */
+  equipped: Record<string, (string | null)[]>;
+  /** 흠집 없음 장 */
+  perfect: number[];
+  /** 다시 읽기 중인 장 (null = 아님) */
+  replay: number | null;
 }
 
 export interface SaveData {
-  version: 5;
+  version: 6;
   /** ISO 시각 (디버그 표시용) */
   savedAt: string;
   gridSize: GridSize;
@@ -106,7 +119,14 @@ export function serializeGame(s: GameState): SaveGame {
     roster: s.roster,
     formation: s.formation,
     formationSeen: s.formationSeen,
-    completed: s.phase === 'chapterComplete' ? s.completed : null,
+    completed: s.completed,
+    ink: s.ink,
+    inkAt: s.inkAt,
+    stardust: s.stardust,
+    ownedBooks: s.ownedBooks,
+    equipped: s.equipped,
+    perfect: s.perfect,
+    replay: s.replay,
   });
 }
 
@@ -127,13 +147,13 @@ type Obj = Record<string, unknown>;
 const PIECE_KEYS = ['id', 'chain', 'tier', 'bornAt'];
 export const ATTEMPT_KEYS: (keyof AttemptStats)[] = [
   'stage', 'attempt', 'result', 'guardianDown', 'carrySeconds', 'drops', 'coreReturns', 'carryFalls', 'coreHpEnd', 'sunk',
-  'defenseFalls', 'defeated', 'realSeconds', 'offenseSeconds', 'defenseSeconds', 'spawns', 'discarded', 'merges',
+  'defenseFalls', 'defeated', 'replay', 'realSeconds', 'offenseSeconds', 'defenseSeconds', 'spawns', 'discarded', 'merges',
   'battleMerges', 'teamSwaps', 'skills', 'soldiers', 'soldiersCapped', 'releases', 'releaseTiers', 'lostReturns', 'gridFullSeconds',
 ];
 const GAME_KEYS: (keyof SaveGame)[] = [
   'seed', 'rngState', 'phase', 'stage', 'attempt', 'attempts', 'retry', 'playTime', 'tickCount', 'nextPieceId', 'nextUnitId',
   'autoSkill', 'grid', 'lostReturns', 'core', 'happyCd', 'nextWorryId', 'stats', 'pages', 'pageNotes', 'attemptLog',
-  'roster', 'formation', 'formationSeen', 'completed',
+  'roster', 'formation', 'formationSeen', 'completed', 'ink', 'inkAt', 'stardust', 'ownedBooks', 'equipped', 'perfect', 'replay',
 ];
 
 class SaveChecker extends Checker {
@@ -203,7 +223,7 @@ class SaveChecker extends Checker {
 
   /** 보유 영웅 하나: id·경험치·레벨·게이지 */
   progress(v: unknown, path: string): string | undefined {
-    const o = this.obj(v, path, ['id', 'exp', 'level', 'gauge']);
+    const o = this.obj(v, path, ['id', 'exp', 'level', 'gauge', 'star']);
     if (!o) return undefined;
     const id = this.str(o.id, `${path}.id`);
     const def = this.data.heroes.heroes.find((h) => h.id === id);
@@ -211,6 +231,7 @@ class SaveChecker extends Checker {
     this.num(o.exp, `${path}.exp`, { min: 0 });
     this.num(o.level, `${path}.level`, { int: true, min: 1, max: this.data.balance.exp.maxLevel });
     this.num(o.gauge, `${path}.gauge`, { min: 0, max: def?.skill.gauge });
+    this.num(o.star, `${path}.star`, { int: true, min: 1, max: this.data.balance.star.maxStar });
     return id;
   }
 
@@ -301,7 +322,38 @@ class SaveChecker extends Checker {
     this.bool(o.formationSeen, p('formationSeen'));
     if (o.phase === 'chapterComplete') {
       if (o.completed !== true) this.fail(p('completed'), 'chapterComplete인데 완성 표시가 없음');
-    } else if (o.completed !== null) this.fail(p('completed'), 'chapterComplete가 아니면 null이어야 함');
+    } else if (o.completed !== null && o.replay === null) this.fail(p('completed'), '다시 읽기가 아니면 chapterComplete에서만 true');
+    if (o.completed !== null && o.completed !== true) this.fail(p('completed'), 'true 또는 null');
+    // 성장 (§5.22)
+    this.num(o.ink, p('ink'), { min: 0 });
+    if (o.inkAt !== null) this.num(o.inkAt, p('inkAt'));
+    this.num(o.stardust, p('stardust'), { int: true, min: 0 });
+    const bookIds = this.data.bookSkills.books.map((b) => b.id);
+    const books = this.strList(o.ownedBooks, p('ownedBooks'), 0);
+    for (const b of books) if (!bookIds.includes(b)) this.fail(p('ownedBooks'), `bookSkills.json에 없는 비법서: "${b}"`);
+    this.unique(books, p('ownedBooks'), '비법서');
+    const eq = this.map(o.equipped, p('equipped'));
+    if (eq) {
+      const seenB = new Set<string>();
+      for (const [hid, slots] of Object.entries(eq)) {
+        const pp = `${p('equipped')}.${hid}`;
+        if (!owned.includes(hid)) this.fail(pp, `보유하지 않은 영웅: "${hid}"`);
+        const arr = this.arr(slots, pp) ?? [];
+        if (arr.length > 2) this.fail(pp, '칸은 2개까지');
+        for (const b of arr) {
+          if (b === null) continue;
+          if (typeof b !== 'string' || !books.includes(b)) this.fail(pp, `가지지 않은 비법서: ${JSON.stringify(b)}`);
+          else if (seenB.has(b)) this.fail(pp, `한 권은 한 영웅만: "${b}"`);
+          else seenB.add(b);
+        }
+      }
+    }
+    this.list(o.perfect, p('perfect'), (it, pp) => this.num(it, pp, { int: true, min: 1, max: this.length }));
+    if (o.replay !== null) {
+      this.num(o.replay, p('replay'), { int: true, min: 1, max: this.length });
+      if (o.completed !== true) this.fail(p('replay'), '다시 읽기는 챕터 완성 뒤에만');
+      if (o.phase !== 'dayStart') this.fail(p('replay'), '다시 읽기 저장은 장면 카드에서만');
+    }
     if (o.phase === 'diary' && Array.isArray(o.attemptLog) && o.attemptLog.length === 0) this.fail(p('attemptLog'), 'diary인데 시도 기록이 없음');
   }
 }

@@ -1,6 +1,7 @@
 // 이야기책 (§5.20-8, D-061): 펼친 양면 책. 맨 앞 장 = 챕터 표지(제목·진행 n/10), 그 뒤 1-1 ~ 1-10 자리.
 // 연 장 = 제목·삽화 자리(빈 사각형, 그림은 M9)·핵·이야기 한 장·플레이 한 줄, 못 연 장 = 빈 페이지 + "?" + 스테이지 번호.
 // 좌우 버튼(또는 좌우 끌기)으로 넘긴다. 도형 + 텍스트만.
+// §5.22-6: 장마다 "✦ 흠집 없음" 표시, 표지에 흠집 없음 n/10·비법서. 챕터 완성 뒤에는 연 장마다 [다시 읽기].
 import Phaser from 'phaser';
 import type { GameState } from '../core/game';
 import type { GameData } from '../data/types';
@@ -30,6 +31,8 @@ export class StoryBookView {
     private readonly state: GameState,
     private readonly data: GameData,
     private readonly onClose: () => void,
+    /** 챕터 완성 뒤 [다시 읽기] (없으면 버튼 없음) */
+    private readonly onReplay?: (stage: number) => void,
   ) {
     const bg = scene.add.rectangle(0, 0, VIEW_W, VIEW_H, 0x0e1016, 0.96).setOrigin(0).setDepth(DEPTH).setInteractive();
     bg.on('pointerdown', (p: Phaser.Input.Pointer) => (this.dragX = p.worldX));
@@ -79,9 +82,13 @@ export class StoryBookView {
     this.draw();
   }
 
+  private pageButtons: Button[] = [];
+
   private draw(): void {
     for (const o of this.pageObjs) o.destroy();
+    for (const b of this.pageButtons) b.container.destroy();
     this.pageObjs = [];
+    this.pageButtons = [];
     const left = this.spread * 2;
     this.drawPage(left, VIEW_W / 2 - PAGE_W - 2);
     this.drawPage(left + 1, VIEW_W / 2 + 2);
@@ -113,6 +120,10 @@ export class StoryBookView {
       this.t(cx, TOP + 84, this.data.chapterComplete.title, { fontSize: '16px', fontStyle: 'bold' });
       this.pageObjs.push(s.add.circle(cx - 18, TOP + 170, 14, 0xffd36b).setDepth(DEPTH + 3), s.add.circle(cx + 18, TOP + 170, 12, 0xd9deee).setDepth(DEPTH + 3));
       this.t(cx, TOP + 220, `펼친 장 ${done} / ${this.data.stages.stages.length}`, { fontSize: '11px' });
+      this.t(cx, TOP + 240, `✦ 흠집 없음 ${this.state.perfect.length} / ${this.data.stages.stages.length}`, { fontSize: '10px', color: '#a0702a' });
+      if (this.state.ownedBooks.length) {
+        this.t(cx, TOP + 268, `비법서\n${this.state.ownedBooks.map((b) => this.state.bookDef(b).name).join('\n')}`, { fontSize: '9px', color: '#8a4a6a', lineSpacing: 3 });
+      } else this.t(cx, TOP + 268, '10장을 모두 흠집 없이 지키면\n숨은 비법서', { fontSize: '8px', color: '#a89878', lineSpacing: 2 });
       this.t(cx, TOP + PAGE_H - 40, '이야기 모험대의 책', { fontSize: '9px', color: '#8a6a42' });
       return;
     }
@@ -135,14 +146,26 @@ export class StoryBookView {
     y += this.t(cx, y, `◆ ${st.coreName}`, { fontSize: '10px', color: '#a0702a' }).height + 8;
     y += this.t(cx, y, st.page, { fontSize: '10px', lineSpacing: 3 }).height + 10;
     const notes = this.state.pageNotes[stage] ?? [];
-    if (notes.length) this.t(cx, y, notes.join('\n'), { fontSize: '9px', color: '#5a6b8a', lineSpacing: 3 });
+    if (notes.length) y += this.t(cx, y, notes.join('\n'), { fontSize: '9px', color: '#5a6b8a', lineSpacing: 3 }).height + 10;
+    // 흠집 없음 (§5.22-6): 그 장 밤을 이야기 씨앗 HP 가득으로 지킴
+    if (this.state.perfect.includes(stage)) this.t(cx, TOP + PAGE_H - 74, '✦ 흠집 없음', { fontSize: '11px', color: '#c08a1a', fontStyle: 'bold' });
+    else this.t(cx, TOP + PAGE_H - 74, '흠집 있음 — 다시 읽어 지켜 내기', { fontSize: '8px', color: '#a89878' });
+    // 다시 읽기 (챕터 완성 뒤)
+    if (this.onReplay && this.state.completed === true && this.state.phase === 'chapterComplete') {
+      const b = new Button(s, cx, TOP + PAGE_H - 36, PAGE_W - 30, 28, '다시 읽기', () => {
+        this.onReplay?.(stage);
+        this.close();
+      }, '11px');
+      b.container.setDepth(DEPTH + 4);
+      this.pageButtons.push(b);
+    }
   }
 
   close(): void {
     if (this.closed) return;
     this.closed = true;
     for (const o of [...this.objs, ...this.pageObjs]) o.destroy();
-    for (const b of this.buttons) b.container.destroy();
+    for (const b of [...this.buttons, ...this.pageButtons]) b.container.destroy();
     this.onClose();
   }
 }

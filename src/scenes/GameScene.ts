@@ -17,6 +17,7 @@ import { SkyView } from './SkyView';
 import { stageLabel } from './labels';
 import { REGION, VIEW_W, skyArc, toScreen, type Rect } from './layout';
 import { Button, COLOR, setupCamera, text } from './ui';
+import { nowMs } from '../platform/clock';
 import type { Role } from '../core/game';
 
 /** 한 프레임에 넘기는 시간 상한 (백그라운드 복귀 직후 몰아서 처리하지 않도록) */
@@ -34,6 +35,9 @@ export class GameScene extends Phaser.Scene {
   private metrics!: MetricsRecorder;
   private wellView!: WellView;
   private autoBtn!: Button;
+  private inkText!: Phaser.GameObjects.Text;
+  /** 잉크 시간 누적을 다시 계산할 때까지 (ms) */
+  private inkTick = 0;
   private releaseZone!: ReleaseZoneView;
   private laneView!: DefenseLaneView;
   private abyssView!: AbyssLaneView;
@@ -62,6 +66,8 @@ export class GameScene extends Phaser.Scene {
     // metrics (§5.10): 관찰만. 판 도중 복원 감지는 생성 시
     this.metrics = new MetricsRecorder(this.state, size);
 
+    // 잉크 (§5.22-2): 자리를 비운 동안 쌓인 만큼 (저장된 마지막 시각 → 지금)
+    const away = this.state.accrueInk(nowMs());
     this.drawHud(data);
     this.sky = new SkyView(this, this.state);
     this.drawGrid(size);
@@ -80,6 +86,7 @@ export class GameScene extends Phaser.Scene {
       onChange: () => this.onDebugChange(),
       onRestart: () => this.restartLife(),
       openFormation: (done) => this.openFormation(false, done),
+      editFormation: () => this.openFormation(true),
       rating: (attempt) => this.metrics.rating(attempt),
       rate: (attempt, key, value) => this.metrics.rate(attempt, key, value),
       endingAgree: () => this.metrics.endingAgree,
@@ -105,6 +112,7 @@ export class GameScene extends Phaser.Scene {
     }
     this.wellView.refresh();
     this.syncUi();
+    if (away >= 1) this.time.delayedCall(400, () => this.banner(`✒ 자리를 비운 동안 잉크 +${Math.floor(away)}`, '#9fd8ff'));
   }
 
   /**
@@ -153,6 +161,12 @@ export class GameScene extends Phaser.Scene {
     const paused = this.sky.transitioning || this.formationView !== null;
     // metrics 실제 시간: 배속을 곱하지 않은 프레임 시간 (백그라운드 동안은 프레임이 멈춘다)
     this.metrics.frame(paused ? 0 : dt, this.speed);
+    // 켜져 있는 동안도 잉크가 쌓인다 (1초마다 실제 시각으로)
+    this.inkTick -= delta;
+    if (this.inkTick <= 0) {
+      this.inkTick = 1000;
+      this.state.accrueInk(nowMs());
+    }
     const events = this.state.tick(paused ? 0 : dt * this.speed);
     this.persist(events);
     this.onPhaseEvents(events);
@@ -226,6 +240,20 @@ export class GameScene extends Phaser.Scene {
         this.banner(`${e.role === 'offense' ? '☀' : '☾'} ${e.team + 1}팀 출발`, '#ffffff');
       } else if (e.type === 'formationRestart') {
         this.banner('편성이 바뀌어 처음부터', '#ffb46b');
+      } else if (e.type === 'stageReward') {
+        this.banner(`첫 클리어 · 잉크 +${e.ink} · 별가루 +${e.dust}`, '#ffe08a');
+      } else if (e.type === 'booksGained') {
+        this.banner(`비법서: ${e.ids.map((b) => this.state.bookDef(b).name).join(' · ')}`, '#ffb6c8');
+      } else if (e.type === 'bookSkill') {
+        const u = this.state.heroUnit(e.heroId);
+        const lane = e.role === 'offense' ? 'abyss' : 'defense';
+        const p = u ? toScreen(lane, u.x, u.y) : { x: VIEW_W / 2, y: REGION.ground.y + 60 };
+        const t = text(this, p.x, p.y - 28, `📖 ${this.state.bookDef(e.bookId).name}`, { fontSize: '10px', color: '#ffb6c8', backgroundColor: '#1b1d24', padding: { x: 3, y: 1 } })
+          .setOrigin(0.5)
+          .setDepth(40);
+        this.tweens.add({ targets: t, y: p.y - 50, alpha: 0, delay: 700, duration: 500, onComplete: () => t.destroy() });
+      } else if (e.type === 'replayEnd' && e.success) {
+        this.banner(`다시 읽기 성공 · 잉크 +${e.ink}${e.perfect ? ' · 흠집 없음 ✦' : ''}`, '#9fd8ff');
       } else if (e.type === 'levelUp') {
         void data;
       }
@@ -233,12 +261,25 @@ export class GameScene extends Phaser.Scene {
   }
 
   /** 땅 띠 위쪽 한 줄 알림 (1.2초) */
+  private banners = 0;
+
+  /** 같은 때 여러 줄이면 아래로 쌓는다 (보상·비법서·흠집 없음이 한꺼번에 오므로 조금 더 오래) */
   private banner(msg: string, color: string): void {
     const g = REGION.ground;
-    const t = text(this, g.x + g.w / 2, g.y + 34, msg, { fontSize: '13px', color, fontStyle: 'bold', backgroundColor: '#1b1d24cc', padding: { x: 6, y: 3 } })
+    const k = this.banners++;
+    const t = text(this, g.x + g.w / 2, g.y + 34 + k * 24, msg, { fontSize: '13px', color, fontStyle: 'bold', backgroundColor: '#1b1d24cc', padding: { x: 6, y: 3 } })
       .setOrigin(0.5)
-      .setDepth(41);
-    this.tweens.add({ targets: t, alpha: 0, delay: 900, duration: 300, onComplete: () => t.destroy() });
+      .setDepth(70); // 장면 카드·결과 막(60) 위, 편성 화면(80) 아래 — 부팅 때 잉크 알림이 장면 카드에 가리지 않게
+    this.tweens.add({
+      targets: t,
+      alpha: 0,
+      delay: 1400,
+      duration: 300,
+      onComplete: () => {
+        t.destroy();
+        this.banners = Math.max(0, this.banners - 1);
+      },
+    });
   }
 
   /** 낮/밤 전환: 해질녘 → 1.5초 연출 (절반에서 땅 띠 교체) / 장면 카드(스테이지 시작·실패 뒤) → 낮 */
@@ -292,9 +333,18 @@ export class GameScene extends Phaser.Scene {
     const tries = s.attempts[s.stage - 1] + (s.phase === 'dayStart' ? 1 : 0);
     const retry = (s.phase === 'dayStart' && s.retry !== null) || ((s.phase === 'day' || s.phase === 'night') && s.attempts[s.stage - 1] > 1);
     const tag =
-      s.phase === 'chapterComplete' || s.phase === 'diary' ? '' : `${retry ? '다시 도전 · ' : ''}${tries}번째 시도${s.wave.paused ? ' (웨이브 정지)' : ''}`;
+      s.phase === 'chapterComplete' || s.phase === 'diary'
+        ? ''
+        : s.replay !== null
+          ? `다시 읽기${s.retry ? ' · 다시 도전' : ''}`
+          : `${retry ? '다시 도전 · ' : ''}${tries}번째 시도${s.wave.paused ? ' (웨이브 정지)' : ''}`;
     if (this.retryText.text !== tag) this.retryText.setText(tag).setColor(retry ? '#ffb46b' : '#9aa1b5');
     this.autoBtn.setLabel(s.autoSkill ? '자동' : '수동').setActive(s.autoSkill);
+    // 잉크 (§5.22-2): [자동][편성][책] 왼쪽 아래 줄, 상한 근처면 반짝
+    const ink = `✒ 잉크 ${Math.floor(s.ink)}`;
+    if (this.inkText.text !== ink) this.inkText.setText(ink);
+    const near = s.ink >= s.inkCap * 0.9;
+    this.inkText.setAlpha(near ? 0.6 + 0.4 * Math.abs(Math.sin(this.time.now / 250)) : 1).setColor(near ? '#ffffff' : '#9fd8ff');
   }
 
   private fill(r: Rect, color: number): Phaser.GameObjects.Rectangle {
@@ -322,6 +372,8 @@ export class GameScene extends Phaser.Scene {
       if (!this.dayUi.blocking) this.dayUi.showDiaryList();
     }, '11px');
     for (const x of [this.autoBtn, f, b]) x.container.setDepth(8);
+    // 잉크 수 (§5.22-2): [자동] 왼쪽, 아래 줄
+    this.inkText = text(this, x3 - (bw + gap) * 2 - bw / 2 - 6, midY + 8, '', { fontSize: '10px', color: '#9fd8ff' }).setOrigin(1, 0.5).setDepth(8);
   }
 
   /** 머지 판 = 이야기 우물 (§5.21): 둥근 테 우물, 칸·자리 표시 없음 */

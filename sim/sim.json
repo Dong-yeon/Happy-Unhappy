@@ -26,5 +26,31 @@
   },
   "m811Goals": {
     "noMergeVsBalanced": 0.5
+  },
+  "m812Goals": {
+    "balancedAttempts": [
+      15,
+      20
+    ],
+    "balancedSessions": [
+      3,
+      5
+    ],
+    "firstTry11Min": 0.9,
+    "firstTry19": [
+      0.3,
+      0.5
+    ],
+    "balancedFailStreak": [
+      3,
+      5
+    ],
+    "balancedCompleteMin": 0.95,
+    "noInkAttemptsMult": 1.3,
+    "soldierShare": [
+      0.2,
+      0.4
+    ],
+    "returnShareMin": 0.15
   }
 }

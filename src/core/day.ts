@@ -20,6 +20,8 @@ export interface AttemptStats {
   /** 판 통산 시도 번호 (1부터) */
   attempt: number;
   result: AttemptResult | null;
+  /** 다시 읽기 시도 (§5.22-6, 판 진행 지표에서 뺀다) */
+  replay: 0 | 1;
   /** 낮: guardian을 쓰러뜨렸는지 · 핵을 든 시간 · 떨어뜨림 · 적이 되가져감 · 운반 중 쓰러짐(핵을 든 영웅이 쓰러짐) */
   guardianDown: 0 | 1;
   carrySeconds: number;
@@ -62,6 +64,7 @@ export function emptyAttemptStats(stage: number, attempt: number, maxTier: numbe
     stage,
     attempt,
     result: null,
+    replay: 0,
     guardianDown: 0,
     carrySeconds: 0,
     drops: 0,

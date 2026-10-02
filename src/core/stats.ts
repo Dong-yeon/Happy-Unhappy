@@ -53,6 +53,18 @@ export interface GameStats {
   piecesDiscarded: number;
   /** 전투 중 그리드에 빈칸이 없던 시간(초). 가득 참 비율 = gridFullSeconds / battleSeconds */
   gridFullSeconds: number;
+  // ── 성장 (§5.22) ──
+  /** 잉크: 시간 누적 / 보상 / 붓기로 씀 */
+  inkTime: number;
+  inkReward: number;
+  inkSpent: number;
+  /** 별가루: 얻음 / 진급에 씀, 진급 횟수 */
+  dustEarned: number;
+  dustSpent: number;
+  promotions: number;
+  /** 다시 읽기 시도·성공 (판 시도 수와 따로) */
+  replayAttempts: number;
+  replayWins: number;
   // ── 병사 ([11]-1·4) ──
   soldiersSpawned: number;
   /** 상한으로 병사 없이 버프만 */
@@ -106,6 +118,14 @@ export const GAME_STATS_KEYS: readonly NumericStatKey[] = [
   'piecesDropped',
   'piecesDiscarded',
   'gridFullSeconds',
+  'inkTime',
+  'inkReward',
+  'inkSpent',
+  'dustEarned',
+  'dustSpent',
+  'promotions',
+  'replayAttempts',
+  'replayWins',
   'soldiersSpawned',
   'soldiersCapped',
   'damageHero',

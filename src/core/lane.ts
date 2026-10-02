@@ -112,6 +112,8 @@ export interface Unit extends Attacker {
   attackType: 'melee' | 'ranged';
   /** 보호막: 받는 피해를 먼저 깎는다 (수호의 울타리·보름달) */
   shield: number;
+  /** 비법서 '튼튼한 동아줄' (§5.22-5): 이번 단계에 아직 안 쓴 버팀 1회 */
+  endure?: boolean;
   life?: number;
   lifeMax?: number;
   /** 올가미병: 맞힌 걱정 감속 비율·시간 */
@@ -140,6 +142,11 @@ export function damageUnit(u: Unit, raw: number): number {
     const absorbed = Math.min(u.shield, dmg);
     u.shield -= absorbed;
     dmg -= absorbed;
+  }
+  // 버팀 (비법서 상시형, §5.22-5): 쓰러질 피해를 한 번 hp 1로 버틴다
+  if (u.endure && u.hp - dmg <= 0) {
+    dmg = Math.max(0, u.hp - 1);
+    u.endure = false;
   }
   u.hp -= dmg;
   return dmg;

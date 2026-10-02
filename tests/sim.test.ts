@@ -99,11 +99,11 @@ describe('정책 기본 동작 (§5.20-10·13: 조각은 저절로 + 처치 드�
     expect(off.bonds).toEqual([]);
   });
 
-  it('dayHeavy·nightHeavy: 한쪽에 몰고 반대쪽은 1명', () => {
-    const d = run('dayHeavy', 1, 'all');
+  it('dayHeavyTeam·nightHeavyTeam (M8.11 편성 몰기): 한쪽에 몰고 반대쪽은 1명', () => {
+    const d = run('dayHeavyTeam', 1, 'all');
     expect(d.formation.defense.flat()).toHaveLength(1);
     expect(d.formation.offense.flat().length).toBeGreaterThan(1);
-    const n = run('nightHeavy', 1, 'all');
+    const n = run('nightHeavyTeam', 1, 'all');
     expect(n.formation.offense.flat()).toHaveLength(1);
   });
 

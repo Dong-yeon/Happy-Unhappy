@@ -26,7 +26,14 @@ export interface RunOptions {
   maxAttempts?: number;
   /** 보유 영웅 (기본 start) */
   roster?: Roster;
+  /** 세션 모델 (§5.22-8): 시도 attempts번마다 offlineHours 쉬고(잉크 누적) 이어서. 없으면 쉬지 않음 */
+  session?: { attempts: number; offlineHours: number } | null;
+  /** 챕터 완성 뒤 10장 다시 읽기 (흠집 없음·숨은 비법서 확인) */
+  replayPerfect?: boolean;
 }
+
+/** 다시 읽기 한 장에서 그만두는 시도 수 */
+const REPLAY_MAX_TRIES = 10;
 
 export interface RunResult {
   seed: number;
@@ -105,6 +112,21 @@ export interface RunResult {
   damageHero: number;
   damageSoldier: number;
   damageBase: number;
+  // ── 성장 (§5.22-8): 챕터 완성(또는 멈춘) 시점 ──
+  /** 세션 수 (첫 세션 1, 쉴 때마다 + 1) */
+  sessions: number;
+  stars: Record<string, number>;
+  inkTime: number;
+  inkReward: number;
+  inkSpent: number;
+  dustEarned: number;
+  dustSpent: number;
+  promotions: number;
+  // ── 다시 읽기 (--replayPerfect, 판 끝) ──
+  books: string[];
+  perfectPages: number;
+  replayAttempts: number;
+  replayWins: number;
 }
 
 /** 봇 rng는 게임 rng와 다른 수열 (같은 시드에서도 서로 간섭하지 않게) */
@@ -197,13 +219,108 @@ export function runLife(data: GameData, cfg: SimConfig, policy: Policy, opt: Run
     }
   };
 
-  while (state.phase !== 'chapterComplete' && ticks < maxTicks) {
+  // ── 성장 (§5.22-8): 잉크 붓기·진급. 실제 시각 = 게임 시간 + 쉰 시간 ──
+  let sessions = 1;
+  let sinceSession = 0;
+  let offlineMs = 0;
+  let growTurn = 0;
+  const clock = () => state.playTime * 1000 + offlineMs;
+  const sideIds = (role: 'offense' | 'defense') => state.teams(role).flat();
+  /** 성장 대상 순서: 번갈아 = 공격대·수비대 번갈아 / 한쪽 몰기 / 무작위 */
+  const growTarget = (mode: Policy['grow']): string | null => {
+    const off = sideIds('offense');
+    const def = sideIds('defense');
+    if (mode === 'offense') return off[growTurn++ % off.length] ?? null;
+    if (mode === 'defense') return def[growTurn++ % def.length] ?? null;
+    if (mode === 'random') {
+      const all = [...off, ...def];
+      return all.length ? all[Math.floor(botRng() * all.length)] : null;
+    }
+    const k = growTurn++;
+    const side = k % 2 === 0 ? off : def;
+    return side.length ? side[Math.floor(k / 2) % side.length] : null;
+  };
+  const pourAll = () => {
+    const mode = policy.grow ?? 'alternate';
+    if (mode === 'none') return;
+    const step = data.balance.ink.pourStep;
+    for (let k = 0; k < 10_000 && state.ink >= 1; k++) {
+      const id = growTarget(mode);
+      if (!id) break;
+      if (state.pourInk(id, Math.min(step, state.ink)).spent === 0) {
+        // 상한 레벨 등으로 못 부으면 다른 대상 (모두 못 부으면 멈춤)
+        if ([...sideIds('offense'), ...sideIds('defense')].every((h) => state.progressOf(h).level >= data.balance.exp.maxLevel)) break;
+      }
+    }
+  };
+  let promoteTurn = 0;
+  const promoteAll = () => {
+    if (policy.promote === false) return;
+    const mode = policy.grow === 'offense' || policy.grow === 'defense' || policy.grow === 'random' ? policy.grow : 'alternate';
+    for (let k = 0; k < 20; k++) {
+      const off = sideIds('offense');
+      const def = sideIds('defense');
+      let id: string | null;
+      if (mode === 'offense') id = off.find((h) => state.promoteCost(h) !== null) ?? null;
+      else if (mode === 'defense') id = def.find((h) => state.promoteCost(h) !== null) ?? null;
+      else if (mode === 'random') {
+        const all = [...off, ...def].filter((h) => state.promoteCost(h) !== null);
+        id = all.length ? all[Math.floor(botRng() * all.length)] : null;
+      } else {
+        const side = promoteTurn % 2 === 0 ? off : def;
+        id = side.find((h) => state.promoteCost(h) !== null) ?? [...off, ...def].find((h) => state.promoteCost(h) !== null) ?? null;
+      }
+      if (!id || !state.promote(id)) break;
+      promoteTurn += 1;
+    }
+  };
+  state.accrueInk(clock());
+
+  const replayQueue: number[] = [];
+  let replayTries = 0;
+  let base: RunResult | null = null;
+
+  while (ticks < maxTicks) {
+    if (state.phase === 'chapterComplete') {
+      if (!base) {
+        base = collect();
+        if (opt.replayPerfect && state.completed) {
+          // 다시 읽기는 오누이 포함 전원 (§5.22-6)
+          const fr2 = state.setFormation(alternateFormation(state));
+          if (!fr2.ok) throw new Error(`다시 읽기 편성 실패: ${fr2.reason}`);
+          for (let k = 1; k <= data.balance.chapter.length; k++) replayQueue.push(k);
+        }
+      }
+      const next = replayQueue.shift();
+      if (next === undefined) break;
+      state.startReplay(next);
+      replayTries = 0;
+      continue;
+    }
     if (state.phase === 'dayStart') {
-      if (state.attempt >= maxAttempts) break;
+      if (state.replay === null && state.attempt >= maxAttempts) break;
       if (opt.saveRoundTrip) state = roundTrip(data, state, opt.grid);
+      if (state.replay !== null && replayTries >= REPLAY_MAX_TRIES) {
+        state.exitReplay();
+        continue;
+      }
+      // 세션: 시도 session.attempts번마다 쉬고 잉크가 쌓인 뒤, 세션 시작에 잉크를 전부 붓는다
+      state.accrueInk(clock());
+      if (opt.session) {
+        if (sinceSession >= opt.session.attempts) {
+          offlineMs += opt.session.offlineHours * 3_600_000;
+          sessions += 1;
+          sinceSession = 0;
+          state.accrueInk(clock());
+          pourAll();
+        } else if (state.attempt === 0) pourAll();
+      } else pourAll();
+      promoteAll();
       boundary();
       const r = state.confirmDay();
       if (!r.ok) throw new Error(`confirmDay 실패: ${r.reason}`);
+      sinceSession += 1;
+      if (state.replay !== null) replayTries += 1;
       pending = null;
       nextDecision = state.playTime;
       continue;
@@ -233,8 +350,19 @@ export function runLife(data: GameData, cfg: SimConfig, policy: Policy, opt: Run
     for (const e of events) if (e.type === 'worryDie' || e.type === 'enemyDie') kills += 1;
   }
 
+  const result: RunResult = {
+    ...(base ?? collect()),
+    books: [...state.ownedBooks],
+    perfectPages: state.perfect.length,
+    replayAttempts: state.stats.replayAttempts,
+    replayWins: state.stats.replayWins,
+  };
+  return { result, state };
+
+  /** 판 진행 지표 (다시 읽기 시도는 뺀다) */
+  function collect(): RunResult {
   const st = state.stats;
-  const log = state.attemptLog;
+  const log = state.attemptLog.filter((a) => !a.replay);
   const len = data.balance.chapter.length;
   const results = Object.fromEntries(ATTEMPT_RESULTS.map((r) => [r, 0])) as Record<AttemptResult, number>;
   const stageResults = Array.from({ length: len }, () => ATTEMPT_RESULTS.map(() => 0));
@@ -246,10 +374,10 @@ export function runLife(data: GameData, cfg: SimConfig, policy: Policy, opt: Run
     if (firstTry[a.stage - 1] === null) firstTry[a.stage - 1] = a.result === 'success';
   }
 
-  const result: RunResult = {
+  return {
     seed: opt.seed,
     completed: state.completed === true,
-    attempts: state.attempt,
+    attempts: log.length,
     stage: state.stage,
     attemptsByStage: [...state.attempts],
     firstTry,
@@ -296,6 +424,18 @@ export function runLife(data: GameData, cfg: SimConfig, policy: Policy, opt: Run
     damageHero: st.damageHero,
     damageSoldier: st.damageSoldier,
     damageBase: st.damageBase,
+    sessions,
+    stars: Object.fromEntries(state.roster.map((p) => [p.id, p.star])),
+    inkTime: st.inkTime,
+    inkReward: st.inkReward,
+    inkSpent: st.inkSpent,
+    dustEarned: st.dustEarned,
+    dustSpent: st.dustSpent,
+    promotions: st.promotions,
+    books: [],
+    perfectPages: 0,
+    replayAttempts: 0,
+    replayWins: 0,
   };
-  return { result, state };
+  }
 }

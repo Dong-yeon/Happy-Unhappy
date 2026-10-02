@@ -1,6 +1,6 @@
 // ?debug=1 디버그 패널. M7에서 정식 디버그 패널로 흡수.
 // 기본은 접힘: 포탈 받침 왼쪽 빈 자리의 [DBG] 토글만 보인다. 펼치면 방어 레인 위에 겹쳐 뜬다 (심연 레인은 가리지 않음).
-// 탭: 기본(그리드·조각) / 웨이브(정지·다음·배속) / 낮밤(guardian·쓰러짐·즉시 성공·실패) / 스테이지(이동·갈림길·완성·이야기책)
+// 탭: 기본(그리드·조각·시간·별가루·비법서) / 웨이브(정지·다음·배속) / 낮밤(guardian·쓰러짐·즉시 성공·실패) / 스테이지(이동·갈림길·완성·이야기책)
 //     / 저장(초기화·JSON 복사) / metrics(내보내기·요약·초기화)
 import Phaser from 'phaser';
 import type { GameState } from '../core/game';
@@ -8,7 +8,7 @@ import { WILDCARD, type GridSize } from '../core/grid';
 import type { GameData } from '../data/types';
 import type { MetricsRecorder } from '../metrics/recorder';
 import { formatSummary, summarizeMetrics } from '../metrics/model';
-import { realToday } from '../platform/clock';
+import { debugAdvanceClock, nowMs, realToday } from '../platform/clock';
 import { storageStatus } from '../platform/storage';
 import { REGION } from '../scenes/layout';
 import type { SaveSession } from '../scenes/session';
@@ -122,6 +122,24 @@ export function createDebugPanel(
     };
     btn('기본', scene, x0 + 40, y, 80, 20, '조각 지급', () => grant(chains[chainIdx].archetypeId, tier), '10px');
     btn('기본', scene, x0 + 124, y, 80, 20, '와일드카드', () => grant(WILDCARD, 0), '10px');
+    // 성장 (§5.22-2): 시계를 앞당겨 잉크 시간 누적 확인 (새로고침해도 유지)
+    y += 26;
+    for (const [i, h] of [1, 8].entries()) {
+      btn('기본', scene, x0 + 40 + i * 84, y, 80, 20, `시간 +${h}시간`, () => {
+        debugAdvanceClock(h);
+        state.accrueInk(nowMs());
+        controls.onChange();
+      }, '10px');
+    }
+    y += 26;
+    btn('기본', scene, x0 + 40, y, 80, 20, '별가루 +50', () => {
+      state.debugAddDust(50);
+      controls.onChange();
+    }, '10px');
+    btn('기본', scene, x0 + 124, y, 80, 20, '비법서 지급', () => {
+      state.debugGrantBooks();
+      controls.onChange();
+    }, '10px');
   }
 
   // ── 웨이브: 정지·다음·배속 ──
@@ -152,7 +170,7 @@ export function createDebugPanel(
   // ── 낮밤: guardian·쓰러짐·즉시 성공·실패 (§5.19) ──
   {
     let y = y0;
-    label('낮밤', y - 16, '낮(핵 찾아 돌아오기) · 밤(핵 지키기)');
+    label('낮밤', y - 16, '낮(씨앗 찾아 돌아오기) · 밤(씨앗 지키기)');
     y += 10;
     btn('낮밤', scene, x0 + 40, y, 80, 20, 'guardian HP 0', () => {
       state.debugKillGuardian();

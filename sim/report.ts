@@ -40,10 +40,13 @@ export interface PolicyReport {
     maxAttempts: number;
     /** 보유 영웅: start(삽살·해태) / all(디버그 6명) */
     roster: string;
+    /** 세션 모델 (§5.22-8): "attempts=6,offlineHours=8" / null */
+    session?: string | null;
+    replayPerfect?: boolean;
     /** --set으로 덮어쓴 값 (전체 경로 → 값). 없으면 JSON 그대로 */
     overrides?: Record<string, OverrideValue>;
   };
-  sim: Omit<SimConfig, 'm810Goals' | 'm811Goals'>;
+  sim: Omit<SimConfig, 'm810Goals' | 'm811Goals' | 'm812Goals'>;
   summary: Record<string, Summary>;
   /** 시도 상한 안 완성률 */
   completedRate: number;
@@ -111,6 +114,16 @@ export const METRICS: { key: string; label: string; get: (r: RunResult) => numbe
   { key: 'defenseLength', label: '밤 길이(초)', get: (r) => median(r.defenseLengths) },
   { key: 'kills', label: '처치 수', get: (r) => r.kills },
   { key: 'sunk', label: '거점 도달 (밤)', get: (r) => r.sunk },
+  // §5.22-8 성장
+  { key: 'sessions', label: '세션 수', get: (r) => r.sessions },
+  { key: 'inkTime', label: '잉크 획득 (시간)', get: (r) => r.inkTime },
+  { key: 'inkReward', label: '잉크 획득 (보상)', get: (r) => r.inkReward },
+  { key: 'inkSpent', label: '잉크 사용 (붓기)', get: (r) => r.inkSpent },
+  { key: 'dustEarned', label: '별가루 획득', get: (r) => r.dustEarned },
+  { key: 'promotions', label: '진급 횟수', get: (r) => r.promotions },
+  { key: 'returnShare', label: '낮 실패 중 돌아오는 길 비율', get: (r) => { const d = r.results.dayTime + r.results.dayFall + r.results.returnTime; return d ? r.results.returnTime / d : null; } },
+  { key: 'perfectPages', label: '흠집 없음 장 수 (다시 읽기 뒤)', get: (r) => r.perfectPages },
+  { key: 'booksOwned', label: '비법서 보유', get: (r) => r.books.length },
   // §5.20-13 조각이 생기는 길
   { key: 'gridFullRatio', label: '그리드 가득 참 비율 (전투 시간)', get: (r) => r.gridFullRatio },
   { key: 'piecesDiscarded', label: '버려진 조각 수', get: (r) => r.piecesDiscarded },
@@ -197,7 +210,7 @@ export function buildReport(policy: string, runs: RunResult[], options: PolicyRe
   for (const v of hp) buckets[HP_BUCKETS.filter((b) => v > b).length] += 1;
   const done = runs.filter((r) => r.completed);
 
-  const { m810Goals: _g10, m811Goals: _g11, ...sim } = cfg;
+  const { m810Goals: _g10, m811Goals: _g11, m812Goals: _g12, ...sim } = cfg;
   return {
     version: 3,
     policy,
@@ -277,7 +290,7 @@ export function formatReport(r: PolicyReport): string {
   const ov = overridesLine(r);
   const lines = [
     ...(ov ? [ov] : []),
-    `■ ${policyLabel(r)}  (시드 ${o.seeds}, 그리드 ${o.grid}, 시도 상한 ${o.maxAttempts}, 영웅 ${o.roster})`,
+    `■ ${policyLabel(r)}  (시드 ${o.seeds}, 그리드 ${o.grid}, 시도 상한 ${o.maxAttempts}, 영웅 ${o.roster}${o.session ? `, 세션 ${o.session}` : ''}${o.replayPerfect ? ', 다시 읽기 10장' : ''})`,
     table(
       ['지표', '평균', '중앙값', 'p10', 'p90', 'n'],
       METRICS.map((m) => {
@@ -319,14 +332,29 @@ export function formatHeroes(r: PolicyReport): string {
   return [
     `편성 (첫 시드): 공격대 ${f ? team(f.offense) : '—'} / 수비대 ${f ? team(f.defense) : '—'} · 인연 켜진 판 ${pctOf(r.bondOnRate)} (${Object.entries(r.bondRates).map(([k, v]) => `${k} ${pctOf(v)}`).join(' · ') || '없음'})`,
     `영웅 최종 레벨 (중앙값): ${Object.entries(r.levelMedian).map(([k, v]) => `${k} ${fmt(v, 1)}`).join(' · ')}`,
+    `영웅 최종 ★ (중앙값): ${heroMedian(r, (x) => x.stars)}`,
+    `비법서 해금 (판 비율): ${bookRates(r)} · 흠집 없음 장 수 중앙값 ${fmt(median(r.runs.map((x) => x.perfectPages)), 1)}${r.options.replayPerfect ? ' (다시 읽기 10장 뒤)' : ''}`,
     `스킬 발동 (판당 평균): ${Object.entries(r.skillsPerRun).map(([k, v]) => `${k} ${fmt(v, 1)}`).join(' · ') || '없음'}`,
     `병사 출전 (판당 평균, 체인:단): ${kinds.length ? kinds.map((k) => `${k}단 ${fmt(r.soldiersByKind[k] / n, 2)}`).join(' · ') : '없음'}`,
   ].join('\n');
 }
 
+function heroMedian(r: PolicyReport, pick: (x: RunResult) => Record<string, number>): string {
+  const by: Record<string, number[]> = {};
+  for (const x of r.runs) for (const [k, v] of Object.entries(pick(x))) (by[k] ??= []).push(v);
+  return Object.entries(by).map(([k, v]) => `${k} ${fmt(median(v), 1)}`).join(' · ') || '—';
+}
+
+function bookRates(r: PolicyReport): string {
+  const n = Math.max(1, r.runs.length);
+  const c: Record<string, number> = {};
+  for (const x of r.runs) for (const b of x.books) c[b] = (c[b] ?? 0) + 1;
+  return Object.entries(c).map(([k, v]) => `${k} ${pctOf(v / n)}`).join(' · ') || '없음';
+}
+
 /** 정책 간 비교 표 (중앙값 중심) */
 export function formatComparison(reports: PolicyReport[]): string {
-  const keys = ['attempts', 'maxFailStreak', 'stage', 'dayFails', 'returnTime', 'nightFails', 'coreDrops', 'carryTime', 'coreHpLeft', 'teamSwapsDay', 'teamSwapsNight', 'skills', 'tier5Made', 'specials', 'levelAvg', 'soldierShare', 'gridFullRatio', 'piecesDiscarded'];
+  const keys = ['attempts', 'maxFailStreak', 'stage', 'dayFails', 'returnTime', 'nightFails', 'coreDrops', 'carryTime', 'coreHpLeft', 'sessions', 'levelAvg', 'promotions', 'inkSpent', 'soldierShare', 'returnShare', 'perfectPages'];
   const header = ['정책', '완성%', '완성 시도 p50', ...keys.map((k) => METRICS.find((m) => m.key === k)!.label.trim())];
   const rows = reports.map((r) => [
     policyLabel(r),
@@ -451,6 +479,43 @@ export function checkM810Goals(reports: PolicyReport[], goals: SimConfig['m810Go
       pass: ok,
       detail: roundTrip.map((x) => `${x.policy} ${x.matched}/${x.total}${x.mismatchSeeds.length ? ` (어긋남: ${x.mismatchSeeds.join(',')})` : ''}`).join(' · '),
     });
+  }
+  return out;
+}
+
+/**
+ * §5.22-8 M8.12 진행 목표 (판정 출력만, (b) 튜닝 기준): balanced 총 시도·세션·첫 시도·연속 실패·완성률,
+ * noInk 총 시도 ≥ balanced × 1.3, dayHeavy·nightHeavy 완성률 < balanced, 피해 중 병사 비중, 낮 실패 중 돌아오는 길 비율
+ */
+export function checkM812Goals(reports: PolicyReport[], g: SimConfig['m812Goals']): GoalCheck[] {
+  const out: GoalCheck[] = [];
+  const by = (name: string) => reports.find((r) => r.policy === name && r.options.roster === 'start');
+  const b = by('balanced');
+  const inRange = (v: number | null | undefined, [lo, hi]: number[]) => (v === null || v === undefined || Number.isNaN(v) ? null : v >= lo && v <= hi);
+  if (b) {
+    const att = b.completeAttempts.median;
+    out.push({ id: 'B 시도', label: `balanced: 1-10까지 총 시도 중앙값 ${g.balancedAttempts[0]}~${g.balancedAttempts[1]}`, pass: inRange(att, g.balancedAttempts), detail: `중앙값 ${fmt(att, 1)} (완성한 판 ${b.completeAttempts.n})` });
+    const ses = median(b.runs.filter((x) => x.completed).map((x) => x.sessions));
+    out.push({ id: 'B 세션', label: `balanced: 세션 ${g.balancedSessions[0]}~${g.balancedSessions[1]}개 (완성한 판)`, pass: inRange(ses, g.balancedSessions), detail: `세션 중앙값 ${fmt(ses, 1)}` });
+    const ft = (st: number) => b.stages[st - 1]?.firstTryRate ?? null;
+    out.push({ id: 'B 1-1', label: `balanced: 1-1 첫 시도 성공률 ≥ ${pctOf(g.firstTry11Min)}`, pass: ft(1) === null ? null : ft(1)! >= g.firstTry11Min, detail: `1-1 ${pctOf(ft(1) ?? NaN)}` });
+    out.push({ id: 'B 1-9', label: `balanced: 1-9 첫 시도 성공률 ${pctOf(g.firstTry19[0])}~${pctOf(g.firstTry19[1])}`, pass: inRange(ft(9), g.firstTry19), detail: `1-9 ${pctOf(ft(9) ?? NaN)}` });
+    out.push({ id: 'B 연속실패', label: `balanced: 같은 스테이지 연속 실패 최대 중앙값 ${g.balancedFailStreak[0]}~${g.balancedFailStreak[1]}`, pass: inRange(b.summary.maxFailStreak.median, g.balancedFailStreak), detail: `중앙값 ${fmt(b.summary.maxFailStreak.median, 1)}` });
+    out.push({ id: 'B 완성', label: `balanced: 시도 50 안 완성률 ≥ ${pctOf(g.balancedCompleteMin)}`, pass: b.completedRate >= g.balancedCompleteMin, detail: `완성 ${pctOf(b.completedRate)}` });
+    const sh = b.summary.soldierShare?.median ?? null;
+    out.push({ id: '병사 비중', label: `balanced: 피해 중 병사 비중 ${pctOf(g.soldierShare[0])}~${pctOf(g.soldierShare[1])}`, pass: inRange(sh, g.soldierShare), detail: `중앙값 ${pctOf(sh ?? NaN)}` });
+    const rs = b.summary.returnShare?.median ?? null;
+    out.push({ id: '돌아오는 길', label: `balanced: 낮 실패 중 "돌아오는 길" 비율 ≥ ${pctOf(g.returnShareMin)}`, pass: rs === null ? null : rs >= g.returnShareMin, detail: `중앙값 ${pctOf(rs ?? NaN)}` });
+  }
+  const ni = by('noInk');
+  if (b && ni) {
+    const a = b.summary.attempts.median;
+    const n = ni.summary.attempts.median;
+    out.push({ id: 'noInk', label: `noInk: 총 시도가 balanced보다 ${Math.round((g.noInkAttemptsMult - 1) * 100)}% 이상 많음 (잉크가 의미 있음)`, pass: a > 0 ? n >= a * g.noInkAttemptsMult : null, detail: `noInk ${fmt(n, 1)} vs balanced ${fmt(a, 1)} (완성 ${pctOf(ni.completedRate)} vs ${pctOf(b.completedRate)})` });
+  }
+  for (const name of ['dayHeavy', 'nightHeavy']) {
+    const h = by(name);
+    if (b && h) out.push({ id: name, label: `${name}: 완성률 < balanced (한쪽만 키우면 막힘)`, pass: h.completedRate < b.completedRate, detail: `${name} ${pctOf(h.completedRate)} vs balanced ${pctOf(b.completedRate)}` });
   }
   return out;
 }

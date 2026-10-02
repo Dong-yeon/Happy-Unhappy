@@ -54,7 +54,7 @@ export class AbyssLaneView {
     const hutY = g.y + g.h / 2;
     const book = storyBook(scene, hutX - 10, hutY);
     const hutLabel = text(scene, hutX - 10, hutY + 10, '이야기책', { fontSize: '8px', color: '#5d6a91' }).setOrigin(0.5, 0);
-    const label = text(scene, g.x + g.w * 0.38, g.y + g.h - 4, '낮 · 핵 찾아 돌아오기 →', { fontSize: '9px', color: '#5d6a91' }).setOrigin(0.5, 1);
+    const label = text(scene, g.x + g.w * 0.38, g.y + g.h - 4, '낮 · 이야기 씨앗 찾아 돌아오기 →', { fontSize: '9px', color: '#5d6a91' }).setOrigin(0.5, 1);
     // 핵 (작은 빛나는 마름모)
     const gem = scene.add.rectangle(0, 0, 8, 8, CORE_COLOR).setAngle(45).setStrokeStyle(1, 0xffffff);
     const glow = scene.add.circle(0, 0, 8, CORE_COLOR, 0.25);
@@ -65,7 +65,7 @@ export class AbyssLaneView {
     const frame = scene.add.rectangle(fx, barY, BAR_W, 6, 0x1b1d24).setOrigin(0, 0.5).setStrokeStyle(1, 0x5d6a91);
     this.carryFill = scene.add.rectangle(fx, barY, 0, 6, CORE_COLOR).setOrigin(0, 0.5);
     const cap = text(scene, fx - 4, barY, '이야기책 ←', { fontSize: '8px', color: '#ffe08a' }).setOrigin(1, 0.5);
-    const cap2 = text(scene, fx + BAR_W + 4, barY, '◆ 핵', { fontSize: '8px', color: '#ffe08a' }).setOrigin(0, 0.5);
+    const cap2 = text(scene, fx + BAR_W + 4, barY, '◆ 씨앗', { fontSize: '8px', color: '#ffe08a' }).setOrigin(0, 0.5);
     this.carryFrame = scene.add.container(0, 0, [frame, this.carryFill, cap, cap2]).setVisible(false);
     this.downLabel = text(scene, g.x + 8, g.y + 6, '', { fontSize: '10px', color: '#cfd6ea' }).setVisible(false);
     this.root = scene.add
@@ -127,7 +127,7 @@ export class AbyssLaneView {
     const gd = day ? ex.guardian : { type: sd.guardian, hp: sd.guardianHp, maxHp: sd.guardianHp, boss: sd.boss ?? false };
     const boss = gd.boss;
     const name = enemyName(this.data, gd.type);
-    const label = gd.hp > 0 ? `${boss ? '◆ ' : '▓ '}${name}  ${Math.ceil(gd.hp)}/${Math.ceil(gd.maxHp)}` : '핵을 찾았다';
+    const label = gd.hp > 0 ? `${boss ? '◆ ' : '▓ '}${name}  ${Math.ceil(gd.hp)}/${Math.ceil(gd.maxHp)}` : '이야기 씨앗을 찾았다';
     if (this.wallLabel.text !== label) this.wallLabel.setText(label).setColor(boss ? '#ff9e9e' : '#8796c2');
     if (boss !== this.bossShown) {
       this.bossShown = boss;
@@ -211,7 +211,7 @@ export class AbyssLaneView {
     const x = g.x + g.w / 2;
     const y = g.y + 30;
     const box = this.scene.add.rectangle(0, 0, w, h, 0x2a2312, 0.95).setOrigin(0.5, 0).setStrokeStyle(2, 0xf2c94c);
-    const head = text(this.scene, 0, 6, '◆ 동화의 핵을 찾았다', { fontSize: '9px', color: '#ffd36b' }).setOrigin(0.5, 0);
+    const head = text(this.scene, 0, 6, '◆ 이야기 씨앗을 찾았다', { fontSize: '9px', color: '#ffd36b' }).setOrigin(0.5, 0);
     const nm = text(this.scene, 0, 20, st.coreName, { fontSize: '13px', color: '#ffffff', fontStyle: 'bold' }).setOrigin(0.5, 0);
     const objs: Phaser.GameObjects.GameObject[] = [box, head, nm];
     if (st.coreText) objs.push(text(this.scene, 0, 40, st.coreText, { fontSize: '10px', color: '#ffe08a' }).setOrigin(0.5, 0));

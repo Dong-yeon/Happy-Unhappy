@@ -13,3 +13,29 @@ export function nowIso(): string {
 export function realToday(): string {
   return localDate(new Date());
 }
+
+// ── 잉크 시간 (§5.22-2): 실제 시각 ms + 디버그 시간 앞당김 ("시간 +1시간/+8시간", 새로고침해도 유지) ──
+const OFFSET_KEY = 'hau_debug_clock_offset';
+
+function readOffset(): number {
+  try {
+    const v = Number(globalThis.localStorage?.getItem(OFFSET_KEY) ?? 0);
+    return Number.isFinite(v) ? v : 0;
+  } catch {
+    return 0;
+  }
+}
+
+/** 지금 실제 시각 (ms, 디버그 앞당김 포함) */
+export function nowMs(): number {
+  return Date.now() + readOffset();
+}
+
+/** 디버그: 시계를 hours만큼 앞당긴다 */
+export function debugAdvanceClock(hours: number): void {
+  try {
+    globalThis.localStorage?.setItem(OFFSET_KEY, String(readOffset() + hours * 3_600_000));
+  } catch {
+    /* 저장 못 해도 이번 세션 계산엔 영향 없음 */
+  }
+}

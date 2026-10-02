@@ -1,4 +1,5 @@
-// 봇 정책 (스펙 §8.1, §5.20-10): balanced / dayHeavy / nightHeavy / noMerge / lazy / idle / random (+ roster all 인연 비교용 bondOn·bondOff).
+// 봇 정책 (스펙 §8.1, §5.20-10, §5.22-8): balanced / dayHeavy / nightHeavy / noInk / noStar / idle / random
+//   (+ noMerge·lazy, roster all 인연 비교용 bondOn·bondOff). dayHeavy·nightHeavy = 성장 자원(잉크·별가루)을 한쪽에 몰기 (M8.12).
 // 먹이기 정책(feedRatio·noFeed·dayOnly·nightOnly·hoarder)은 먹이기 삭제로 없어졌다.
 // §5.20-13: 조각 생성 버튼이 없어져(저절로 + 처치 드롭) 정책의 손은 머지·놓아주기뿐. noMerge는 idle과 사실상 같다 (가득이면 놓아주기만).
 import type { GameState } from '../../src/core/game';
@@ -56,12 +57,13 @@ function tidy(state: GameState): Action | null {
   return null;
 }
 
-/** 아무것도 안 함: 방치 시 최악의 흐름 */
-const idle: Policy = { name: 'idle', decide: () => null };
+/** 아무것도 안 함: 방치 시 최악의 흐름 (머지·잉크·진급 모두 안 함) */
+const idle: Policy = { name: 'idle', grow: 'none', promote: false, decide: () => null };
 
 /** 가능한 행동 종류 중 무작위 → 그 안에서 무작위 대상. 하한선 */
 const random: Policy = {
   name: 'random',
+  grow: 'random',
   decide({ state, rng }) {
     const cells = state.grid.cells;
     const filled = cells.flatMap((c, i) => (c ? [i] : []));
@@ -79,10 +81,12 @@ const random: Policy = {
 };
 
 /** 머지를 미루지 않는다 (전투 중 머지 → 버프·병사·스킬 게이지) */
-function makeMerger(name: string, formation?: (s: GameState) => Formation): Policy {
+function makeMerger(name: string, formation?: (s: GameState) => Formation, grow: Policy['grow'] = 'alternate', promote = true): Policy {
   return {
     name,
     formation,
+    grow,
+    promote,
     decide(ctx: PolicyContext) {
       const { state } = ctx;
       return bestMerge(state) ?? tidy(state);
@@ -113,16 +117,21 @@ const lazy: Policy = {
 
 export const POLICIES: Record<string, Policy> = {
   balanced: makeMerger('balanced', alternateFormation),
-  dayHeavy: makeMerger('dayHeavy', (s) => heavyFormation(s, 'offense')),
-  nightHeavy: makeMerger('nightHeavy', (s) => heavyFormation(s, 'defense')),
-  noMerge,
-  lazy,
+  dayHeavy: makeMerger('dayHeavy', alternateFormation, 'offense'),
+  nightHeavy: makeMerger('nightHeavy', alternateFormation, 'defense'),
+  noInk: makeMerger('noInk', alternateFormation, 'none'),
+  noStar: makeMerger('noStar', alternateFormation, 'alternate', false),
   idle,
   random,
 };
 
 /** roster all 인연 비교용 (전 정책 목록에는 넣지 않음, --policy bondOn,bondOff) */
 export const EXTRA_POLICIES: Record<string, Policy> = {
+  noMerge,
+  lazy,
+  /** M8.11 편성 몰기 (보유 영웅을 한쪽 팀에) */
+  dayHeavyTeam: makeMerger('dayHeavyTeam', (s) => heavyFormation(s, 'offense')),
+  nightHeavyTeam: makeMerger('nightHeavyTeam', (s) => heavyFormation(s, 'defense')),
   bondOn: makeMerger('bondOn', bondOnFormation),
   bondOff: makeMerger('bondOff', bondOffFormation),
 };
