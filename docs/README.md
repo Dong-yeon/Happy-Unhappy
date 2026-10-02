@@ -14,3 +14,4 @@
 - 기획 결정이 바뀌면 `decision-log.md`에 항목을 추가하고, `worldview.md`를 갱신한다.
 - 구현 스펙은 `02-spec/`에만 둔다. 스펙과 세계관이 충돌하면 세계관(결정 기록)이 우선이며, 스펙을 개정한다.
 - 루트의 `CLAUDE.md`는 Claude Code가 읽는 구현 규칙이라 루트에 둔다.
+- `01-planning/references/merge-games.md` — 참고 게임: 머지형·조합법 (M8.10 설계 참고)
