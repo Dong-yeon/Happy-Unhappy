@@ -7,7 +7,7 @@ import { WILDCARD } from '../src/core/grid';
 import { mulberry32 } from '../src/core/rng';
 import { serializeGame } from '../src/core/save';
 import { MERGE_RADIUS, WELL, WELL_TOKEN_R, gameGeometry, wellDistance } from '../src/scenes/layout';
-import { ATTRACT_RANGE, Pond } from '../src/scenes/pond';
+import { ATTRACT_RANGE, POND, Pond } from '../src/scenes/pond';
 
 const data = structuredClone(rawGameData) as unknown as GameData;
 const MAX = data.balance.grid.maxTier;
@@ -56,7 +56,7 @@ describe('헤엄 (§5.21-2)', () => {
     const list = [...pond.fish.values()];
     for (const f of list) {
       expect(wellDistance(f.x, f.y)).toBeLessThanOrEqual(-WELL_TOKEN_R + 0.5);
-      expect(Math.hypot(f.vx, f.vy)).toBeLessThanOrEqual(24 + 1e-9);
+      expect(Math.hypot(f.vx, f.vy)).toBeLessThanOrEqual(POND.speedCap + 1e-9);
     }
     for (let i = 0; i < list.length; i++)
       for (let j = i + 1; j < list.length; j++) expect(Math.hypot(list[i].x - list[j].x, list[i].y - list[j].y)).toBeGreaterThan(WELL_TOKEN_R * 1.6);
@@ -71,9 +71,10 @@ describe('헤엄 (§5.21-2)', () => {
     const pond = new Pond(mulberry32(1));
     pond.sync(g.grid);
     const [fa, fb, fc, fw] = [a, b, c, w].map((id) => pond.fish.get(id)!);
-    expect(pond.attraction(fa, fb, MAX)).toBe(4);
+    expect(pond.attraction(fa, fb, MAX)).toBe(POND.attract);
     expect(pond.attraction(fa, fc, MAX)).toBe(0);
-    expect(pond.attraction(fw, fc, MAX)).toBe(2);
+    expect(pond.attraction(fw, fc, MAX)).toBe(POND.wildAttract);
+    expect(POND.wildAttract).toBeLessThan(POND.attract);
     expect(ATTRACT_RANGE).toBe(120);
     // 헤엄 없이 끌림만 보려고 속도 0으로 두고 짧게: 같은 조각 쌍은 가까워진다
     place(pond, a, CX - 50, CY);
@@ -109,7 +110,9 @@ describe('손가락 (§5.21-3)', () => {
     const id = pond.press(grab.x, grab.y);
     expect(id).toBe(grab.id);
     expect(pond.frozen).toBe(true);
-    const others = () => [...pond.fish.values()].filter((f) => f.id !== id).map((f) => [f.x, f.y]);
+    // 끄는 조각 곁(2r + avoidRadius 안)의 다른 조각만 살짝 비켜나고, 나머지는 그대로 정지
+    const farIds = [...pond.fish.values()].filter((f) => f.id !== id && Math.hypot(f.x - CX, f.y - CY) > WELL_TOKEN_R * 2 + POND.avoidRadius + 8).map((f) => f.id);
+    const others = () => farIds.map((fid) => [pond.fish.get(fid)!.x, pond.fish.get(fid)!.y]);
     const before = others();
     pond.moveTo(CX, CY);
     steps(pond, 3);
@@ -229,5 +232,61 @@ describe('손가락 (§5.21-3)', () => {
     expect(res.removed.map((f) => f.id)).toEqual([a]);
     expect(res.added.map((f) => f.id)).toEqual([c]);
     expect(pond.fish.get(b)).toMatchObject({ cell: 9, x: CX, y: CY });
+  });
+});
+
+describe('헤엄 성격·물살 (§5.24 우물 헤엄)', () => {
+  it('단계별 성격: 1단계는 빠르고 잘 돌고, 5단계는 느리고 묵직하다 (속도 범위 안)', () => {
+    const g = game();
+    const ids = [1, 2, 3, 4, 5].map((t, i) => put(g, i, 'bone', t));
+    const pond = new Pond(mulberry32(3));
+    pond.sync(g.grid);
+    const fs = ids.map((id) => pond.fish.get(id)!);
+    expect(fs[0].speed).toBeGreaterThan(fs[4].speed);
+    expect(fs[0].agility).toBeGreaterThan(fs[4].agility);
+    for (const f of fs) {
+      expect(f.speed).toBeGreaterThanOrEqual(POND.speedMin * 0.85 - 1e-9);
+      expect(f.speed).toBeLessThanOrEqual(POND.speedMax * 1.15 + 1e-9);
+    }
+  });
+
+  it('물살은 부드럽고 세기는 flowStrength 이하, 0이면 없음', () => {
+    const pond = new Pond(mulberry32(1));
+    const a = pond.flow(100, 500);
+    const b = pond.flow(101, 500);
+    expect(Math.hypot(a.x, a.y)).toBeLessThanOrEqual(POND.flowStrength + 1e-9);
+    expect(Math.hypot(a.x - b.x, a.y - b.y)).toBeLessThan(0.5); // 1px 옆은 거의 같은 흐름
+    const keep = POND.flowStrength;
+    POND.flowStrength = 0;
+    const z = pond.flow(100, 500);
+    expect(Math.hypot(z.x, z.y)).toBe(0);
+    POND.flowStrength = keep;
+  });
+
+  it('머지 물결: 반경 안 조각은 바깥으로 밀리고, 반경 밖은 그대로', () => {
+    const g = game();
+    const near = put(g, 0, 'bone', 1);
+    const far = put(g, 1, 'bell', 1);
+    const pond = new Pond(mulberry32(1));
+    pond.sync(g.grid);
+    place(pond, near, CX + 30, CY);
+    place(pond, far, CX + POND.rippleRadius + 20, CY);
+    pond.ripple(CX, CY);
+    expect(pond.fish.get(near)!.vx).toBeGreaterThan(0);
+    expect(pond.fish.get(far)!.vx).toBe(0);
+  });
+
+  it('끈적한 다리 후보: 같은 체인·단계가 거리 안이면, 다른 단계·와일드카드는 아님', () => {
+    const g = game();
+    const a = put(g, 0, 'bone', 2);
+    const b = put(g, 1, 'bone', 2);
+    const c = put(g, 2, 'bone', 3);
+    const pond = new Pond(mulberry32(1));
+    pond.sync(g.grid);
+    place(pond, a, CX, CY);
+    place(pond, b, CX + WELL_TOKEN_R * 2.4, CY);
+    place(pond, c, CX - WELL_TOKEN_R * 2.2, CY);
+    const pairs = pond.bridges(MAX, WELL_TOKEN_R * 2.6).map(([x, y]) => [x.id, y.id].sort());
+    expect(pairs).toEqual([[a, b].sort()]);
   });
 });

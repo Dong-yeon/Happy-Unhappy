@@ -11,6 +11,7 @@ import { formatSummary, summarizeMetrics } from '../metrics/model';
 import { debugAdvanceClock, nowMs, realToday } from '../platform/clock';
 import { storageStatus } from '../platform/storage';
 import { REGION } from '../scenes/layout';
+import { POND } from '../scenes/pond';
 import type { SaveSession } from '../scenes/session';
 import { Button, text } from '../scenes/ui';
 import { copyOrShow, exportFileName } from './exportModal';
@@ -21,7 +22,7 @@ const SPEEDS = [1, 3, 10] as const;
 const PANEL_DEPTH = 100;
 const PANEL_BG = 0x111318;
 const PANEL_ALPHA = 0.92;
-const TABS = ['기본', '웨이브', '낮밤', '스테이지', '저장', 'metrics'] as const;
+const TABS = ['기본', '웨이브', '낮밤', '스테이지', '저장', 'metrics', '헤엄'] as const;
 /** 탭 버튼 한 줄에 4개 (두 줄) */
 const TABS_PER_ROW = 4;
 const ROWS = 7;
@@ -260,6 +261,37 @@ export function createDebugPanel(
         now.setText(`1-${state.stage} · 이 스테이지 ${tries}번 · 통산 ${state.attempt}번 · 영웅 ${state.owned.length}명${flags}`);
       },
     });
+  }
+
+  // ── 헤엄 (우물 물살·말랑함 튜닝, 화면 전용): [−][+]로 POND 값을 바로 바꾸고 [값 복사] ──
+  {
+    let y = y0;
+    label('헤엄', y - 16, '우물 헤엄 (바꾸면 즉시 반영, 화면 전용)');
+    type Key = keyof typeof POND;
+    const rows: { name: string; keys: Key[]; step: number; min: number }[] = [
+      { name: '물살 세기', keys: ['flowStrength'], step: 1, min: 0 },
+      { name: '속도 범위', keys: ['speedMin', 'speedMax'], step: 2, min: 0 },
+      { name: '돌진 빈도', keys: ['dashRate'], step: 0.02, min: 0 },
+      { name: '정지 빈도', keys: ['restRate'], step: 0.02, min: 0 },
+      { name: '끌림 세기', keys: ['attract', 'autoAttract'], step: 2, min: 0 },
+      { name: '말랑함', keys: ['squash'], step: 0.25, min: 0 },
+    ];
+    const fmt = (v: number) => (Math.abs(v) < 1 ? v.toFixed(2) : String(Math.round(v * 10) / 10));
+    for (const r of rows) {
+      const val = label('헤엄', y - 4, '');
+      const show = () => val.setText(`${r.name}  ${r.keys.map((k) => fmt(POND[k])).join(' ~ ')}`);
+      show();
+      const bump = (dir: number) => {
+        for (const k of r.keys) POND[k] = Math.max(r.min, Math.round((POND[k] + dir * r.step) * 1000) / 1000);
+        show();
+      };
+      btn('헤엄', scene, x0 + 128, y + 2, 26, 18, '−', () => bump(-1), '11px');
+      btn('헤엄', scene, x0 + 156, y + 2, 26, 18, '+', () => bump(1), '11px');
+      y += 22;
+    }
+    btn('헤엄', scene, x0 + 40, y + 6, 80, 20, '값 복사', () => {
+      void copyOrShow(JSON.stringify(POND, null, 2), 'pond.json');
+    }, '10px');
   }
 
   // ── 저장: 초기화·JSON ──

@@ -7,28 +7,58 @@
 import { isWildcard, resolveDrop, type DropKind, type Grid, type Piece } from '../core/grid';
 import { MERGE_RADIUS, WELL, WELL_TOKEN_R, wellDistance } from './layout';
 
-/** 헤엄 속도 범위 (px/s) */
-const SPEED_MIN = 8;
-const SPEED_MAX = 14;
-/** 방향을 살짝 바꾸는 주기 (초) · 한 번에 바꾸는 최대 각 (rad) */
-const TURN_MIN = 2;
-const TURN_MAX = 4;
-const TURN_ANGLE = 0.6;
-/** 원하는 속도로 맞춰 가는 빠르기 (1/s) · 최고 속도 (끌림이 더해져도) */
-const STEER = 1.5;
-const SPEED_CAP = 24;
-/** 같은 조각끼리 끌림 (§5.21-4): 거리 안 · 가속 (px/s²). 와일드카드는 모든 조각에 약하게 */
+/**
+ * 헤엄 튜닝 값 (화면 연출, DBG 패널 슬라이더로 바로 바꿀 수 있게 한 객체에 모음 — 게임 밸런스 수치 아님).
+ * 물살(위치·시간 사인 합 + 20~40초마다 천천히 바뀌는 큰 소용돌이) + 곡선 회전(각속도 wander) + 단계별 성격 + 돌진·떠 있음 박자.
+ */
+export const POND = {
+  /** 물살 세기 (px/s, 조각 속도에 더함) */
+  flowStrength: 6,
+  /** 물살 무늬 크기 (공간 주파수, 1/px) */
+  flowScale: 0.011,
+  /** 큰 소용돌이 중심·방향이 바뀌는 주기 (초) */
+  vortexMin: 20,
+  vortexMax: 40,
+  /** 헤엄 속도: 5단계(묵직함) ~ 1단계(빠름), 최고 속도 */
+  speedMin: 4,
+  speedMax: 22,
+  speedCap: 30,
+  /** 각속도 상한 (rad/s): 1단계 자주 돎 ~ 5단계 */
+  turnFast: 2.4,
+  turnSlow: 0.6,
+  /** 원하는 속도로 맞춰 가는 빠르기 (1/s) */
+  steer: 1.6,
+  /** 짧은 돌진: 초당 확률 · 배율 · 길이(초). 끝나면 미끄러지며 감속 */
+  dashRate: 0.08,
+  dashMult: 1.6,
+  dashTime: 0.4,
+  /** 떠 있음(거의 정지): 초당 확률 · 길이(초) 범위 */
+  restRate: 0.05,
+  restMin: 1,
+  restMax: 2,
+  /** 같은 조각 끌림 가속 (px/s², 물살보다 강하게) · 와일드카드 · 자동 뭉침 단계 */
+  attract: 12,
+  wildAttract: 5,
+  autoAttract: 22,
+  /** 머지 물결: 반경 · 바깥으로 미는 세기 (px/s) */
+  rippleRadius: 60,
+  rippleKick: 40,
+  /** 끄는 조각 주변에서 비켜나는 반경 (px) */
+  avoidRadius: 30,
+  /** 말랑함 세기 (squash & stretch 배율, D-073) */
+  squash: 1,
+};
+
+/** 같은 조각끼리 끌림 (§5.21-4) 거리 */
 export const ATTRACT_RANGE = 120;
-export const ATTRACT_ACCEL = 4;
-export const WILD_ACCEL = 2;
-/** 자동 뭉침 단계(autoMergeMaxTier 이하) 같은 조각끼리는 더 세게 끌림 (D-070) — 판정은 core, 이건 보기만 */
-export const AUTO_ATTRACT_ACCEL = 14;
 /** 조각끼리 밀어냄: 이 간격까지 겹치지 않게 */
 const GAP = 2;
 /** 가장자리: 이만큼 안쪽부터 부드럽게 안으로 밀고, 닿으면 튕김 (감쇠) */
 const EDGE_SOFT = 12;
 const EDGE_PUSH = 30;
 const BOUNCE = 0.8;
+/** 떠 있을 때 속도 배율 */
+const REST_MULT = 0.08;
 
 export type Rng = () => number;
 
@@ -45,9 +75,18 @@ export interface Fish {
   vx: number;
   vy: number;
   heading: number;
+  /** 원하는 헤엄 속도 (단계별 성격, px/s). 0이면 헤엄치지 않음 (물살·끌림만) */
   speed: number;
-  /** 다음 방향 바꿈까지 (초) */
-  turnIn: number;
+  /** 각속도 (rad/s, wander로 조금씩 바뀜 → S자) · 이 조각의 최대 각속도 */
+  angVel: number;
+  agility: number;
+  /** 박자: 돌진 남은 초 · 떠 있음 남은 초 · 이 조각의 박자 배율 (조각마다 다름) */
+  dash: number;
+  rest: number;
+  tempo: number;
+  /** 그림 출렁임 주기(초)·위상 (표시 전용) */
+  wobblePeriod: number;
+  wobblePhase: number;
   /** 이 시간(초) 동안은 제자리 (날아오는 중) */
   hold: number;
 }
@@ -78,6 +117,10 @@ export class Pond {
   /** 끄는 조각 (piece.id) */
   dragging: number | null = null;
   readonly r = WELL_TOKEN_R;
+  /** 헤엄 누적 시간 (물살 시간 축) */
+  private time = 0;
+  /** 큰 소용돌이: 지금 중심·방향 → 목표로 천천히 */
+  private readonly vortex = { x: WELL.x + WELL.w / 2, y: WELL.y + WELL.h / 2, dir: 1, tx: WELL.x + WELL.w / 2, ty: WELL.y + WELL.h / 2, tdir: 1, left: 0 };
 
   constructor(
     private readonly rng: Rng = Math.random,
@@ -101,8 +144,10 @@ export class Pond {
       const tier = p.tier;
       if (f) {
         if (f.cell !== cell || f.tier !== tier || f.chain !== p.chain) {
-          if (f.tier !== tier || f.chain !== p.chain) changed.push(f);
+          const grew = f.tier !== tier || f.chain !== p.chain;
+          if (grew) changed.push(f);
           Object.assign(f, { cell, tier, chain: p.chain, wild: isWildcard(p) });
+          if (grew) this.personality(f);
         }
         return;
       }
@@ -123,8 +168,7 @@ export class Pond {
 
   private makeFish(p: Piece, cell: number, x: number, y: number): Fish {
     const heading = this.rng() * Math.PI * 2;
-    const speed = SPEED_MIN + (SPEED_MAX - SPEED_MIN) * this.rng();
-    return {
+    const f: Fish = {
       id: p.id,
       cell,
       chain: p.chain,
@@ -132,13 +176,31 @@ export class Pond {
       wild: isWildcard(p),
       x,
       y,
-      vx: Math.cos(heading) * speed,
-      vy: Math.sin(heading) * speed,
+      vx: 0,
+      vy: 0,
       heading,
-      speed,
-      turnIn: TURN_MIN + (TURN_MAX - TURN_MIN) * this.rng(),
+      speed: 0,
+      angVel: 0,
+      agility: 0,
+      dash: 0,
+      rest: 0,
+      tempo: 0.7 + 0.6 * this.rng(),
+      wobblePeriod: 1.5 + this.rng(),
+      wobblePhase: this.rng() * Math.PI * 2,
       hold: 0,
     };
+    this.personality(f);
+    f.vx = Math.cos(heading) * f.speed;
+    f.vy = Math.sin(heading) * f.speed;
+    return f;
+  }
+
+  /** 단계별 성격: 1단계 빠르고 자주 돎 ~ 5단계 느리고 묵직함 (±15% 개체차) */
+  private personality(f: Fish): void {
+    const t = f.wild ? 0.5 : Math.max(0, Math.min(1, (f.tier - 1) / 4));
+    const jitter = 0.85 + 0.3 * this.rng();
+    f.speed = (POND.speedMax + (POND.speedMin - POND.speedMax) * t) * jitter;
+    f.agility = POND.turnFast + (POND.turnSlow - POND.turnFast) * t;
   }
 
   /** 우물 안 무작위 점 (다른 조각과 덜 겹치게 몇 번 다시 뽑음) */
@@ -174,17 +236,69 @@ export class Pond {
 
   // ── 헤엄 ──
 
-  /** 두 조각이 서로 끌리는 가속 (0이면 없음): 같은 체인·단계(최고 단계 아님) 4 / 와일드카드 ↔ 아무 조각 2 */
+  /** 두 조각이 서로 끌리는 가속 (0이면 없음): 같은 체인·단계(최고 단계 아님) / 와일드카드 ↔ 아무 조각 (약하게) / 자동 뭉침 단계 (세게) */
   attraction(a: Fish, b: Fish, maxTier: number, autoMax = 0): number {
     if (a.wild && b.wild) return 0;
-    if (a.wild || b.wild) return (a.wild ? b.tier : a.tier) < maxTier ? WILD_ACCEL : 0;
+    if (a.wild || b.wild) return (a.wild ? b.tier : a.tier) < maxTier ? POND.wildAttract : 0;
     if (a.chain !== b.chain || a.tier !== b.tier || a.tier >= maxTier) return 0;
-    return a.tier <= autoMax ? AUTO_ATTRACT_ACCEL : ATTRACT_ACCEL;
+    return a.tier <= autoMax ? POND.autoAttract : POND.attract;
+  }
+
+  /** 물살 (px/s): 사인 몇 개의 합(부드러운 흐름) + 천천히 자리·방향이 바뀌는 큰 소용돌이. 위치·시간만의 함수 */
+  flow(x: number, y: number): { x: number; y: number } {
+    const k = POND.flowScale;
+    const t = this.time;
+    let fx = Math.sin(y * k + t * 0.21) + 0.6 * Math.sin((x + y) * k * 0.7 - t * 0.17) + 0.35 * Math.cos(y * k * 1.9 + x * k * 0.4 + t * 0.29);
+    let fy = Math.cos(x * k * 1.1 - t * 0.19) + 0.6 * Math.sin((x - y) * k * 0.8 + t * 0.23) + 0.35 * Math.sin(x * k * 1.7 - y * k * 0.5 - t * 0.31);
+    // 큰 소용돌이: 중심 둘레로 도는 흐름 (방향·중심은 vortex 상태가 천천히 보간)
+    const v = this.vortex;
+    const dx = x - v.x;
+    const dy = y - v.y;
+    const d = Math.hypot(dx, dy) || 1;
+    const fall = Math.exp(-d / 120);
+    fx += (-dy / d) * v.dir * 1.2 * fall;
+    fy += (dx / d) * v.dir * 1.2 * fall;
+    const m = Math.hypot(fx, fy) || 1;
+    const s = POND.flowStrength * Math.min(1, m / 2);
+    return { x: (fx / m) * s, y: (fy / m) * s };
+  }
+
+  /** 소용돌이: 20~40초마다 새 목표(중심·방향)로, 그 사이는 천천히 보간 */
+  private stepVortex(dt: number): void {
+    const v = this.vortex;
+    v.left -= dt;
+    if (v.left <= 0) {
+      v.left = POND.vortexMin + (POND.vortexMax - POND.vortexMin) * this.rng();
+      const p = this.randomPoint();
+      v.tx = p.x;
+      v.ty = p.y;
+      v.tdir = this.rng() < 0.5 ? -1 : 1;
+    }
+    const k = Math.min(1, dt * 0.15);
+    v.x += (v.tx - v.x) * k;
+    v.y += (v.ty - v.y) * k;
+    v.dir += (v.tdir - v.dir) * k;
+  }
+
+  /** 머지 물결: (x, y) 반경 rippleRadius 안 조각을 바깥으로 살짝 (가까울수록 세게, 감쇠는 steer가) */
+  ripple(x: number, y: number): void {
+    for (const f of this.fish.values()) {
+      if (f.id === this.dragging) continue;
+      const dx = f.x - x;
+      const dy = f.y - y;
+      const d = Math.hypot(dx, dy);
+      if (d < 1 || d > POND.rippleRadius) continue;
+      const kick = POND.rippleKick * (1 - d / POND.rippleRadius);
+      f.vx += (dx / d) * kick;
+      f.vy += (dy / d) * kick;
+    }
   }
 
   /** 한 프레임. 누르는 동안(frozen)은 아무것도 움직이지 않는다. core 상태는 읽지도 쓰지도 않는다 */
   step(dt: number, maxTier: number, autoMax = 0): void {
     if (this.frozen || dt <= 0) return;
+    this.time += dt;
+    this.stepVortex(dt);
     const list = [...this.fish.values()];
     const r = this.r;
     for (const f of list) {
@@ -193,17 +307,21 @@ export class Pond {
         f.hold = Math.max(0, f.hold - dt);
         continue;
       }
-      // 방향을 가끔 살짝
-      f.turnIn -= dt;
-      if (f.turnIn <= 0) {
-        f.heading += (this.rng() * 2 - 1) * TURN_ANGLE;
-        f.speed = SPEED_MIN + (SPEED_MAX - SPEED_MIN) * this.rng();
-        f.turnIn = TURN_MIN + (TURN_MAX - TURN_MIN) * this.rng();
-      }
-      const k = Math.min(1, STEER * dt);
-      f.vx += (Math.cos(f.heading) * f.speed - f.vx) * k;
-      f.vy += (Math.sin(f.heading) * f.speed - f.vy) * k;
-      // 같은 조각끼리 약한 끌림
+      // 박자: 가끔 짧은 돌진(→ 미끄러지며 감속), 가끔 1~2초 떠 있음. 조각마다 tempo가 달라 엇갈린다
+      if (f.dash > 0) f.dash = Math.max(0, f.dash - dt);
+      else if (f.rest > 0) f.rest = Math.max(0, f.rest - dt);
+      else if (this.rng() < POND.dashRate * f.tempo * dt) f.dash = POND.dashTime;
+      else if (this.rng() < POND.restRate * f.tempo * dt) f.rest = POND.restMin + (POND.restMax - POND.restMin) * this.rng();
+      // 곡선 회전: 각속도가 조금씩 랜덤하게 바뀜 (S자)
+      f.angVel += (this.rng() * 2 - 1) * f.agility * 1.8 * dt;
+      f.angVel = Math.max(-f.agility, Math.min(f.agility, f.angVel * (1 - 0.4 * dt)));
+      f.heading += f.angVel * dt;
+      const want = f.speed * (f.dash > 0 ? POND.dashMult : f.rest > 0 ? REST_MULT : 1);
+      // 돌진은 바로 붙고, 끝나면 steer로 미끄러지며 감속
+      const k = Math.min(1, (f.dash > 0 ? POND.steer * 4 : POND.steer) * dt);
+      f.vx += (Math.cos(f.heading) * want - f.vx) * k;
+      f.vy += (Math.sin(f.heading) * want - f.vy) * k;
+      // 같은 조각끼리 끌림 (물살보다 세게 — 짝이 결국 만나도록)
       for (const g of list) {
         if (g === f || g.hold > 0) continue;
         const a = this.attraction(f, g, maxTier, autoMax);
@@ -215,24 +333,45 @@ export class Pond {
         f.vx += (dx / d) * a * dt;
         f.vy += (dy / d) * a * dt;
       }
-      // 가장자리: 부드럽게 안으로
+      // 가장자리: 부드럽게 안으로 (가던 방향도 안쪽으로 서서히 꺾음)
       const n = this.inward(f.x, f.y);
       const dist = wellDistance(f.x, f.y);
       if (dist > -(r + EDGE_SOFT)) {
         const t = Math.min(1, (dist + r + EDGE_SOFT) / EDGE_SOFT);
         f.vx += n.x * EDGE_PUSH * t * dt;
         f.vy += n.y * EDGE_PUSH * t * dt;
+        const inwardAngle = Math.atan2(n.y, n.x);
+        const diff = Math.atan2(Math.sin(inwardAngle - f.heading), Math.cos(inwardAngle - f.heading));
+        f.heading += diff * Math.min(1, 1.5 * t * dt);
       }
       const sp = Math.hypot(f.vx, f.vy);
-      if (sp > SPEED_CAP) {
-        f.vx *= SPEED_CAP / sp;
-        f.vy *= SPEED_CAP / sp;
+      if (sp > POND.speedCap) {
+        f.vx *= POND.speedCap / sp;
+        f.vy *= POND.speedCap / sp;
       }
-      f.x += f.vx * dt;
-      f.y += f.vy * dt;
+      // 물살은 위치에 더한다 (조각 속도와 별개)
+      const fl = this.flow(f.x, f.y);
+      f.x += (f.vx + fl.x) * dt;
+      f.y += (f.vy + fl.y) * dt;
       this.bounce(f);
     }
     this.separate(list);
+  }
+
+  /** 끈적한 다리 후보 (D-073): 같은 체인·단계(최고 아님) 쌍 중 중심 거리 range 안 — 화면이 그 사이에 다리를 그린다 */
+  bridges(maxTier: number, range: number): [Fish, Fish][] {
+    const list = [...this.fish.values()];
+    const out: [Fish, Fish][] = [];
+    for (let i = 0; i < list.length; i++) {
+      const a = list[i];
+      if (a.wild || a.tier >= maxTier) continue;
+      for (let j = i + 1; j < list.length; j++) {
+        const b = list[j];
+        if (b.wild || b.chain !== a.chain || b.tier !== a.tier) continue;
+        if (Math.hypot(a.x - b.x, a.y - b.y) <= range) out.push([a, b]);
+      }
+    }
+    return out;
   }
 
   /** 우물 안쪽 방향 (단위 벡터, 부호 거리의 기울기 반대) */
@@ -316,6 +455,20 @@ export class Pond {
     if (!f) return;
     f.x = x;
     f.y = y;
+    // 누르는 동안 헤엄은 멈춰 있지만, 끄는 조각 곁(avoidRadius 안)의 조각은 살짝 비켜난다 (위치만)
+    const min = this.r * 2 + POND.avoidRadius;
+    for (const g of this.fish.values()) {
+      // 합칠 수 있는 짝(같은 체인·단계, 와일드카드)은 비키지 않는다 — 놓을 자리를 피해 도망가지 않게
+      if (g === f || f.wild || g.wild || (g.chain === f.chain && g.tier === f.tier)) continue;
+      const dx = g.x - x;
+      const dy = g.y - y;
+      const d = Math.hypot(dx, dy) || 0.01;
+      if (d >= min) continue;
+      const push = Math.min(3, (min - d) * 0.25);
+      g.x += (dx / d) * push;
+      g.y += (dy / d) * push;
+      this.bounce(g);
+    }
   }
 
   /** 손가락 아래(반지름 안) 가장 가까운 조각 */

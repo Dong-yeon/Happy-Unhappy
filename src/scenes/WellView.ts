@@ -7,7 +7,8 @@ import type { CoreEvent, GameState } from '../core/game';
 import { isWildcard, type Piece } from '../core/grid';
 import type { GameData } from '../data/types';
 import { CORE, DRAG_THRESHOLD, HOME, REGION, RELEASE, WELL, inRect, inRelease, progressX, toScreen } from './layout';
-import { Pond, type Fish } from './pond';
+import { POND, Pond, type Fish } from './pond';
+import { mergeFeel } from './sfx';
 import { releaseHoverLabel, type ReleaseHover } from './ReleaseZoneView';
 import { skinOf } from './skin/Skin';
 import { COLOR, text } from './ui';
@@ -41,12 +42,22 @@ const RIPPLE_MS = 300;
 const POP_MS = 260;
 const HOP_MS = 280;
 /** 자동 뭉침: 사라진 조각이 짝에게 빨려 들어가는 시간 (D-070) */
-const ABSORB_MS = 200;
+const ABSORB_MS = 150;
 /** 팀 교대 이어받기: 회수 조각이 이야기책으로 빨려 들어가는 시간 (D-072) */
 const HANDOVER_MS = 400;
 /** 연쇄: 단계 사이 간격 (D-073) */
 const CHAIN_STEP_MS = 250;
 const HOP_PX = 10;
+/** 끈적한 다리: 같은 체인·단계 중심 거리 이 배(× r) 안 */
+const BRIDGE_RANGE = 2.6;
+/** 말랑함: 출발 때 진행 방향 늘어남 최대 (1.12 × 0.9) / 닿은 쪽 눌림 / 출렁임 ±3% / 기울기 ±8° */
+const STRETCH_MAX = 0.12;
+const PRESS = 0.05;
+const WOBBLE = 0.03;
+const TILT = (8 * Math.PI) / 180;
+/** 합쳐짐 출렁임 1.25 → 0.9 → 1.0 (0.35초) · 방울 수 */
+const SQUISH_MS = 350;
+const DROPLETS = 7;
 const RELEASE_FLOAT_PX = 36;
 const RELEASE_FLOAT_MS = 350;
 const TAG_OFFSET_Y = -32;
@@ -55,6 +66,11 @@ const MAX_DT = 0.1;
 
 interface View {
   c: Phaser.GameObjects.Container;
+  /** 그림 (말랑함·출렁임·기울기는 여기에만 — c의 위치·크기 트윈과 따로) */
+  inner: Phaser.GameObjects.Container;
+  /** 늘어남(+)·찌그러짐(−) 정도와 지난 프레임 속도 */
+  stretch: number;
+  lastSpeed: number;
   disc: Phaser.GameObjects.Arc;
   label: Phaser.GameObjects.Text;
   /** 톡 튀어 오름 높이 (위치에 더함) */
@@ -77,6 +93,8 @@ export class WellView {
   private readonly chainInitial = new Map<string, string>();
   private readonly tag: Phaser.GameObjects.Text;
   private press: Press | null = null;
+  /** 끈적한 다리 (조각 아래) */
+  private readonly bridgeGfx: Phaser.GameObjects.Graphics;
   /** 이번 프레임에 core가 알린 새 조각: piece.id → 생긴 길 */
   private readonly arrivals = new Map<number, Extract<CoreEvent, { type: 'piece' }>>();
 
@@ -92,6 +110,7 @@ export class WellView {
     }
     // 놓아주기 원을 피해서 헤엄 (원 위에 조각이 숨지 않게)
     this.pond = new Pond(Math.random, [{ x: RELEASE.x, y: RELEASE.y, r: RELEASE.r + 4 }]);
+    this.bridgeGfx = scene.add.graphics().setDepth(DEPTH - 0.5);
     this.tag = text(scene, 0, 0, '', { fontSize: '11px', backgroundColor: '#1b1d24', padding: { x: 4, y: 2 } })
       .setOrigin(0.5)
       .setDepth(30)
@@ -165,10 +184,91 @@ export class WellView {
 
   /** 매 프레임: 헤엄 → 표시 위치 */
   update(dtMs: number): void {
-    this.pond.step(Math.min(MAX_DT, dtMs / 1000), this.state.grid.maxTier, this.state.autoMergeMaxTier);
+    const dt = Math.min(MAX_DT, dtMs / 1000);
+    this.pond.step(dt, this.state.grid.maxTier, this.state.autoMergeMaxTier);
+    const now = this.scene.time.now / 1000;
+    const r = this.pond.r;
+    const list = [...this.pond.fish.values()];
     for (const [id, v] of this.views) {
       const f = this.pond.fish.get(id);
-      if (f) v.c.setPosition(f.x, f.y - v.lift.v);
+      if (!f) continue;
+      v.c.setPosition(f.x, f.y - v.lift.v);
+      this.soften(v, f, list, dt, now, r);
+    }
+    this.drawBridges();
+  }
+
+  /**
+   * 말랑한 손맛 (D-073, 그림만 — 위치·터치 판정은 그대로): 출발하면 진행 방향으로 늘어나고(1.12×0.9) 멈추면 찌그러짐,
+   * 닿은 쪽은 살짝 눌림, 크기 출렁임 ±3%(조각마다 주기 다름), 진행 방향으로 기울기 ±8°
+   */
+  private soften(v: View, f: Fish, list: Fish[], dt: number, now: number, r: number): void {
+    const frozen = this.pond.frozen && f.id !== this.pond.dragging;
+    const sp = Math.hypot(f.vx, f.vy);
+    if (dt > 0 && !frozen) {
+      const accel = (sp - v.lastSpeed) / dt;
+      const want = Math.max(-1, Math.min(1, accel / 40)) * STRETCH_MAX * POND.squash;
+      v.stretch += (want - v.stretch) * Math.min(1, dt * 10);
+      v.lastSpeed = sp;
+    }
+    const cx = sp > 0.5 ? f.vx / sp : 1;
+    const cy = sp > 0.5 ? f.vy / sp : 0;
+    const e = v.stretch;
+    let sx = 1 + e * (cx * cx - cy * cy * 0.85);
+    let sy = 1 + e * (cy * cy - cx * cx * 0.85);
+    // 닿은 쪽 눌림 (가장 가까운 이웃 하나)
+    let nd = Infinity;
+    let nx = 0;
+    let ny = 0;
+    for (const g of list) {
+      if (g === f) continue;
+      const d = Math.hypot(g.x - f.x, g.y - f.y);
+      if (d < nd) {
+        nd = d;
+        nx = (g.x - f.x) / (d || 1);
+        ny = (g.y - f.y) / (d || 1);
+      }
+    }
+    if (nd < r * 2 + 3) {
+      const p = PRESS * POND.squash * (1 - Math.max(0, nd - r * 2) / 3);
+      sx *= 1 - p * nx * nx;
+      sy *= 1 - p * ny * ny;
+    }
+    const wob = 1 + WOBBLE * Math.sin((now / f.wobblePeriod) * Math.PI * 2 + f.wobblePhase);
+    v.inner.setScale(sx * wob, sy * wob);
+    v.inner.setRotation(Math.max(-1, Math.min(1, f.vx / 20)) * TILT);
+  }
+
+  /** 끈적한 다리 (D-073): 같은 체인·단계가 2.6r 안이면 둘 사이 metaball 같은 다리 (가까울수록 굵게, 조각 아래 Graphics) */
+  private drawBridges(): void {
+    const g = this.bridgeGfx;
+    g.clear();
+    const r = this.pond.r;
+    for (const [a, b] of this.pond.bridges(this.state.grid.maxTier, r * BRIDGE_RANGE)) {
+      const dx = b.x - a.x;
+      const dy = b.y - a.y;
+      const d = Math.hypot(dx, dy) || 1;
+      const close = Math.max(0, Math.min(1, 1 - (d - r * 2) / (r * (BRIDGE_RANGE - 2))));
+      if (close <= 0) continue;
+      const ux = dx / d;
+      const uy = dy / d;
+      const px = -uy;
+      const py = ux;
+      const end = r * 0.8;
+      const waist = r * (0.12 + 0.5 * close);
+      const pts: { x: number; y: number }[] = [];
+      const N = 10;
+      for (let i = 0; i <= N; i++) {
+        const t = i / N;
+        const h = waist + (end - waist) * Math.pow(2 * t - 1, 2);
+        pts.push({ x: a.x + dx * t + px * h, y: a.y + dy * t + py * h });
+      }
+      for (let i = N; i >= 0; i--) {
+        const t = i / N;
+        const h = waist + (end - waist) * Math.pow(2 * t - 1, 2);
+        pts.push({ x: a.x + dx * t - px * h, y: a.y + dy * t - py * h });
+      }
+      g.fillStyle(this.chainColor.get(a.chain) ?? 0xcccccc, 0.55 + 0.35 * close).fillPoints(pts, true);
     }
   }
 
@@ -251,8 +351,9 @@ export class WellView {
         stroke: '#1b1d24',
         strokeThickness: 3,
       }).setOrigin(0.5);
-      const c = this.scene.add.container(x, y, [disc, img, label]).setDepth(DEPTH);
-      const v: View = { c, disc, label, lift: { v: 0 } };
+      const inner = this.scene.add.container(0, 0, [disc, img, label]);
+      const c = this.scene.add.container(x, y, [inner]).setDepth(DEPTH);
+      const v: View = { c, inner, stretch: 0, lastSpeed: 0, disc, label, lift: { v: 0 } };
       this.views.set(f.id, v);
       return v;
     }
@@ -268,8 +369,9 @@ export class WellView {
     const disc = this.scene.add.circle(0, 0, this.pond.r, this.colorOf(p)).setStrokeStyle(top ? 3 : 1, top ? 0xffffff : 0x1b1d24);
     const shine = this.scene.add.circle(-this.pond.r * 0.35, -this.pond.r * 0.4, this.pond.r * 0.28, 0xffffff, 0.25);
     const label = text(this.scene, 0, 0, this.labelOf(p), { fontSize: '13px', color: '#1b1d24', fontStyle: 'bold' }).setOrigin(0.5);
-    const c = this.scene.add.container(f.x, f.y, [disc, shine, label]).setDepth(DEPTH);
-    const v: View = { c, disc, label, lift: { v: 0 } };
+    const inner = this.scene.add.container(0, 0, [disc, shine, label]);
+    const c = this.scene.add.container(f.x, f.y, [inner]).setDepth(DEPTH);
+    const v: View = { c, inner, stretch: 0, lastSpeed: 0, disc, label, lift: { v: 0 } };
     this.views.set(f.id, v);
     return v;
   }
@@ -507,10 +609,37 @@ export class WellView {
     }
   }
 
-  /** 합쳐진 조각: 톡 튀어 오른 뒤 헤엄 */
+  /** 합쳐진 조각: 톡 튀어 오르며 출렁임 1.25 → 0.9 → 1.0 (0.35초) + 체인 색 작은 방울 + 손맛(소리 자리·진동) */
   private hop(v: View): void {
     this.scene.tweens.add({ targets: v.lift, v: HOP_PX, duration: HOP_MS / 2, yoyo: true, ease: 'Sine.easeOut' });
-    this.scene.tweens.add({ targets: v.c, scale: 1.25, duration: HOP_MS / 2, yoyo: true });
+    this.scene.tweens.killTweensOf(v.c);
+    v.c.setScale(1);
+    this.scene.tweens.chain({
+      targets: v.c,
+      tweens: [
+        { scale: 1.25, duration: SQUISH_MS * 0.3, ease: 'Sine.easeOut' },
+        { scale: 0.9, duration: SQUISH_MS * 0.35, ease: 'Sine.easeInOut' },
+        { scale: 1, duration: SQUISH_MS * 0.35, ease: 'Sine.easeOut' },
+      ],
+    });
+    const f = [...this.pond.fish.values()].find((x) => this.views.get(x.id) === v);
+    if (f) {
+      const p = this.state.grid.cells[f.cell];
+      this.droplets(f.x, f.y, p ? this.colorOf(p) : 0xffffff);
+      this.pond.ripple(f.x, f.y);
+      mergeFeel(f.tier);
+    }
+  }
+
+  /** 체인 색 작은 방울 6~8개가 튀었다 사라짐 */
+  private droplets(x: number, y: number, color: number): void {
+    const n = DROPLETS + (Math.random() < 0.5 ? -1 : 1) * Math.round(Math.random());
+    for (let i = 0; i < n; i++) {
+      const a = (Math.PI * 2 * i) / n + Math.random() * 0.4;
+      const dist = this.pond.r * (0.9 + Math.random() * 0.6);
+      const d = this.scene.add.circle(x, y, 2 + Math.random() * 2, color).setDepth(DEPTH + 2);
+      this.scene.tweens.add({ targets: d, x: x + Math.cos(a) * dist, y: y + Math.sin(a) * dist, alpha: 0, scale: 0.4, duration: 320 + Math.random() * 120, ease: 'Sine.easeOut', onComplete: () => d.destroy() });
+    }
   }
 
   /** core는 이미 제거했다. 떼어낸 조각 표시만 떠올려 사라지게 한다 */
