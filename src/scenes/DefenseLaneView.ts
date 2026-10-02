@@ -24,6 +24,27 @@ const HIT_BY_WORRY = 0xd28cff;
 /** 홈으로 돌아가는 중 */
 const RETURNING_ALPHA = 0.85;
 
+/** 방어선 빛 (이야기책 빛이 닿는 띠) */
+const GUARD_GLOW = 0xfff1c4;
+const GUARD_DANGER = 0xff5a5a;
+const GUARD_ALPHA = { min: 0.1, max: 0.18 } as const;
+const GUARD_BLINK_MS = 500;
+/** 이야기책 빛 펄스 주기 (bookGlow와 방어선 빛이 같이 숨쉼) */
+const GLOW_PULSE_MS = 1600;
+/** 빛 테두리 휨 (가운데가 lineX, 위아래로 갈수록 이만큼 책 쪽으로) */
+const GUARD_BULGE = 6;
+
+/** 빛 테두리 점들: 가운데 x = lineX (규칙의 방어선), 위아래 끝은 살짝 안쪽 → 책에서 퍼진 반원 느낌 */
+function guardEdgePoints(lineX: number, top: number, h: number): { x: number; y: number }[] {
+  const pts: { x: number; y: number }[] = [];
+  const n = 16;
+  for (let i = 0; i <= n; i++) {
+    const t = (i / n) * 2 - 1;
+    pts.push({ x: lineX - GUARD_BULGE * t * t, y: top + (i / n) * h });
+  }
+  return pts;
+}
+
 export class DefenseLaneView {
   /** 병사 층 / 영웅 층 (영웅이 위: 병사 단계 배지가 영웅을 가리지 않게) */
   private readonly soldierLayer: Phaser.GameObjects.Container;
@@ -37,6 +58,9 @@ export class DefenseLaneView {
   private readonly spawnLabel: Phaser.GameObjects.Text;
   private readonly coreFill: Phaser.GameObjects.Rectangle;
   private readonly coreText: Phaser.GameObjects.Text;
+  /** 방어선 빛 테두리 (붉게 깜빡임용, fx 꺼짐이면 null = 세로선 그대로) */
+  private readonly guardEdge: Phaser.GameObjects.Graphics | null = null;
+  private readonly guardDanger: Phaser.GameObjects.Graphics | null = null;
 
   constructor(
     private readonly scene: Phaser.Scene,
@@ -54,6 +78,19 @@ export class DefenseLaneView {
     const nightVeil = scene.add.rectangle(g.x, g.y, g.w, g.h, COLOR.abyss, sk.has('bg.night') && sk.frame('bg.night').packed ? 0.7 : 0).setOrigin(0);
     const lineX = progressX(CORE.lineY);
     const line = scene.add.line(0, 0, lineX, g.y + 6, lineX, g.y + g.h - 6, COLOR.line).setOrigin(0).setLineWidth(1);
+    // 방어선 = 이야기책 빛이 닿는 데까지 (규칙은 그대로 CORE.lineY). fx 꺼짐(?skin=0·팩 없음)이면 세로선 그대로
+    const fx = skinOf(scene).fx;
+    const glow = scene.add.graphics();
+    if (fx) {
+      line.setVisible(false);
+      const edge = guardEdgePoints(lineX, g.y, g.h);
+      glow.fillStyle(GUARD_GLOW, 1).fillPoints([{ x: g.x, y: g.y }, ...edge, { x: g.x, y: g.y + g.h }], true);
+      glow.setAlpha(GUARD_ALPHA.max);
+      // bookGlow 펄스와 같은 리듬
+      scene.tweens.add({ targets: glow, alpha: GUARD_ALPHA.min, duration: GLOW_PULSE_MS, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' });
+      this.guardEdge = scene.add.graphics().lineStyle(1.5, GUARD_GLOW, 0.45).strokePoints(edge);
+      this.guardDanger = scene.add.graphics().lineStyle(2, GUARD_DANGER, 0.9).strokePoints(edge).setVisible(false);
+    }
     this.spawnLabel = text(scene, g.x + g.w - 6, g.y + 4, '← 씨앗을 노리는 무리', { fontSize: '10px', color: '#c9b98a' }).setOrigin(1, 0);
     this.teamLabel = text(scene, g.x + 8, g.y + 20, '', { fontSize: '10px', color: '#cfd6ea' });
     const laneLabel = text(scene, g.x + g.w * 0.38, g.y + g.h - 4, '밤 · 이야기 씨앗 지키기', { fontSize: '9px', color: '#8f835f' }).setOrigin(0.5, 1);
@@ -62,7 +99,7 @@ export class DefenseLaneView {
     const happy = storyBook(scene, home.x, home.y);
     // 밤: 이야기책 주변 은은한 빛 (§5.23-2)
     const bookGlow = scene.add.circle(home.x, home.y, 18, 0xfff1c4, skinOf(scene).fx ? 0.12 : 0);
-    if (skinOf(scene).fx) scene.tweens.add({ targets: bookGlow, alpha: 0.04, scale: 1.25, duration: 1600, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' });
+    if (skinOf(scene).fx) scene.tweens.add({ targets: bookGlow, alpha: 0.04, scale: 1.25, duration: GLOW_PULSE_MS, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' });
     // 핵 HP (§5.19-3): 레인 왼쪽 위 "◆ 핵 100/100" + 막대
     const cx = g.x + 8;
     const cy = g.y + 10;
@@ -76,7 +113,7 @@ export class DefenseLaneView {
     this.soldierLayer = scene.add.container(0, 0);
     this.heroLayer = scene.add.container(0, 0);
     this.root = scene.add
-      .container(0, 0, [bg, nightVeil, line, this.spawnLabel, this.teamLabel, laneLabel, bookGlow, happy, this.soldierLayer, this.heroLayer, coreGem, coreFrame, this.coreFill, this.coreText, this.downLabel])
+      .container(0, 0, [bg, nightVeil, glow, ...(this.guardEdge ? [this.guardEdge, this.guardDanger!] : []), line, this.spawnLabel, this.teamLabel, laneLabel, bookGlow, happy, this.soldierLayer, this.heroLayer, coreGem, coreFrame, this.coreFill, this.coreText, this.downLabel])
       .setDepth(1)
       .setVisible(false);
   }
@@ -132,6 +169,13 @@ export class DefenseLaneView {
   /** 표시를 core 상태에 맞춘다 (매 프레임) */
   sync(): void {
     const lane = this.state.defense;
+    // 막는 유닛이 0명이고 적이 방어선을 지나기 시작하면 빛 테두리가 붉게 깜빡임 (0.5초 간격). 유닛이 다시 서면 원래대로
+    if (this.guardEdge && this.guardDanger) {
+      const breach = lane.units.length === 0 && lane.worries.some((w) => w.state === 'passing');
+      const on = breach && Math.floor(this.scene.time.now / GUARD_BLINK_MS) % 2 === 0;
+      this.guardDanger.setVisible(on);
+      this.guardEdge.setVisible(!on);
+    }
     const liveW = new Set<number>();
     for (const w of lane.worries) {
       liveW.add(w.id);
