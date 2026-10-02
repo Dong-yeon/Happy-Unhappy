@@ -113,6 +113,8 @@ export type CoreEvent =
   | { type: 'stageStart'; stage: number; retry: FailReason | null }
   /** 자동 뭉침 (D-070): from 조각이 to 칸으로 합쳐짐 (보상은 손 머지와 같음). 화면은 이 쌍을 끌어다 붙이는 연출만 */
   | { type: 'autoMerge'; from: number; to: number }
+  /** 팀 교대 이어받기 (D-072): cells 칸의 조각이 회수되어 새 팀 게이지로 (gauges = 더한 뒤 값) */
+  | { type: 'handover'; role: Role; cells: number[]; amount: number; gauges: { heroId: string; gauge: number; max: number }[] }
   /** 장면 카드를 닫고 낮 시작 */
   | { type: 'dayBegin'; stage: number; attempt: number }
   /** 영웅이 레인에 섬 (팀 출발·일어남) */
@@ -225,6 +227,9 @@ export class GameState {
   readonly heldCells = new Set<number>();
   /** 이 판에서 자동 뭉침 횟수 (저장하지 않음, 시뮬 집계용) */
   autoMerges = 0;
+  /** 팀 교대 이어받기 횟수·회수한 조각 수 (저장하지 않음, 시뮬 집계용) */
+  handovers = 0;
+  handoverPieces = 0;
   /** 밤: 동시 적 상한을 넘어 아직 레인에 못 나온 적 */
   private readonly nightQueue: WorryStats[] = [];
   /** 지급할 칸이 없어 사라진 조각 수 */
@@ -524,11 +529,45 @@ export class GameState {
   /** 팀 출발: 낮은 이야기책에서 앞·가운데·뒤 순서로(쓰러진 영웅 제외), 밤은 거점 앞 */
   private enterTeam(role: Role, out: CoreEvent[]): void {
     const ids = this.activeTeamIds(role).filter((id) => !(role === 'offense' && this.fallen.has(id)));
+    this.handover(role, ids, out);
     const sp = this.data.balance.team.spacing;
     ids.forEach((id, i) => {
       this.enterHero(role, id, out, role === 'offense' ? { y: this.abyss.teamStartY(i, ids.length, sp) } : {});
     });
     this.startBooks(role, ids, out);
+  }
+
+  /**
+   * 팀 교대 이어받기 (D-072, §5.24-2): 레인에 새 팀이 나갈 때(릴레이·낮→밤·밤→낮) 새 팀 체인이 아닌 조각을 전부 회수.
+   * 회수량 = Σ handoverTierValue[단계-1] × handoverRatio → 새 팀(나가는 영웅)의 스킬 게이지에 똑같이 나눠 더함 (상한 넘치면 버림).
+   * 와일드카드·새 팀 체인 조각은 남는다
+   */
+  private handover(role: Role, ids: string[], out: CoreEvent[]): void {
+    const g = this.data.balance.grid;
+    const keep = new Set(this.activeTeamIds(role).map((id) => this.heroDef(id).chain));
+    const cells: number[] = [];
+    let amount = 0;
+    this.grid.cells.forEach((p, i) => {
+      if (!p || isWildcard(p) || keep.has(p.chain)) return;
+      cells.push(i);
+      amount += g.handoverTierValue[p.tier - 1] ?? 0;
+    });
+    if (!cells.length) return;
+    for (const i of cells) this.grid.cells[i] = null;
+    amount *= g.handoverRatio;
+    const gauges: { heroId: string; gauge: number; max: number }[] = [];
+    if (ids.length && amount > 0) {
+      const each = amount / ids.length;
+      for (const id of ids) {
+        const prog = this.progressOf(id);
+        const max = this.skillOf(id).gauge;
+        prog.gauge = Math.min(max, prog.gauge + each);
+        gauges.push({ heroId: id, gauge: prog.gauge, max });
+      }
+    }
+    this.handovers += 1;
+    this.handoverPieces += cells.length;
+    out.push({ type: 'handover', role, cells, amount, gauges });
   }
 
   /** 시작형 비법서 (§5.22-5): 팀이 레인에 나갈 때(낮 출발·밤 구간 시작·교대) 그 팀에 1회 */

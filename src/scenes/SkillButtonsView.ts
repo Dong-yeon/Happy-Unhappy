@@ -38,13 +38,25 @@ interface Orb {
   mask: Phaser.GameObjects.Graphics | null;
   /** 마지막으로 그린 게이지 비율·준비 여부 (같으면 다시 그리지 않음) */
   drawn: string;
+  /** 지금 보이는 게이지 비율 (이어받기 때 차오르는 연출용) */
+  shown: number;
 }
+
+/** 이어받기 게이지: 조각이 책에 들어간 뒤(0.4초) 이 속도(비율/초)로 차오름 */
+const HANDOVER_DELAY_MS = 400;
+const HANDOVER_FILL_PER_S = 1.6;
 
 export class SkillButtonsView {
   private readonly orbs: Orb[] = [];
   private readonly teamLabel: Phaser.GameObjects.Text;
   private readonly bonds: Phaser.GameObjects.Text;
   private key = '';
+  /** 이어받기 연출: 이 시각까지는 게이지를 그대로 두었다가 차오르게 */
+  private fillFrom = 0;
+  private filling = false;
+  /** 이어받기 전 게이지 비율 (새 팀 초상이 여기서부터 차오름) */
+  private readonly fillStart = new Map<string, number>();
+  private lastNow = 0;
 
   constructor(
     private readonly scene: Phaser.Scene,
@@ -71,7 +83,7 @@ export class SkillButtonsView {
       const hp = scene.add.rectangle(-HP_W / 2, hpY, HP_W, HP_H, 0x7ed67e).setOrigin(0, 0);
       const chain = text(scene, 0, hpY + HP_H + 1, '', { fontSize: '9px', color: '#e8e8e8' }).setOrigin(0.5, 0);
       const container = scene.add.container(0, 0, [shadow, glow, track, ring, disc, initial, hpBg, hp, chain]).setDepth(DEPTH);
-      const orb: Orb = { container, disc, initial, chain, ring, glow, hp, heroId: null, portrait: null, mask: null, drawn: '' };
+      const orb: Orb = { container, disc, initial, chain, ring, glow, hp, heroId: null, portrait: null, mask: null, drawn: '', shown: 0 };
       disc.on('pointerup', () => {
         if (orb.heroId) this.state.castReady(orb.heroId);
       });
@@ -85,6 +97,13 @@ export class SkillButtonsView {
     for (const e of events) {
       if (e.type === 'teamSwap') {
         this.slideLabel();
+        continue;
+      }
+      if (e.type === 'handover' && e.amount > 0) {
+        // 회수 조각이 책에 빨려 들어간 뒤 새 팀 게이지가 차오른다
+        this.fillFrom = this.scene.time.now + HANDOVER_DELAY_MS;
+        this.filling = true;
+        for (const g of e.gauges) this.fillStart.set(g.heroId, Math.max(0, g.gauge - e.amount / e.gauges.length) / g.max);
         continue;
       }
       if (e.type !== 'skill') continue;
@@ -167,7 +186,17 @@ export class SkillButtonsView {
         o.drawn = '';
       }
       const def = s.heroDef(id);
-      const ratio = Math.min(1, s.progressOf(id).gauge / def.skill.gauge);
+      const actual = Math.min(1, s.progressOf(id).gauge / def.skill.gauge);
+      const now = this.scene.time.now;
+      const start = this.fillStart.get(id);
+      if (start !== undefined) {
+        o.shown = Math.min(actual, start);
+        this.fillStart.delete(id);
+      }
+      if (this.filling && actual > o.shown) {
+        if (now >= this.fillFrom) o.shown = Math.min(actual, o.shown + (HANDOVER_FILL_PER_S * Math.max(0, now - this.lastNow)) / 1000);
+      } else o.shown = actual;
+      const ratio = o.shown;
       const ready = !s.autoSkill && s.skillReady(id);
       const unit = s.heroUnit(id);
       const down = s.timeFlows && !unit;
@@ -187,5 +216,8 @@ export class SkillButtonsView {
       }
     });
     this.key = key;
+    const now = this.scene.time.now;
+    if (this.filling && now >= this.fillFrom && this.orbs.every((o) => !o.heroId || o.shown >= Math.min(1, s.progressOf(o.heroId).gauge / s.heroDef(o.heroId).skill.gauge) - 1e-6)) this.filling = false;
+    this.lastNow = now;
   }
 }

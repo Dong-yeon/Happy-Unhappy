@@ -136,7 +136,7 @@ function checkBalance(c: Checker, v: unknown): { maxTier?: number; chapterLength
 
   let maxTier: number | undefined;
   const g = c.obj(b.grid, `${p}.grid`, [
-    'gridCols', 'gridRows', 'gridPresets', 'maxTier', 'autoMergeMaxTier', 'autoMergeInterval',
+    'gridCols', 'gridRows', 'gridPresets', 'maxTier', 'autoMergeMaxTier', 'autoMergeInterval', 'handoverRatio', 'handoverTierValue',
   ]);
   if (g) {
     const cols = c.num(g.gridCols, `${p}.grid.gridCols`, { int: true, min: 1 });
@@ -160,6 +160,11 @@ function checkBalance(c: Checker, v: unknown): { maxTier?: number; chapterLength
     const am = c.num(g.autoMergeMaxTier, `${p}.grid.autoMergeMaxTier`, { int: true, min: 0 });
     if (am !== undefined && maxTier !== undefined && am >= maxTier) c.fail(`${p}.grid.autoMergeMaxTier`, `grid.maxTier(${maxTier}) 미만이어야 함`);
     c.num(g.autoMergeInterval, `${p}.grid.autoMergeInterval`, { min: 0.05 });
+    // 팀 교대 이어받기 (D-072): 비율 0 이상, 단계 값은 maxTier개 (0 이상)
+    c.num(g.handoverRatio, `${p}.grid.handoverRatio`, { min: 0 });
+    const hv = c.arr(g.handoverTierValue, `${p}.grid.handoverTierValue`, 1) ?? [];
+    hv.forEach((v, i) => c.num(v, `${p}.grid.handoverTierValue[${i}]`, { min: 0 }));
+    if (maxTier !== undefined && hv.length !== maxTier) c.fail(`${p}.grid.handoverTierValue`, `길이 ${maxTier}(maxTier)이어야 함`);
   }
 
   // 조각이 생기는 길 (§5.20-13): 저절로 + 처치 드롭

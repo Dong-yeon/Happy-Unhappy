@@ -20,6 +20,10 @@ export interface Balance {
     autoMergeMaxTier: number;
     /** 자동 뭉침 간격(초): 한 번에 한 쌍씩 */
     autoMergeInterval: number;
+    /** 팀 교대 이어받기 (D-072): 회수 조각 단계 값 × 이 비율 = 새 팀 게이지 */
+    handoverRatio: number;
+    /** 팀 교대 이어받기: 단계별 값 (1단계부터, 길이 maxTier) */
+    handoverTierValue: number[];
   };
   /** 조각이 생기는 길 (§5.20-13, D-064): 전투 중 autoInterval초마다 1단계 1개 + 처치 시 killDropChance로 1단계 1개.
    *  밤 보스·guardian은 bossDropTier단계 bossDropCount개 확정. 그리드가 가득이면 버림 */

@@ -6,7 +6,7 @@ import Phaser from 'phaser';
 import type { CoreEvent, GameState } from '../core/game';
 import { isWildcard, type Piece } from '../core/grid';
 import type { GameData } from '../data/types';
-import { DRAG_THRESHOLD, REGION, RELEASE, WELL, inRect, inRelease, toScreen } from './layout';
+import { CORE, DRAG_THRESHOLD, HOME, REGION, RELEASE, WELL, inRect, inRelease, progressX, toScreen } from './layout';
 import { Pond, type Fish } from './pond';
 import { releaseHoverLabel, type ReleaseHover } from './ReleaseZoneView';
 import { skinOf } from './skin/Skin';
@@ -42,6 +42,8 @@ const POP_MS = 260;
 const HOP_MS = 280;
 /** 자동 뭉침: 사라진 조각이 짝에게 빨려 들어가는 시간 (D-070) */
 const ABSORB_MS = 200;
+/** 팀 교대 이어받기: 회수 조각이 이야기책으로 빨려 들어가는 시간 (D-072) */
+const HANDOVER_MS = 400;
 const HOP_PX = 10;
 const RELEASE_FLOAT_PX = 36;
 const RELEASE_FLOAT_MS = 350;
@@ -152,6 +154,8 @@ export class WellView {
         any = true;
       } else if (e.type === 'autoMerge') {
         this.absorbFx(e.from, e.to);
+      } else if (e.type === 'handover') {
+        this.handoverFx(e.role, e.cells);
       }
     }
     if (any) this.syncArrivals();
@@ -412,6 +416,33 @@ export class WellView {
       done();
     }
     // 남은 조각 단계 갱신 (rebuild)
+    this.refresh();
+  }
+
+  /** 팀 교대 이어받기 (D-072): 회수된 조각들이 이야기책으로 빨려 들어감 (0.4초). 게이지 차오름은 초상 선반 */
+  private handoverFx(role: 'offense' | 'defense', cells: readonly number[]): void {
+    const book = role === 'defense' ? HOME.defense : { x: progressX(CORE.lineY) - 10, y: REGION.lane.y + REGION.lane.h / 2 };
+    this.pond.take(cells).forEach((f, i) => {
+      const v = this.views.get(f.id);
+      if (!v) return;
+      this.views.delete(f.id);
+      this.scene.tweens.killTweensOf(v.c);
+      v.c.setDepth(30);
+      this.scene.tweens.add({
+        targets: v.c,
+        x: book.x,
+        y: book.y,
+        scale: 0.25,
+        alpha: 0.4,
+        delay: i * 25,
+        duration: HANDOVER_MS,
+        ease: 'Quad.easeIn',
+        onComplete: () => {
+          v.c.destroy();
+          this.sparkle(book.x, book.y);
+        },
+      });
+    });
     this.refresh();
   }
 

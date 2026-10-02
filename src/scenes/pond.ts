@@ -397,6 +397,18 @@ export class Pond {
     return { from, to };
   }
 
+  /** 팀 교대 이어받기 (D-072): core가 회수한 칸들의 물고기를 뺀다 (표시 연출은 WellView) */
+  take(cells: readonly number[]): Fish[] {
+    const set = new Set(cells);
+    const out: Fish[] = [];
+    for (const f of this.fish.values()) if (set.has(f.cell)) out.push(f);
+    for (const f of out) {
+      this.fish.delete(f.id);
+      if (this.dragging === f.id) this.dragging = null;
+    }
+    return out;
+  }
+
   /** 끌기 취소 (모달·단계 전환): 그 자리에서 다시 헤엄 */
   cancel(): void {
     const f = this.dragging === null ? null : this.fish.get(this.dragging);
