@@ -5,7 +5,7 @@
 import Phaser from 'phaser';
 import type { CoreEvent, GameState } from '../core/game';
 import type { GameData } from '../data/types';
-import { CORE, HOME, REGION, progressX, toScreen } from './layout';
+import { CORE, HOME, REGION, bossScale, progressX, toScreen } from './layout';
 import { flashBody, flashUnit, makeEnemyView, storyBook, makeUnitView, syncEnemyView, syncUnitView, type EnemyView, type UnitView } from './laneUnits';
 import { NIGHT_TINT } from './scenery';
 import { skinOf } from './skin/Skin';
@@ -25,6 +25,9 @@ const HIT_BY_WORRY = 0xd28cff;
 const RETURNING_ALPHA = 0.85;
 
 export class DefenseLaneView {
+  /** 병사 층 / 영웅 층 (영웅이 위: 병사 단계 배지가 영웅을 가리지 않게) */
+  private readonly soldierLayer: Phaser.GameObjects.Container;
+  private readonly heroLayer: Phaser.GameObjects.Container;
   /** 밤 레인 전체 (낮에는 숨김) */
   readonly root: Phaser.GameObjects.Container;
   private readonly worries = new Map<number, EnemyView>();
@@ -70,8 +73,10 @@ export class DefenseLaneView {
     this.downLabel = text(scene, home.x + 4, home.y - 26, '', { fontSize: '9px', color: '#ff9e9e', backgroundColor: '#1b1d24', padding: { x: 3, y: 1 } })
       .setOrigin(0, 0.5)
       .setVisible(false);
+    this.soldierLayer = scene.add.container(0, 0);
+    this.heroLayer = scene.add.container(0, 0);
     this.root = scene.add
-      .container(0, 0, [bg, nightVeil, line, this.spawnLabel, this.teamLabel, laneLabel, bookGlow, happy, coreGem, coreFrame, this.coreFill, this.coreText, this.downLabel])
+      .container(0, 0, [bg, nightVeil, line, this.spawnLabel, this.teamLabel, laneLabel, bookGlow, happy, this.soldierLayer, this.heroLayer, coreGem, coreFrame, this.coreFill, this.coreText, this.downLabel])
       .setDepth(1)
       .setVisible(false);
   }
@@ -132,7 +137,7 @@ export class DefenseLaneView {
       liveW.add(w.id);
       let v = this.worries.get(w.id);
       if (!v) {
-        v = makeEnemyView(this.scene, w.type, w.boss);
+        v = makeEnemyView(this.scene, w.type, w.boss, w.boss ? bossScale(w.type) : undefined); // 보스 웨이브 적: guardian과 같은 배율
         this.root.add(v.container);
         this.worries.set(w.id, v);
       }
@@ -148,7 +153,7 @@ export class DefenseLaneView {
       let v = this.units.get(u.id);
       if (!v) {
         v = makeUnitView(this.scene, this.data, u, 'defense');
-        this.root.add(v.container);
+        (u.role === 'hero' ? this.heroLayer : this.soldierLayer).add(v.container);
         this.units.set(u.id, v);
       }
       // 제한 이동(§4.3.3): core의 u.x, u.y를 매 프레임 따라간다. 복귀 중에는 반투명

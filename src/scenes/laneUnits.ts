@@ -6,6 +6,7 @@ import Phaser from 'phaser';
 import type { GameState, Role } from '../core/game';
 import type { Unit } from '../core/lane';
 import type { GameData } from '../data/types';
+import { BOSS_HP, BOSS_POP, ENEMY_BASE_SIZE, HERO_PIC_SIZE, SOLDIER_PIC_SIZE } from './layout';
 import { skinOf } from './skin/Skin';
 import { COLOR, text } from './ui';
 
@@ -71,13 +72,17 @@ export function makeUnitView(scene: Phaser.Scene, data: GameData, u: Unit, role:
     const ranged = u.attackType === 'ranged';
     const skin = skinOf(scene);
     const pic = skin.has(`hero.${u.chain}`);
-    const body: Body = pic ? skin.image(scene, `hero.${u.chain}`, 0, 0, HERO_R * 2 + 2) : scene.add.circle(0, 0, HERO_R, color).setStrokeStyle(2, ranged ? 0xf2c94c : 0x1b1d24);
+    // 그림이면 병사보다 확실히 크게 (HERO_PIC_SIZE, 팩은 정수 배율 반올림)
+    const body: Body = pic ? skin.image(scene, `hero.${u.chain}`, 0, 0, HERO_PIC_SIZE, true) : scene.add.circle(0, 0, HERO_R, color).setStrokeStyle(2, ranged ? 0xf2c94c : 0x1b1d24);
+    const half = body instanceof Phaser.GameObjects.Image ? body.displayHeight / 2 : HERO_R;
     const label = text(scene, 0, 0, pic ? '' : heroName(data, u.chain).slice(0, 1), { fontSize: '11px', color: '#1b1d24', fontStyle: 'bold' }).setOrigin(0.5);
-    const bg = scene.add.rectangle(-HP_W / 2, HERO_R + 4, HP_W, 3, 0x1b1d24).setOrigin(0, 0.5);
-    const hp = scene.add.rectangle(-HP_W / 2, HERO_R + 4, HP_W, 3, 0x7ed67e).setOrigin(0, 0.5);
-    const momentum = text(scene, 0, -HERO_R - 7, '', { fontSize: '8px', color: '#ffb46b', fontStyle: 'bold' }).setOrigin(0.5);
-    const shield = scene.add.circle(0, 0, HERO_R + 3).setStrokeStyle(2, 0xffffff, 0.8).setVisible(false);
+    const bg = scene.add.rectangle(-HP_W / 2, half + 4, HP_W, 3, 0x1b1d24).setOrigin(0, 0.5);
+    const hp = scene.add.rectangle(-HP_W / 2, half + 4, HP_W, 3, 0x7ed67e).setOrigin(0, 0.5);
+    const momentum = text(scene, 0, -half - 7, '', { fontSize: '8px', color: '#ffb46b', fontStyle: 'bold' }).setOrigin(0.5);
+    const shield = scene.add.circle(0, 0, half + 3).setStrokeStyle(2, 0xffffff, 0.8).setVisible(false);
     const parts: Phaser.GameObjects.GameObject[] = [shield, body, label, bg, hp, momentum];
+    // 그림 영웅: 발밑 그림자 + 체인 색 테두리 (병사와 구분). 도형 영웅은 원 자체가 체인 색이라 그대로
+    if (pic) parts.unshift(scene.add.ellipse(0, half - 2, half * 1.5, 8, 0x000000, 0.35).setStrokeStyle(2, color));
     if (ranged) parts.push(scene.add.circle(HERO_R - 2, -HERO_R + 2, 2.5, 0xf2c94c));
     const container = scene.add.container(0, 0, parts);
     return { container, body, hp, hpW: HP_W, life: null, momentum, shield, color };
@@ -86,14 +91,16 @@ export function makeUnitView(scene: Phaser.Scene, data: GameData, u: Unit, role:
   const skin = skinOf(scene);
   const pic = skin.has(`soldier.${u.chain}`);
   const body: Body = pic
-    ? skin.image(scene, `soldier.${u.chain}`, 0, 0, SOLDIER + 3)
+    ? skin.image(scene, `soldier.${u.chain}`, 0, 0, SOLDIER_PIC_SIZE) // 영웅 그림의 0.75배 이하 (팩은 정수 배율 내림)
     : scene.add.rectangle(0, 0, SOLDIER, SOLDIER, color).setStrokeStyle(1, u.soldier === 'shield' ? 0xf5f2e8 : 0x1b1d24);
+  const sHalf = body instanceof Phaser.GameObjects.Image ? body.displayHeight / 2 : SOLDIER / 2;
   if (pic && skin.tintByView(`soldier.${u.chain}`)) tintBody(body as Phaser.GameObjects.Image, color); // 팩 동물 + 체인 색
   // 단 숫자는 그림 위에도 작게 남긴다 (§5.16-2)
-  const label = text(scene, pic ? 5 : 0, pic ? -5 : 0, String(u.tier), { fontSize: '7px', color: pic ? '#ffffff' : '#1b1d24', fontStyle: 'bold', ...(pic ? { stroke: '#1b1d24', strokeThickness: 2 } : {}) }).setOrigin(0.5);
-  const bg = scene.add.rectangle(-S_HP_W / 2, SOLDIER / 2 + 2, S_HP_W, 2, 0x1b1d24).setOrigin(0, 0.5);
-  const hp = scene.add.rectangle(-S_HP_W / 2, SOLDIER / 2 + 2, S_HP_W, 2, 0x7ed67e).setOrigin(0, 0.5);
-  const life = scene.add.rectangle(-S_HP_W / 2, SOLDIER / 2 + 4, S_HP_W, 1, 0xe6e9f5).setOrigin(0, 0.5);
+  // 단 숫자: 그림이면 오른쪽 아래 작은 배지 (영웅은 위 층에 그려져 가려지지 않는다 — 레인 뷰의 heroLayer)
+  const label = text(scene, pic ? sHalf - 1 : 0, pic ? sHalf - 3 : 0, String(u.tier), { fontSize: '7px', color: pic ? '#ffffff' : '#1b1d24', fontStyle: 'bold', ...(pic ? { stroke: '#1b1d24', strokeThickness: 2 } : {}) }).setOrigin(0.5);
+  const bg = scene.add.rectangle(-S_HP_W / 2, sHalf + 2, S_HP_W, 2, 0x1b1d24).setOrigin(0, 0.5);
+  const hp = scene.add.rectangle(-S_HP_W / 2, sHalf + 2, S_HP_W, 2, 0x7ed67e).setOrigin(0, 0.5);
+  const life = scene.add.rectangle(-S_HP_W / 2, sHalf + 4, S_HP_W, 1, 0xe6e9f5).setOrigin(0, 0.5);
   const container = scene.add.container(0, 0, [body, label, bg, hp, life]);
   return { container, body, hp, hpW: S_HP_W, life, momentum: null, shield: null, color };
 }
@@ -128,28 +135,48 @@ export interface EnemyView {
   container: Phaser.GameObjects.Container;
   body: Body;
   bar: Phaser.GameObjects.Rectangle;
+  /** HP 막대 가득 찬 폭 */
+  hpW: number;
   color: number;
 }
 
-/** 적 표시. boss: 보스 웨이브 적 (테두리 굵게·붉게) */
-export function makeEnemyView(scene: Phaser.Scene, type: string, boss: boolean): EnemyView {
+/**
+ * 적 표시. boss: 보스 웨이브 적 (테두리 굵게·붉게).
+ * scale: 보스·guardian 표시 배율 (layout.bossScale, 일반 적 크기 기준) — 있으면 크게 + 몸 위 굵은 HP 막대 + 등장 때 커지는 연출. 표시만 (판정 불변).
+ */
+export function makeEnemyView(scene: Phaser.Scene, type: string, boss: boolean, scale?: number): EnemyView {
   const look = ENEMY_LOOK[type] ?? ENEMY_LOOK.shadow;
-  const r = look.r + (boss ? 2 : 0);
+  const big = scale !== undefined;
+  const r = big ? ENEMY_LOOK.shadow.r * scale : look.r + (boss ? 2 : 0);
   const skin = skinOf(scene);
   const key = `enemy.${type}`;
   const pic = skin.has(key);
-  const body: Body = pic ? skin.image(scene, key, 0, 0, r * 2 + 4) : scene.add.circle(0, 0, r, look.color).setStrokeStyle(boss ? 2 : 1, boss ? 0xff9e9e : 0x3b2d4a);
+  const body: Body = pic
+    ? skin.image(scene, key, 0, 0, big ? ENEMY_BASE_SIZE * scale : r * 2 + 4, big)
+    : scene.add.circle(0, 0, r, look.color).setStrokeStyle(boss ? 2 : big ? 2 : 1, boss ? 0xff9e9e : 0x3b2d4a);
   if (pic && skin.tintByView(key)) tintBody(body as Phaser.GameObjects.Image, look.color); // 팩 그림 + 적 색
   if (pic && boss) tintBody(body as Phaser.GameObjects.Image, 0xffc0c0); // 보스 웨이브 적: 붉은 기
-  const face = text(scene, 0, 0, pic ? '' : look.face, { fontSize: r >= 11 ? '11px' : '9px', color: '#2a1f35', fontStyle: 'bold' }).setOrigin(0.5);
-  const bg = scene.add.rectangle(-ENEMY_HP_W / 2, -r - 4, ENEMY_HP_W, 3, 0x1b1d24).setOrigin(0, 0.5);
-  const bar = scene.add.rectangle(-ENEMY_HP_W / 2, -r - 4, ENEMY_HP_W, 3, 0x7ed67e).setOrigin(0, 0.5);
+  const face = text(scene, 0, 0, pic ? '' : look.face, { fontSize: big ? `${Math.round(r)}px` : r >= 11 ? '11px' : '9px', color: '#2a1f35', fontStyle: 'bold' }).setOrigin(0.5);
+  const half = body instanceof Phaser.GameObjects.Image ? body.displayHeight / 2 : r;
+  const hpW = big ? BOSS_HP.w : ENEMY_HP_W;
+  const hpH = big ? BOSS_HP.h : 3;
+  const hpY = big ? -half - BOSS_HP.gap - hpH / 2 : -r - 4;
+  const bg = scene.add.rectangle(-hpW / 2, hpY, hpW, hpH, 0x1b1d24).setOrigin(0, 0.5);
+  if (big) bg.setStrokeStyle(1, 0x000000);
+  const bar = scene.add.rectangle(-hpW / 2, hpY, hpW, hpH, big ? 0xff7a7a : 0x7ed67e).setOrigin(0, 0.5);
   const container = scene.add.container(0, 0, [body, face, bg, bar]);
-  return { container, body, bar, color: look.color };
+  if (big) popIn(scene, container);
+  return { container, body, bar, hpW, color: look.color };
+}
+
+/** 보스 등장: 0.6배 → 1배 (0.3초) */
+export function popIn(scene: Phaser.Scene, obj: Phaser.GameObjects.Container): void {
+  obj.setScale(BOSS_POP.from);
+  scene.tweens.add({ targets: obj, scale: 1, duration: BOSS_POP.ms, ease: 'Back.easeOut' });
 }
 
 export function syncEnemyView(v: EnemyView, hp: number, maxHp: number, slowed: boolean): void {
-  v.bar.width = ENEMY_HP_W * Math.max(0, Math.min(1, hp / maxHp));
+  v.bar.width = v.hpW * Math.max(0, Math.min(1, hp / maxHp));
   v.container.setAlpha(slowed ? 0.7 : 1);
 }
 

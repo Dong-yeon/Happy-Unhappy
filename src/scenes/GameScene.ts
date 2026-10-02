@@ -15,7 +15,7 @@ import { ReleaseZoneView } from './ReleaseZoneView';
 import { SaveSession } from './session';
 import { SkyView } from './SkyView';
 import { stageLabel } from './labels';
-import { REGION, VIEW_W, skyArc, toScreen, type Rect } from './layout';
+import { NAME_BAND_Y, REGION, VIEW_W, skyArc, toScreen, type Rect } from './layout';
 import { Button, COLOR, setupCamera, text } from './ui';
 import { nowMs } from '../platform/clock';
 import { skinOf } from './skin/Skin';
@@ -275,8 +275,8 @@ export class GameScene extends Phaser.Scene {
 
   /** 보스 등장 이름 띠 1초: 전장 가운데 어두운 띠 + 이름 */
   private nameBand(name: string): void {
-    const g = REGION.ground;
-    const y = g.y + g.h / 2;
+    // 레인 위쪽 (보스 몸·HP 막대와 겹치지 않게)
+    const y = NAME_BAND_Y;
     const band = this.add.rectangle(VIEW_W / 2, y, VIEW_W, 34, 0x0e0a14, 0.82).setDepth(45).setScale(1, 0);
     const t = text(this, VIEW_W / 2, y, name, { fontSize: '16px', color: '#ff9e9e', fontStyle: 'bold' }).setOrigin(0.5).setDepth(46).setAlpha(0);
     this.tweens.add({ targets: band, scaleY: 1, duration: 140 });

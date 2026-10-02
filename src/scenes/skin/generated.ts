@@ -23,14 +23,17 @@ export function genSize(key: string): { w: number; h: number } {
 }
 
 const hex = (c: string) => parseInt(c.slice(1), 16);
+/** 영웅·병사·적 그림 해상도 배수 (보스 ×2.5까지 키워도 또렷하게) */
+const BIG_RES = 2;
 
-function make(scene: Phaser.Scene, key: string, w: number, h: number, draw: (g: Phaser.GameObjects.Graphics) => void): void {
+/** res: 논리 크기보다 크게 보일 그림(보스·영웅·병사)은 해상도를 더 올려 그린다 (흐려지지 않게) */
+function make(scene: Phaser.Scene, key: string, w: number, h: number, draw: (g: Phaser.GameObjects.Graphics) => void, res = 1): void {
   const tk = textureKey(key);
   if (scene.textures.exists(tk)) return;
   const g = scene.make.graphics({ x: 0, y: 0 }, false);
-  g.setScale(K);
+  g.setScale(K * res);
   draw(g);
-  g.generateTexture(tk, Math.ceil(w * K), Math.ceil(h * K));
+  g.generateTexture(tk, Math.ceil(w * K * res), Math.ceil(h * K * res));
   g.destroy();
 }
 
@@ -116,21 +119,34 @@ function drawHero(g: Phaser.GameObjects.Graphics, id: string, color: number, s: 
 }
 
 /** 적 (임시): 그림자 = 줄무늬 얼룩 / 살쾡이 = 귀 달린 머리 / 털장갑 손 = 벙어리장갑 / 보스 = 큰 몸 + 호랑이 줄무늬 */
+/** 적 그림 윤곽선 (밝은 땅 위 구분) */
+const OUTLINE = 1;
+const OUTLINE_COLOR = 0x2a1f35;
+
 function drawEnemy(g: Phaser.GameObjects.Graphics, type: string, s: number): void {
   const c = s / 2;
   switch (type) {
     case 'shadow':
       g.fillStyle(0x6e5a8a, 1).fillEllipse(c, c + 2, s * 0.8, s * 0.6);
+      g.lineStyle(OUTLINE, OUTLINE_COLOR, 1).strokeEllipse(c, c + 2, s * 0.8, s * 0.6);
       g.fillStyle(0x4a3a62, 1);
       for (let i = -1; i <= 1; i++) g.fillRect(c + i * s * 0.2 - 1, c - s * 0.12, 2, s * 0.32);
       break;
     case 'wildcat':
+      // 윤곽선: 주황·갈색 땅 위에서 흐려 보이지 않게 (M9 후속 3)
+      g.lineStyle(OUTLINE * 2, OUTLINE_COLOR, 1);
+      g.strokeCircle(c, c + 2, s * 0.32);
+      g.strokeTriangle(c - s * 0.3, c - s * 0.05, c - s * 0.12, c - s * 0.12, c - s * 0.28, c - s * 0.38);
+      g.strokeTriangle(c + s * 0.3, c - s * 0.05, c + s * 0.12, c - s * 0.12, c + s * 0.28, c - s * 0.38);
       g.fillStyle(0xd08a4a, 1).fillCircle(c, c + 2, s * 0.32);
       g.fillTriangle(c - s * 0.3, c - s * 0.05, c - s * 0.12, c - s * 0.12, c - s * 0.28, c - s * 0.38);
       g.fillTriangle(c + s * 0.3, c - s * 0.05, c + s * 0.12, c - s * 0.12, c + s * 0.28, c - s * 0.38);
       g.fillStyle(0x5a3a1a, 1).fillRect(c - s * 0.15, c + 1, 2, 2).fillRect(c + s * 0.1, c + 1, 2, 2);
       break;
     case 'mitten':
+      g.lineStyle(OUTLINE * 2, OUTLINE_COLOR, 1);
+      g.strokeRoundedRect(c - s * 0.3, c - s * 0.32, s * 0.5, s * 0.7, s * 0.2);
+      g.strokeEllipse(c + s * 0.25, c - s * 0.02, s * 0.22, s * 0.36);
       g.fillStyle(0x8a6a52, 1).fillRoundedRect(c - s * 0.3, c - s * 0.32, s * 0.5, s * 0.7, s * 0.2);
       g.fillEllipse(c + s * 0.25, c - s * 0.02, s * 0.22, s * 0.36); // 엄지
       g.fillStyle(0xd8c6a0, 1).fillRect(c - s * 0.3, c + s * 0.28, s * 0.5, s * 0.1); // 소매
@@ -138,6 +154,7 @@ function drawEnemy(g: Phaser.GameObjects.Graphics, type: string, s: number): voi
     case 'boss':
     default:
       g.fillStyle(0xc07a3a, 1).fillEllipse(c, c, s * 0.92, s * 0.78);
+      g.lineStyle(OUTLINE, OUTLINE_COLOR, 1).strokeEllipse(c, c, s * 0.92, s * 0.78);
       g.fillStyle(0x2a1a12, 1);
       for (let i = -2; i <= 2; i++) g.fillTriangle(c + i * s * 0.16 - 2, c - s * 0.36, c + i * s * 0.16 + 2, c - s * 0.36, c + i * s * 0.16, c);
       g.fillStyle(0xff9e9e, 1).fillCircle(c - s * 0.15, c + s * 0.05, 1.5).fillCircle(c + s * 0.15, c + s * 0.05, 1.5);
@@ -211,17 +228,17 @@ export function drawGeneratedTextures(scene: Phaser.Scene, data: GameData): void
   const hs = GEN_SIZE.hero.w;
   for (const h of HEROES) {
     const chain = data.heroes.heroes.find((x) => x.id === h)?.chain ?? 'bone';
-    make(scene, `hero.${h}`, hs, hs, (g) => drawHero(g, h, chainColor(chain), hs));
+    make(scene, `hero.${h}`, hs, hs, (g) => drawHero(g, h, chainColor(chain), hs), BIG_RES);
   }
   const es = GEN_SIZE.enemy.w;
-  for (const e of ENEMIES) make(scene, `enemy.${e}`, es, es, (g) => drawEnemy(g, e, es));
+  for (const e of ENEMIES) make(scene, `enemy.${e}`, es, es, (g) => drawEnemy(g, e, es), BIG_RES);
   const ss = GEN_SIZE.soldier.w;
   for (const c of CHAINS)
     make(scene, `soldier.${c}`, ss, ss, (g) => {
       g.fillStyle(chainColor(c), 1).fillRoundedRect(0.5, 0.5, ss - 1, ss - 1, 2);
       chainGlyph(g, c, ss / 2, ss / 2, ss * 0.7, 0x2a2130);
       g.lineStyle(1, 0x1b1d24, 1).strokeRoundedRect(0.5, 0.5, ss - 1, ss - 1, 2);
-    });
+    }, BIG_RES);
   const b = GEN_SIZE['ui.storybook'];
   make(scene, 'ui.storybook', b.w, b.h, (g) => drawBook(g, b.w, b.h));
   const sd = GEN_SIZE['ui.seed'].w;

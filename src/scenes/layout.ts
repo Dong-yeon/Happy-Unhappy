@@ -294,3 +294,24 @@ export function dropTarget(size: { cols: number; rows: number }, x: number, y: n
   if (inRect(RELEASE_HIT, x, y)) return { kind: 'release' };
   return { kind: 'none' };
 }
+
+// ── 레인 유닛 표시 크기 (M9 스킨 후속, 표시만 — core 판정 범위는 그대로) ──
+/** 일반 적(줄무늬 그림자) 한 마리 표시 지름 = 보스 배율의 기준 */
+export const ENEMY_BASE_SIZE = 20;
+/** 보스·guardian 표시 배율 (일반 적 크기 기준). 밤 보스 웨이브 적도 같은 배율. 팩 그림은 정수 배율로 내림, 도형은 반지름으로 */
+export const BOSS_SCALE = { guardian: 1.5, mitten: 2, boss: 2.5 } as const;
+/** 적 종류 → 보스 배율 (털장갑 손 ×2, 성난 호랑이 그림자 ×2.5, 그 밖의 guardian ×1.5) */
+export function bossScale(type: string): number {
+  return type === 'mitten' ? BOSS_SCALE.mitten : type === 'boss' ? BOSS_SCALE.boss : BOSS_SCALE.guardian;
+}
+/** 보스 HP 막대 (몸 위, 굵고 넓게) */
+export const BOSS_HP = { w: 48, h: 5, gap: 5 } as const;
+/** 보스 등장: 이 배율에서 1로 커짐 */
+export const BOSS_POP = { from: 0.6, ms: 300 } as const;
+/** 보스 이름 띠 중심 y (레인 위쪽 — 보스 몸·HP 막대와 겹치지 않게) */
+export const NAME_BAND_Y = REGION.ground.y + 20;
+/** 낮 guardian 몸 중심 y (레인 가운데보다 아래: 위쪽은 이름 띠·운반 막대 자리) */
+export const GUARDIAN_Y = REGION.ground.y + REGION.ground.h * 0.6;
+/** 그림(스킨) 영웅 표시 높이 / 병사는 영웅의 0.75배 */
+export const HERO_PIC_SIZE = 32;
+export const SOLDIER_PIC_SIZE = HERO_PIC_SIZE * 0.75;

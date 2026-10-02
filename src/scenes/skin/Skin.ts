@@ -55,15 +55,17 @@ export class Skin {
 
   /**
    * 그림 하나 (가운데 기준). size = 논리 px 높이(없으면 생성 그림 기본 크기).
-   * 팩 그림은 정수 배율(요청 크기 ÷ 그림 높이 내림, 최소 1)로 맞추고, 생성 그림은 RENDER_SCALE로 그려 둔 것을 논리 크기로 줄인다.
+   * 팩 그림은 정수 배율(요청 크기 ÷ 그림 높이 내림 — round면 반올림, 최소 1. 매니페스트 scale이 있으면 그것)로 맞추고, 생성 그림은 RENDER_SCALE로 그려 둔 것을 논리 크기로 줄인다.
    */
-  image(scene: Phaser.Scene, key: string, x: number, y: number, size?: number): Phaser.GameObjects.Image {
+  image(scene: Phaser.Scene, key: string, x: number, y: number, size?: number, round = false): Phaser.GameObjects.Image {
     const f = this.frame(key);
     const img = scene.add.image(x, y, f.texture, f.frame);
     if (f.packed) {
       const e = PACK_ENTRIES[key]!;
       const h = img.frame.realHeight;
-      img.setScale(e.scale ?? (size ? Math.max(1, Math.floor(size / h)) : 1));
+      // 보스처럼 크게 보여야 하는 것은 반올림(round), 나머지는 내림 — 둘 다 정수 배율
+      const k = size ? Math.max(1, round ? Math.round(size / h) : Math.floor(size / h)) : 1;
+      img.setScale(e.scale ?? k);
     } else {
       const g = genSize(key);
       const h = size ?? g.h;

@@ -7,8 +7,8 @@ import Phaser from 'phaser';
 import { enemyName, type CoreEvent, type GameState, type Grant } from '../core/game';
 import { isWildcard } from '../core/grid';
 import type { GameData } from '../data/types';
-import { CORE, REGION, cellCenter, progressX, toScreen } from './layout';
-import { flashBody, flashUnit, makeEnemyView, storyBook, makeUnitView, syncEnemyView, syncUnitView, type EnemyView, type UnitView } from './laneUnits';
+import { CORE, ENEMY_BASE_SIZE, GUARDIAN_Y, REGION, bossScale, cellCenter, progressX, toScreen } from './layout';
+import { flashBody, flashUnit, makeEnemyView, popIn, storyBook, makeUnitView, syncEnemyView, syncUnitView, type EnemyView, type UnitView } from './laneUnits';
 import { skinOf } from './skin/Skin';
 import { stageTint } from './scenery';
 import { COLOR, text } from './ui';
@@ -40,6 +40,13 @@ export class AbyssLaneView {
   private book!: Phaser.GameObjects.Container;
   private corePulse: Phaser.Tweens.Tween | null = null;
   private bossShown: boolean | null = null;
+  /** guardian 몬스터 (벽 앞에 서 있음, 표시만 — 벽·HP 막대는 그대로) */
+  private readonly guardianLayer: Phaser.GameObjects.Container;
+  private guardianView: EnemyView | null = null;
+  private guardianKey = '';
+  /** 병사 층 / 영웅 층 (영웅이 위: 병사 단계 배지가 영웅을 가리지 않게) */
+  private readonly soldierLayer: Phaser.GameObjects.Container;
+  private readonly heroLayer: Phaser.GameObjects.Container;
 
   constructor(
     private readonly scene: Phaser.Scene,
@@ -81,8 +88,11 @@ export class AbyssLaneView {
     const cap2 = text(scene, fx + BAR_W + 4, barY, '◆ 씨앗', { fontSize: '8px', color: '#ffe08a' }).setOrigin(0, 0.5);
     this.carryFrame = scene.add.container(0, 0, [frame, this.carryFill, cap, cap2]).setVisible(false);
     this.downLabel = text(scene, g.x + 8, g.y + 6, '', { fontSize: '10px', color: '#cfd6ea' }).setVisible(false);
+    this.guardianLayer = scene.add.container(0, 0);
+    this.soldierLayer = scene.add.container(0, 0);
+    this.heroLayer = scene.add.container(0, 0);
     this.root = scene.add
-      .container(0, 0, [bg, this.wallRect, this.wallBar, this.wallLabel, book, hutLabel, label, this.carryFrame, this.core, this.downLabel])
+      .container(0, 0, [bg, this.wallRect, this.wallBar, this.wallLabel, this.guardianLayer, book, hutLabel, label, this.soldierLayer, this.heroLayer, this.carryFrame, this.core, this.downLabel])
       .setDepth(1);
   }
 
@@ -129,8 +139,12 @@ export class AbyssLaneView {
         case 'bossReward':
           for (const g of e.rewards) this.grantFlow(g);
           break;
+        case 'guardianHit':
+          if (this.guardianView) flashBody(this.scene, this.guardianView.body, this.guardianView.color, HIT_MS);
+          break;
         case 'dayBegin':
           this.closeCard();
+          if (this.guardianView) popIn(this.scene, this.guardianView.container);
           break;
         default:
           break;
@@ -161,6 +175,19 @@ export class AbyssLaneView {
     }
     this.wallBar.height = REGION.ground.h * Math.max(0, Math.min(1, gd.hp / gd.maxHp));
     this.wallRect.setAlpha(gd.hp > 0 ? 1 : 0.35);
+    // guardian 몬스터: 벽 앞에 크게 (일반 ×1.5 · 털장갑 손 ×2 · 성난 호랑이 그림자 ×2.5)
+    const gKey = `${s.stage}:${gd.type}:${gd.boss}`;
+    if (gKey !== this.guardianKey) {
+      this.guardianKey = gKey;
+      this.guardianView?.container.destroy();
+      const k = bossScale(gd.type);
+      this.guardianView = makeEnemyView(this.scene, gd.type, gd.boss, k);
+      this.guardianView.container.setPosition(progressX(CORE.wallY) - (ENEMY_BASE_SIZE * k) / 2 - 6, GUARDIAN_Y);
+      this.guardianLayer.add(this.guardianView.container);
+    }
+    const gv = this.guardianView!;
+    gv.container.setVisible(gd.hp > 0);
+    if (gd.hp > 0) syncEnemyView(gv, gd.hp, gd.maxHp, day && ex.guardian.slowTimer > 0);
 
     const liveU = new Set<number>();
     for (const u of ex.units) {
@@ -168,7 +195,7 @@ export class AbyssLaneView {
       let v = this.units.get(u.id);
       if (!v) {
         v = makeUnitView(this.scene, this.data, u, 'offense');
-        this.root.add(v.container);
+        (u.role === 'hero' ? this.heroLayer : this.soldierLayer).add(v.container);
         this.units.set(u.id, v);
       }
       const p = toScreen('abyss', u.x, u.y);
