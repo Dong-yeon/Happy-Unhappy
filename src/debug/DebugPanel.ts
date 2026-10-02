@@ -336,7 +336,7 @@ export function createDebugPanel(
 
   // 접기/펼치기 토글: 전장 왼쪽 아래 (§5.20-13: 해·달 띠는 얇아짐)
   let open = false;
-  const base = REGION.ground;
+  const base = REGION.lane; // 초상 선반 위 (선반의 팀 표시를 가리지 않게)
   const toggle = new Button(scene, base.x + 30, base.y + base.h - 14, 48, 20, '', () => {
     open = !open;
     apply();

@@ -6,7 +6,7 @@ import Phaser from 'phaser';
 import type { CoreEvent, GameState } from '../core/game';
 import { isWildcard, type Piece } from '../core/grid';
 import type { GameData } from '../data/types';
-import { DRAG_THRESHOLD, REGION, RELEASE_HIT, SKILL_BTN_R, WELL, inRect, skillButtonCenter, toScreen } from './layout';
+import { DRAG_THRESHOLD, REGION, RELEASE, WELL, inRect, inRelease, toScreen } from './layout';
 import { Pond, type Fish } from './pond';
 import { releaseHoverLabel, type ReleaseHover } from './ReleaseZoneView';
 import { skinOf } from './skin/Skin';
@@ -20,6 +20,8 @@ export interface WellViewHooks {
   onChange(): void;
   /** 드래그 중 놓아주기 영역 위 여부 */
   onHover(hover: DragHover): void;
+  /** 조각을 끌기 시작 / 끝 (놓아주기 원이 커지며 빛남) */
+  onDrag?(active: boolean): void;
   /** 지금 판을 만질 수 있는지 (낮·밤이고 모달이 없을 때) */
   canInteract(): boolean;
   /** metrics: 드래그를 놓은 결과 (실패 사유 없으면 null) + 시작 → 놓은 점 거리 (논리 px) */
@@ -84,10 +86,8 @@ export class WellView {
       this.chainColor.set(c.archetypeId, parseInt(c.color.slice(1), 16));
       this.chainInitial.set(c.archetypeId, c.name.slice(0, 1));
     }
-    const n = data.balance.team.teamSize;
-    // 스킬 버튼을 피해서 헤엄 (팀 인원 수와 상관없이 최대 줄 전체를 비워 둔다)
-    const obstacles = Array.from({ length: n }, (_, i) => ({ ...skillButtonCenter(i, n), r: SKILL_BTN_R + 6 }));
-    this.pond = new Pond(Math.random, obstacles);
+    // 놓아주기 원을 피해서 헤엄 (원 위에 조각이 숨지 않게)
+    this.pond = new Pond(Math.random, [{ x: RELEASE.x, y: RELEASE.y, r: RELEASE.r + 4 }]);
     this.tag = text(scene, 0, 0, '', { fontSize: '11px', backgroundColor: '#1b1d24', padding: { x: 4, y: 2 } })
       .setOrigin(0.5)
       .setDepth(30)
@@ -112,17 +112,16 @@ export class WellView {
     // 스킨: 직접 그린 우물 (§5.23-1 ui.well)
     const skin = skinOf(scene);
     if (skin.has('ui.well')) {
-      skin.image(scene, 'ui.well', w.x + w.w / 2, w.y + w.h / 2, w.h + w.rim * 2).setDepth(1);
+      skin.image(scene, 'ui.well', w.x + w.w / 2, w.y + w.h / 2).setDisplaySize(w.w + w.rim * 2, w.h + w.rim * 2).setDepth(1);
       return;
     }
     const g = scene.add.graphics().setDepth(1);
     // 돌테 (바깥 → 안쪽 두 겹)
     g.fillStyle(0x5d5a52, 1).fillRoundedRect(w.x - w.rim, w.y - w.rim, w.w + w.rim * 2, w.h + w.rim * 2, w.r + w.rim);
     g.lineStyle(1, 0x8a857a, 1).strokeRoundedRect(w.x - w.rim, w.y - w.rim, w.w + w.rim * 2, w.h + w.rim * 2, w.r + w.rim);
-    // 물빛: 깊은 물 + 가운데 밝은 물
+    // 물빛: 깊은 물 + 안쪽 조금 밝은 물
     g.fillStyle(0x1f4e6b, 1).fillRoundedRect(w.x, w.y, w.w, w.h, w.r);
-    g.fillStyle(0x2c6a8a, 0.55).fillRoundedRect(w.x + 18, w.y + 18, w.w - 36, w.h - 36, w.r - 14);
-    g.fillStyle(0x3d86a8, 0.25).fillEllipse(w.x + w.w / 2, w.y + w.h / 2, w.w * 0.55, w.h * 0.45);
+    g.fillStyle(0x2c6a8a, 0.55).fillRoundedRect(w.x + 14, w.y + 14, w.w - 28, w.h - 28, w.r - 10);
     g.lineStyle(2, 0x10324a, 0.9).strokeRoundedRect(w.x, w.y, w.w, w.h, w.r);
   }
 
@@ -136,6 +135,7 @@ export class WellView {
   /** 진행 중인 누름·드래그 취소 → 그 자리에서 다시 헤엄 */
   cancel(): void {
     if (!this.press) return;
+    if (this.press.dragging) this.hooks.onDrag?.(false);
     this.press = null;
     this.state.heldCells.clear();
     this.setHover(null);
@@ -293,12 +293,6 @@ export class WellView {
     if (!this.hooks.canInteract()) return;
     const w = this.world(p);
     if (!inRect(REGION.board, w.x, w.y)) return;
-    // 스킬 버튼 위는 버튼 몫
-    const n = this.state.activeTeamIds(this.state.laneRole).length;
-    for (let i = 0; i < n; i++) {
-      const c = skillButtonCenter(i, n);
-      if (Math.hypot(w.x - c.x, w.y - c.y) <= SKILL_BTN_R + 2) return;
-    }
     // 판을 누르는 순간 전부 정지 (§5.21-3)
     const id = this.pond.press(w.x, w.y);
     this.press = { pointerId: p.id, id, startX: w.x, startY: w.y, dragging: false };
@@ -313,11 +307,12 @@ export class WellView {
     if (!press || press.pointerId !== p.id || press.id === null) return;
     const w = this.world(p);
     if (!press.dragging && Math.hypot(w.x - press.startX, w.y - press.startY) < DRAG_THRESHOLD) return;
+    if (!press.dragging) this.hooks.onDrag?.(true);
     press.dragging = true;
     this.pond.moveTo(w.x, w.y);
     this.views.get(press.id)?.c.setDepth(10).setScale(1.1);
     let hover: DragHover = null;
-    if (inRect(RELEASE_HIT, w.x, w.y)) {
+    if (inRelease(w.x, w.y)) {
       const piece = this.state.grid.cells[this.pond.fish.get(press.id)!.cell];
       hover = { kind: 'release', hover: !piece || isWildcard(piece) ? 'blocked' : 'ok' };
     }
@@ -343,6 +338,7 @@ export class WellView {
     this.press = null;
     this.state.heldCells.clear();
     this.setHover(null);
+    if (press.dragging) this.hooks.onDrag?.(false);
     const id = press.id;
     if (id === null || !press.dragging) {
       // 빈 물을 눌렀거나 탭: 정지만 풀림
@@ -356,7 +352,7 @@ export class WellView {
     const v = this.views.get(id);
     v?.c.setDepth(DEPTH).setScale(1);
     const f = this.pond.fish.get(id);
-    if (f && inRect(RELEASE_HIT, w.x, w.y)) {
+    if (f && inRelease(w.x, w.y)) {
       // 놓아주기 칸 (와일드카드는 core가 거절 → 그 자리에서 다시 헤엄)
       if (this.state.release(f.cell)) {
         this.pond.cancel();

@@ -80,6 +80,7 @@ export class GameScene extends Phaser.Scene {
     this.wellView = new WellView(this, this.state, data, {
       onChange: () => this.syncUi(),
       onHover: (hover) => this.onDragHover(hover),
+      onDrag: (active) => this.releaseZone.setDragging(active),
       canInteract: () => this.canAct(),
       onDropResult: (fail, distance) => this.metrics.drop(fail, distance),
     });
@@ -404,10 +405,8 @@ export class GameScene extends Phaser.Scene {
     WellView.drawWell(this);
   }
 
-  /** 하단: 넓은 놓아주기 칸만 (조각 생성 버튼 삭제, §5.20-13) */
+  /** 놓아주기: 우물 오른쪽 아래 안쪽 모서리의 🍃 잎사귀 원 (하단 칸은 삭제) */
   private drawBottomBar(): void {
-    this.fill(REGION.bottomBar, COLOR.bar);
-    // 놓아주기는 버튼이 아니라 드롭 영역 (D-019)
     this.releaseZone = new ReleaseZoneView(this);
   }
 }

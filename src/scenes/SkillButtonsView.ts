@@ -1,18 +1,27 @@
-// 원형 스킬 버튼 (§5.20-13, D-064): 전장과 머지 판 경계에 떠 있는 지금 레인 팀(전투 밖이면 다음에 나갈 공격대 팀) 영웅 초상 3개.
-// 둘레 = 스킬 게이지, 아래 작은 글씨 = 자기 체인. 수동 모드([자동] 끔)에서 게이지가 찬 영웅은 빛나고 탭하면 발동.
-// 버튼 줄 오른쪽 돌테 위에 이 팀에 켜진 인연. 별도 "지금 팀" 줄·박스 없음. 도형 + 텍스트만, 상태는 core에서 읽기만 한다 (발동은 castReady).
+// 초상 선반 (전장 아래 띠, layout REGION.shelf): 왼쪽 "N팀 출격"(릴레이 교대 때 0.3초 슬라이드) + 켜진 인연,
+// 오른쪽 정렬로 지금 레인 팀(전투 밖이면 다음에 나갈 공격대 팀) 영웅 초상 3개 (지름 40, 간격 8, 오른쪽 여백 8).
+// 초상 둘레 = 스킬 게이지, 초상 아래 = HP 막대(3px) + 체인 이름(9px, 그림 밖). 자동 모드는 표시만, 수동 모드([자동] 끔)는 탭 = 스킬 (castReady).
+// 상태는 core에서 읽기만 한다.
 import Phaser from 'phaser';
 import type { CoreEvent, GameState } from '../core/game';
 import type { GameData } from '../data/types';
 import { heroChainColor, heroName } from './laneUnits';
 import { skinOf } from './skin/Skin';
-import { SKILL_BTN_R, WELL, skillButtonCenter } from './layout';
+import { REGION, SKILL_BTN_R, skillButtonCenter } from './layout';
 import { text } from './ui';
 
 const DEPTH = 12;
-const RING_W = 4;
+const RING_W = 3;
 const GAUGE_COLOR = 0xe8c56a;
 const READY_COLOR = 0xffffff;
+const HP_W = SKILL_BTN_R * 2 - 4;
+const HP_H = 3;
+/** 선반 띠 어둡기 */
+const SHELF_ALPHA = 0.32;
+/** 릴레이 교대 슬라이드 */
+const SLIDE_MS = 300;
+const SLIDE_PX = 40;
+const LABEL_X = 8;
 
 interface Orb {
   container: Phaser.GameObjects.Container;
@@ -21,15 +30,19 @@ interface Orb {
   chain: Phaser.GameObjects.Text;
   ring: Phaser.GameObjects.Graphics;
   glow: Phaser.GameObjects.Arc;
+  hp: Phaser.GameObjects.Rectangle;
   heroId: string | null;
   /** 스킨 초상 (§5.23-1: 영웅 그림 + 게이지 테두리) */
   portrait: Phaser.GameObjects.Image | null;
+  /** 초상 원 모양 마스크 (화면 좌표, 초상 위치가 바뀔 때 다시 만듦) */
+  mask: Phaser.GameObjects.Graphics | null;
   /** 마지막으로 그린 게이지 비율·준비 여부 (같으면 다시 그리지 않음) */
   drawn: string;
 }
 
 export class SkillButtonsView {
   private readonly orbs: Orb[] = [];
+  private readonly teamLabel: Phaser.GameObjects.Text;
   private readonly bonds: Phaser.GameObjects.Text;
   private key = '';
 
@@ -39,23 +52,26 @@ export class SkillButtonsView {
     private readonly data: GameData,
     teamSize: number,
   ) {
-    // 켜진 인연: 버튼 줄 오른쪽 돌테 위 (물 위 조각과 겹치지 않게, §5.21-6)
-    const last = skillButtonCenter(teamSize - 1, teamSize);
-    const bx = last.x + SKILL_BTN_R + RING_W + 6;
-    this.bonds = text(scene, bx, last.y, '', { fontSize: '9px', color: '#ffd1dc', wordWrap: { width: WELL.x + WELL.w - bx } })
-      .setOrigin(0, 0.5)
-      .setDepth(DEPTH);
+    const sh = REGION.shelf;
+    scene.add.rectangle(sh.x, sh.y, sh.w, sh.h, 0x000000, SHELF_ALPHA).setOrigin(0).setDepth(2);
+    scene.add.rectangle(sh.x, sh.y, sh.w, 1, 0x000000, 0.35).setOrigin(0).setDepth(2);
+    this.teamLabel = text(scene, LABEL_X, sh.y + 14, '', { fontSize: '11px', color: '#e8e8e8', fontStyle: 'bold' }).setOrigin(0, 0.5).setDepth(DEPTH);
+    this.bonds = text(scene, LABEL_X, sh.y + 31, '', { fontSize: '9px', color: '#ffd1dc' }).setOrigin(0, 0.5).setDepth(DEPTH);
+    const r = SKILL_BTN_R;
     for (let i = 0; i < teamSize; i++) {
-      const shadow = scene.add.circle(0, 2, SKILL_BTN_R + RING_W, 0x000000, 0.45);
-      const glow = scene.add.circle(0, 0, SKILL_BTN_R + RING_W + 3, READY_COLOR, 0.35).setVisible(false);
-      const track = scene.add.circle(0, 0, SKILL_BTN_R + RING_W / 2, 0x000000, 0).setStrokeStyle(RING_W, 0x1b1d24, 0.9);
+      const shadow = scene.add.circle(0, 2, r + RING_W, 0x000000, 0.45);
+      const glow = scene.add.circle(0, 0, r + RING_W + 3, READY_COLOR, 0.35).setVisible(false);
+      const track = scene.add.circle(0, 0, r + RING_W / 2, 0x000000, 0).setStrokeStyle(RING_W, 0x1b1d24, 0.9);
       const ring = scene.add.graphics();
-      const disc = scene.add.circle(0, 0, SKILL_BTN_R, 0xffffff).setInteractive({ useHandCursor: true });
+      const disc = scene.add.circle(0, 0, r, 0xffffff).setInteractive({ useHandCursor: true });
       const initial = text(scene, 0, 0, '', { fontSize: '14px', color: '#1b1d24', fontStyle: 'bold' }).setOrigin(0.5);
-      // 체인 이름은 초상 아래로 (초상 그림을 가리지 않게). 물 위에서도 읽히게 어두운 바탕
-      const chain = text(scene, 0, SKILL_BTN_R + RING_W + 1, '', { fontSize: '8px', color: '#e8e8e8', backgroundColor: '#1b1d24cc', padding: { x: 3, y: 1 } }).setOrigin(0.5, 0);
-      const container = scene.add.container(0, 0, [shadow, glow, track, ring, disc, initial, chain]).setDepth(DEPTH);
-      const orb: Orb = { container, disc, initial, chain, ring, glow, heroId: null, portrait: null, drawn: '' };
+      // 초상 아래: HP 막대 + 체인 이름 (그림 밖)
+      const hpY = r + RING_W + 2;
+      const hpBg = scene.add.rectangle(-HP_W / 2, hpY, HP_W, HP_H, 0x1b1d24).setOrigin(0, 0);
+      const hp = scene.add.rectangle(-HP_W / 2, hpY, HP_W, HP_H, 0x7ed67e).setOrigin(0, 0);
+      const chain = text(scene, 0, hpY + HP_H + 1, '', { fontSize: '9px', color: '#e8e8e8' }).setOrigin(0.5, 0);
+      const container = scene.add.container(0, 0, [shadow, glow, track, ring, disc, initial, hpBg, hp, chain]).setDepth(DEPTH);
+      const orb: Orb = { container, disc, initial, chain, ring, glow, hp, heroId: null, portrait: null, mask: null, drawn: '' };
       disc.on('pointerup', () => {
         if (orb.heroId) this.state.castReady(orb.heroId);
       });
@@ -64,9 +80,13 @@ export class SkillButtonsView {
     this.sync();
   }
 
-  /** 스킬 발동 → 그 버튼 번쩍 */
+  /** 스킬 발동 → 그 초상 번쩍 / 릴레이 교대 → 팀 표시 슬라이드 */
   handle(events: CoreEvent[]): void {
     for (const e of events) {
+      if (e.type === 'teamSwap') {
+        this.slideLabel();
+        continue;
+      }
       if (e.type !== 'skill') continue;
       const o = this.orbs.find((x) => x.heroId === e.heroId);
       if (!o) continue;
@@ -75,13 +95,44 @@ export class SkillButtonsView {
     }
   }
 
+  /** 초상 i번째 중심 (화면) — 회수 조각이 날아갈 곳 등 */
+  orbCenter(heroId: string): { x: number; y: number } | null {
+    const o = this.orbs.find((x) => x.heroId === heroId && x.container.visible);
+    return o ? { x: o.container.x, y: o.container.y } : null;
+  }
+
+  /** "2팀 출격": 왼쪽에서 0.3초 미끄러져 들어옴 */
+  private slideLabel(): void {
+    this.syncLabel();
+    this.scene.tweens.killTweensOf(this.teamLabel);
+    this.teamLabel.setX(LABEL_X - SLIDE_PX).setAlpha(0);
+    this.scene.tweens.add({ targets: this.teamLabel, x: LABEL_X, alpha: 1, duration: SLIDE_MS, ease: 'Cubic.easeOut' });
+  }
+
+  private syncLabel(): void {
+    const s = this.state;
+    const fighting = s.phase === 'day' || s.phase === 'night';
+    const tl = fighting ? `${s.activeTeam[s.laneRole] + 1}팀 출격` : '';
+    if (this.teamLabel.text !== tl) this.teamLabel.setText(tl);
+  }
+
   sync(): void {
     const s = this.state;
     const role = s.laneRole;
     const ids = s.activeTeamIds(role);
     const team = s.activeTeam[role];
+    this.syncLabel();
     const bonds = s.bonds.filter((b) => (b.side === role && b.team === team) || (b.side === null && ids.some((id) => b.heroes.includes(id))));
-    const bl = bonds.map((b) => `♥${b.bond.name}`).join(' ');
+    // 아래 줄: "2팀 대기 · 쓰러짐 n(낮) · ♥인연"
+    const fighting = s.phase === 'day' || s.phase === 'night';
+    const teams = s.teams(role).length;
+    const size = ids.length;
+    const alive = s.teamUnits(role).filter((u) => u.role === 'hero').length;
+    const parts: string[] = [];
+    if (fighting && team + 1 < teams) parts.push(`${team + 2}팀 대기`);
+    if (s.phase === 'day' && alive < size) parts.push(`쓰러짐 ${size - alive}`);
+    parts.push(...bonds.map((b) => `♥${b.bond.name}`));
+    const bl = parts.join(' · ');
     if (this.bonds.text !== bl) this.bonds.setText(bl);
     const key = ids.join(',');
     this.orbs.forEach((o, i) => {
@@ -103,19 +154,25 @@ export class SkillButtonsView {
         o.portrait = null;
         const skin = skinOf(this.scene);
         if (skin.has(`hero.${id}`)) {
-          o.portrait = skin.image(this.scene, `hero.${id}`, 0, 0, SKILL_BTN_R * 2 - 4);
+          // 초상 크롭: 그림을 원보다 크게(정수 배율 반올림) 넣고 원 모양 마스크로 자른다 (얼굴 위주)
+          o.portrait = skin.image(this.scene, `hero.${id}`, 0, 4, SKILL_BTN_R * 2, true);
           o.container.addAt(o.portrait, o.container.getIndex(o.disc) + 1);
+          o.mask?.destroy();
+          o.mask = this.scene.make.graphics({}, false).fillCircle(p.x, p.y, SKILL_BTN_R - 1);
+          o.portrait.setMask(o.mask.createGeometryMask());
           o.initial.setText('');
         }
         const c = this.data.chains.find((x) => x.archetypeId === s.heroDef(id).chain);
-        o.chain.setText(c?.name ?? ''); // 체인 이름 (§5.21-6: 2단계 이름이 아니라 뼈다귀·방울·떡·동아줄)
+        o.chain.setText(c?.name ?? ''); // 체인 이름 (뼈다귀·방울·떡·동아줄)
         o.drawn = '';
       }
       const def = s.heroDef(id);
       const ratio = Math.min(1, s.progressOf(id).gauge / def.skill.gauge);
       const ready = !s.autoSkill && s.skillReady(id);
-      const down = s.timeFlows && !s.heroUnit(id);
+      const unit = s.heroUnit(id);
+      const down = s.timeFlows && !unit;
       o.container.setAlpha(down ? 0.4 : 1);
+      o.hp.width = HP_W * (unit ? Math.max(0, Math.min(1, unit.hp / unit.maxHp)) : down ? 0 : 1);
       o.glow.setVisible(ready);
       if (ready) o.glow.setAlpha(0.25 + 0.2 * Math.sin(this.scene.time.now / 120));
       const drawn = `${ratio.toFixed(3)}:${ready}`;

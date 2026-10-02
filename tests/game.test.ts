@@ -5,7 +5,7 @@ import { GameState, enemyStats, swarmGroups, type CoreEvent } from '../src/core/
 import { FIXED_DT } from '../src/core/lane';
 import { WILDCARD, emptyIndices } from '../src/core/grid';
 import { mulberry32, parseSeed } from '../src/core/rng';
-import { RELEASE_ZONE, dropTarget, gameGeometry } from '../src/scenes/layout';
+import { RELEASE, dropTarget, gameGeometry } from '../src/scenes/layout';
 
 const data = structuredClone(rawGameData) as unknown as GameData;
 const DOG = 'companion_animal';
@@ -253,9 +253,7 @@ describe('GameState — 놓아주기 (환급 없음)', () => {
 
   it('놓아주기 영역에 드롭 → dropTarget release', () => {
     const g = game();
-    const cx = RELEASE_ZONE.x + RELEASE_ZONE.w / 2;
-    const cy = RELEASE_ZONE.y + RELEASE_ZONE.h / 2;
-    expect(dropTarget(g.grid, cx, cy)).toEqual({ kind: 'release' });
+    expect(dropTarget(g.grid, RELEASE.x, RELEASE.y)).toEqual({ kind: 'release' });
   });
 
   it('와일드카드는 tier 0으로 만든다', () => {

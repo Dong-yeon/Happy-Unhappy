@@ -196,8 +196,7 @@ function drawWell(g: Phaser.GameObjects.Graphics): void {
     g.lineBetween(ox + x + 13, oy + w.h, ox + x + 13, oy * 2 + w.h);
   }
   g.fillStyle(0x1f4e6b, 1).fillRoundedRect(ox, oy, w.w, w.h, w.r);
-  g.fillStyle(0x2c6a8a, 0.55).fillRoundedRect(ox + 18, oy + 18, w.w - 36, w.h - 36, w.r - 14);
-  g.fillStyle(0x3d86a8, 0.25).fillEllipse(ox + w.w / 2, oy + w.h / 2, w.w * 0.55, w.h * 0.45);
+  g.fillStyle(0x2c6a8a, 0.55).fillRoundedRect(ox + 14, oy + 14, w.w - 28, w.h - 28, w.r - 10);
   g.lineStyle(1, 0x9fd8ff, 0.18);
   for (let i = 0; i < 4; i++) g.strokeEllipse(ox + w.w * (0.25 + i * 0.17), oy + w.h * (0.3 + (i % 2) * 0.35), 26, 6);
   g.lineStyle(2, 0x10324a, 0.9).strokeRoundedRect(ox, oy, w.w, w.h, w.r);

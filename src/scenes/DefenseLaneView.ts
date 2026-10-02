@@ -24,9 +24,6 @@ const HIT_BY_WORRY = 0xd28cff;
 /** 홈으로 돌아가는 중 */
 const RETURNING_ALPHA = 0.85;
 
-/** 팀 표시 x (씨앗 HP 막대·글 오른쪽) */
-const TEAM_LABEL_X = 8 + 18 + CORE_BAR_W + 62;
-
 /** 방어선 빛 (이야기책 빛이 닿는 띠) */
 const GUARD_GLOW = 0xfff1c4;
 const GUARD_DANGER = 0xff5a5a;
@@ -57,12 +54,9 @@ export class DefenseLaneView {
   private readonly worries = new Map<number, EnemyView>();
   private readonly units = new Map<number, UnitView>();
   private readonly downLabel: Phaser.GameObjects.Text;
-  private readonly teamLabel: Phaser.GameObjects.Text;
   private readonly spawnLabel: Phaser.GameObjects.Text;
   private readonly coreFill: Phaser.GameObjects.Rectangle;
   private readonly coreText: Phaser.GameObjects.Text;
-  /** 마지막으로 위 줄 배치를 맞춘 팀 표시 글 */
-  private laidOut = '';
   /** 방어선 빛 테두리 (붉게 깜빡임용, fx 꺼짐이면 null = 세로선 그대로) */
   private readonly guardEdge: Phaser.GameObjects.Graphics | null = null;
   private readonly guardDanger: Phaser.GameObjects.Graphics | null = null;
@@ -82,14 +76,15 @@ export class DefenseLaneView {
     // 팩 타일(풀빛)은 곱하기 tint만으로는 남색이 안 돼서 밤빛 덮개를 한 겹 더 (생성 그림은 무채색이라 tint로 충분)
     const nightVeil = scene.add.rectangle(g.x, g.y, g.w, g.h, COLOR.abyss, sk.has('bg.night') && sk.frame('bg.night').packed ? 0.7 : 0).setOrigin(0);
     const lineX = progressX(CORE.lineY);
-    const line = scene.add.line(0, 0, lineX, g.y + 6, lineX, g.y + g.h - 6, COLOR.line).setOrigin(0).setLineWidth(1);
+    const ln = REGION.lane;
+    const line = scene.add.line(0, 0, lineX, ln.y + 6, lineX, ln.y + ln.h - 6, COLOR.line).setOrigin(0).setLineWidth(1);
     // 방어선 = 이야기책 빛이 닿는 데까지 (규칙은 그대로 CORE.lineY). fx 꺼짐(?skin=0·팩 없음)이면 세로선 그대로
     const fx = skinOf(scene).fx;
     const glow = scene.add.graphics();
     if (fx) {
       line.setVisible(false);
-      const edge = guardEdgePoints(lineX, g.y, g.h);
-      glow.fillStyle(GUARD_GLOW, 1).fillPoints([{ x: g.x, y: g.y }, ...edge, { x: g.x, y: g.y + g.h }], true);
+      const edge = guardEdgePoints(lineX, ln.y, ln.h);
+      glow.fillStyle(GUARD_GLOW, 1).fillPoints([{ x: ln.x, y: ln.y }, ...edge, { x: ln.x, y: ln.y + ln.h }], true);
       glow.setAlpha(GUARD_ALPHA.max);
       // bookGlow 펄스와 같은 리듬
       scene.tweens.add({ targets: glow, alpha: GUARD_ALPHA.min, duration: GLOW_PULSE_MS, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' });
@@ -97,9 +92,6 @@ export class DefenseLaneView {
       this.guardDanger = scene.add.graphics().lineStyle(2, GUARD_DANGER, 0.9).strokePoints(edge).setVisible(false);
     }
     this.spawnLabel = text(scene, g.x + g.w - 6, g.y + 4, '← 씨앗을 노리는 무리', { fontSize: '10px', color: '#c9b98a' }).setOrigin(1, 0);
-    // 팀 표시는 씨앗 HP 줄 오른쪽 (레인 왼쪽 위 = 맨 윗자리 유닛·쓰러짐 연출과 겹치던 자리라 옮김)
-    this.teamLabel = text(scene, TEAM_LABEL_X, g.y + 10, '', { fontSize: '9px', color: '#cfd6ea' }).setOrigin(0, 0.5);
-    const laneLabel = text(scene, g.x + g.w * 0.38, g.y + g.h - 4, '밤 · 이야기 씨앗 지키기', { fontSize: '9px', color: '#8f835f' }).setOrigin(0.5, 1);
     const home = HOME.defense;
     // 본거지 이야기책 (핵을 품고 있음, D-056)
     const happy = storyBook(scene, home.x, home.y);
@@ -119,7 +111,7 @@ export class DefenseLaneView {
     this.soldierLayer = scene.add.container(0, 0);
     this.heroLayer = scene.add.container(0, 0);
     this.root = scene.add
-      .container(0, 0, [bg, nightVeil, glow, ...(this.guardEdge ? [this.guardEdge, this.guardDanger!] : []), line, this.spawnLabel, this.teamLabel, laneLabel, bookGlow, happy, this.soldierLayer, this.heroLayer, coreGem, coreFrame, this.coreFill, this.coreText, this.downLabel])
+      .container(0, 0, [bg, nightVeil, glow, ...(this.guardEdge ? [this.guardEdge, this.guardDanger!] : []), line, this.spawnLabel, bookGlow, happy, this.soldierLayer, this.heroLayer, coreGem, coreFrame, this.coreFill, this.coreText, this.downLabel])
       .setDepth(1)
       .setVisible(false);
   }
@@ -224,23 +216,12 @@ export class DefenseLaneView {
     const s = this.state;
     const timers = [...s.reviveTimers.values()];
     const down = timers.length ? Math.min(...timers) : 0;
-    const teams = s.teams('defense').length;
     this.downLabel.setVisible(down > 0);
     if (down > 0) this.downLabel.setText(`쓰러짐 ${timers.length} · ${Math.ceil(down)}초 뒤 일어남`);
-    // 팀 표시 (§5.20-13): "1팀 출격 · 2팀 대기"
-    const at = s.activeTeam.defense;
-    const tl = s.phase === 'night' ? `${at + 1}팀 출격${at + 1 < teams ? ` · ${at + 2}팀 대기` : ''}` : '';
-    if (this.teamLabel.text !== tl) this.teamLabel.setText(tl);
+    // 팀 표시는 초상 선반 (SkillButtonsView)
     const q = s.nightQueued;
     const sl = `← 씨앗을 노리는 무리${q > 0 ? ` (+${q} 대기)` : ''}`;
-    if (this.spawnLabel.text !== sl || this.teamLabel.text !== this.laidOut) {
-      this.spawnLabel.setText(sl);
-      this.laidOut = this.teamLabel.text;
-      // 팀 표시와 무리 표시가 한 줄에서 닿으면 무리 표시를 한 줄 아래로
-      const g = REGION.ground;
-      const clash = this.teamLabel.text !== '' && this.teamLabel.x + this.teamLabel.width + 6 > this.spawnLabel.x - this.spawnLabel.width;
-      this.spawnLabel.setY(clash ? g.y + 18 : g.y + 4);
-    }
+    if (this.spawnLabel.text !== sl) this.spawnLabel.setText(sl);
   }
 
   private flash(x: number, y: number, color: number): void {

@@ -16,7 +16,7 @@ import {
   type Piece,
 } from '../src/core/grid';
 import { mulberry32 } from '../src/core/rng';
-import { REGION, RELEASE_ZONE, cellAt, dropTarget } from '../src/scenes/layout';
+import { REGION, RELEASE, cellAt, dropTarget } from '../src/scenes/layout';
 
 const MAX = 3;
 const presets: [number, number][] = [[4, 4], [5, 4], [6, 4]];
@@ -205,9 +205,8 @@ describe('resolveDrop / applyDrop — §4.1.1 결과표', () => {
     const g = createGrid({ cols: 5, rows: 4 }, MAX);
     const a = pc(DOG, 1);
     g.cells[0] = a;
-    const mid = (r: { x: number; y: number; w: number; h: number }) => [r.x + r.w / 2, r.y + r.h / 2];
     for (const [x, y, kind] of [
-      [...mid(RELEASE_ZONE), 'release'],
+      [RELEASE.x, RELEASE.y, 'release'],
       [20, REGION.ground.y + 50, 'none'],
       [340, REGION.ground.y + 50, 'none'],
     ] as [number, number, string][]) {

@@ -30,7 +30,6 @@ export class AbyssLaneView {
   private readonly core: Phaser.GameObjects.Container;
   private readonly carryFrame: Phaser.GameObjects.Container;
   private readonly carryFill: Phaser.GameObjects.Rectangle;
-  private readonly downLabel: Phaser.GameObjects.Text;
   private card: Phaser.GameObjects.Container | null = null;
   private ground!: Phaser.GameObjects.Rectangle | Phaser.GameObjects.TileSprite;
   private tintStage = 0;
@@ -63,11 +62,10 @@ export class AbyssLaneView {
     this.guardianLabel = text(scene, g.x + g.w - 6, g.y + 4, '', { fontSize: '9px', color: '#8796c2' }).setOrigin(1, 0);
     // 본거지 이야기책 (출발·도착·밤에 지키는 곳, D-056): 왼쪽 끝 펼친 책
     const hutX = progressX(CORE.lineY);
-    const hutY = g.y + g.h / 2;
+    const hutY = REGION.lane.y + REGION.lane.h / 2;
     const book = storyBook(scene, hutX - 10, hutY);
     this.book = book;
     const hutLabel = text(scene, hutX - 10, hutY + 10, '이야기책', { fontSize: '8px', color: '#5d6a91' }).setOrigin(0.5, 0);
-    const label = text(scene, g.x + g.w * 0.38, g.y + g.h - 4, '낮 · 이야기 씨앗 찾아 돌아오기 →', { fontSize: '9px', color: '#5d6a91' }).setOrigin(0.5, 1);
     // 핵 (작은 빛나는 마름모)
     // 이야기 씨앗: 스킨이면 직접 그린 씨앗 (§5.23-1 ui.seed), 아니면 빛나는 마름모
     const sk = skinOf(scene);
@@ -82,12 +80,11 @@ export class AbyssLaneView {
     const cap = text(scene, fx - 4, barY, '이야기책 ←', { fontSize: '8px', color: '#ffe08a' }).setOrigin(1, 0.5);
     const cap2 = text(scene, fx + BAR_W + 4, barY, '◆ 씨앗', { fontSize: '8px', color: '#ffe08a' }).setOrigin(0, 0.5);
     this.carryFrame = scene.add.container(0, 0, [frame, this.carryFill, cap, cap2]).setVisible(false);
-    this.downLabel = text(scene, g.x + 8, g.y + 6, '', { fontSize: '10px', color: '#cfd6ea' }).setVisible(false);
     this.guardianLayer = scene.add.container(0, 0);
     this.soldierLayer = scene.add.container(0, 0);
     this.heroLayer = scene.add.container(0, 0);
     this.root = scene.add
-      .container(0, 0, [bg, this.guardianLabel, this.guardianLayer, book, hutLabel, label, this.soldierLayer, this.heroLayer, this.carryFrame, this.core, this.downLabel])
+      .container(0, 0, [bg, this.guardianLabel, this.guardianLayer, book, hutLabel, this.soldierLayer, this.heroLayer, this.carryFrame, this.core])
       .setDepth(1);
   }
 
@@ -257,15 +254,7 @@ export class AbyssLaneView {
       const y = c.at === 'carried' ? (ex.carrier?.y ?? ex.geo.wallY) : c.y;
       this.carryFill.width = BAR_W * Math.max(0, Math.min(1, (y - ex.geo.wallY) / ex.length));
     }
-    // 팀 표시 (전장 왼쪽 위, §5.20-13): "1팀 출격 · 2팀 대기 · 쓰러짐 n" (낮 쓰러짐은 그 낮 동안 안 일어남, §5.20-3)
-    const teams = s.teams('offense').length;
-    const alive = s.teamUnits('offense').length;
-    const size = s.activeTeamIds('offense').length;
-    const at = s.activeTeam.offense;
-    const tl =
-      s.phase === 'day' ? `${at + 1}팀 출격${at + 1 < teams ? ` · ${at + 2}팀 대기` : ''}${alive < size ? ` · 쓰러짐 ${size - alive}` : ''}` : '';
-    this.downLabel.setVisible(tl !== '');
-    if (this.downLabel.text !== tl) this.downLabel.setText(tl);
+    // 팀 표시는 초상 선반 (SkillButtonsView)
   }
 
   /** 이야기 씨앗 획득 반짝임: 작은 빛 조각이 사방으로 */
