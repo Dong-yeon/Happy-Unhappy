@@ -2,7 +2,7 @@
   "base": {
     "hp": 18,
     "speed": 35,
-    "atk": 3,
+    "atk": 2.8,
     "atkInterval": 1.2
   },
   "enemies": [

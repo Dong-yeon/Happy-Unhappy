@@ -176,7 +176,7 @@
           },
           {
             "type": "wildcat",
-            "count": 2
+            "count": 1
           }
         ],
         "chase": [
@@ -186,7 +186,7 @@
           },
           {
             "type": "wildcat",
-            "count": 2
+            "count": 1
           }
         ]
       },
@@ -393,7 +393,7 @@
           },
           {
             "type": "wildcat",
-            "count": 3
+            "count": 2
           },
           {
             "type": "mitten",
@@ -407,7 +407,7 @@
           },
           {
             "type": "wildcat",
-            "count": 3
+            "count": 2
           },
           {
             "type": "mitten",
@@ -487,15 +487,15 @@
       "retryIntro": "그림자가 또 나무를 기어오른다. 오누이는 둥지를 다시 지키러 간다.",
       "day": {
         "guardian": "shadow",
-        "guardianHp": 366,
+        "guardianHp": 330,
         "enemies": [
           {
             "type": "shadow",
-            "count": 7
+            "count": 6
           },
           {
             "type": "wildcat",
-            "count": 4
+            "count": 3
           },
           {
             "type": "mitten",
@@ -505,11 +505,11 @@
         "chase": [
           {
             "type": "shadow",
-            "count": 7
+            "count": 6
           },
           {
             "type": "wildcat",
-            "count": 4
+            "count": 3
           },
           {
             "type": "mitten",
@@ -594,33 +594,33 @@
       "retryIntro": "오누이는 다시 하늘에 빈다. 동아줄이 다시 내려오기를.",
       "day": {
         "guardian": "shadow",
-        "guardianHp": 404,
+        "guardianHp": 360,
         "enemies": [
           {
             "type": "shadow",
-            "count": 7
+            "count": 6
           },
           {
             "type": "wildcat",
-            "count": 4
+            "count": 3
           },
           {
             "type": "mitten",
-            "count": 2
+            "count": 1
           }
         ],
         "chase": [
           {
             "type": "shadow",
-            "count": 7
+            "count": 6
           },
           {
             "type": "wildcat",
-            "count": 4
+            "count": 3
           },
           {
             "type": "mitten",
-            "count": 2
+            "count": 1
           }
         ]
       },
@@ -696,18 +696,18 @@
       "retryIntro": "호랑이 그림자가 다시 동아줄을 잡는다. 오누이는 한 번 더 손을 맞잡는다.",
       "day": {
         "guardian": "boss",
-        "guardianHp": 3200,
+        "guardianHp": 3600,
         "boss": true,
         "enemies": [
           {
             "type": "mitten",
-            "count": 5
+            "count": 6
           }
         ],
         "chase": [
           {
             "type": "mitten",
-            "count": 5
+            "count": 6
           }
         ]
       },

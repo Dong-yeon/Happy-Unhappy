@@ -51,7 +51,7 @@
     "nightStartDelay": 3
   },
   "enemy": {
-    "hpGrowthPerStage": 1.13
+    "hpGrowthPerStage": 1.10
   },
   "swarm": {
     "countMult": 3,

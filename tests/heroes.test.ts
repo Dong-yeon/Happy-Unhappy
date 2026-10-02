@@ -329,7 +329,7 @@ describe('이야기책 문장 (§5.20-8)', () => {
     g.debugEndNight();
     const notes = g.pageNotes[1];
     const core = base.stages.stages[0].coreName;
-    expect(notes[0]).toBe(fillTemplate(base.chapter.pageLines.carrier, { hero: '삽살', core }));
+    expect(notes[0]).toBe(fillTemplate(base.chapter.pageLines.carrier, { hero: base.heroes.heroes.find((h) => h.id === 'sapsal')!.name, core }));
     expect(notes[1]).toBe(base.chapter.pageLines.hpLow);
     expect(notes[2]).toBe(fillTemplate(base.stages.stages[0].retryPageLine ?? base.chapter.pageLines.retry, { n: 2 }));
   });

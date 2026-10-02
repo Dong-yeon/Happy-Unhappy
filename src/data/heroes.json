@@ -2,7 +2,7 @@
   "heroes": [
     {
       "id": "sapsal",
-      "name": "삽살",
+      "name": "삽살이",
       "hp": 120,
       "atk": 18,
       "atkInterval": 0.9,
