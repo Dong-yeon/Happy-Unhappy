@@ -118,15 +118,17 @@ function checkCombat(c: Checker, v: unknown, path: string, extra: string[] = [],
   return o;
 }
 
-function checkBalance(c: Checker, v: unknown): { maxTier?: number; maxDays?: number; chapterLength?: number } {
+function checkBalance(c: Checker, v: unknown): { maxTier?: number; chapterLength?: number } {
   const p = 'balance';
-  const b = c.obj(v, p, ['version', 'start', 'grid', 'lane', 'happy', 'wave', 'abyss', 'hero', 'feed', 'buff', 'merge', 'offense', 'shadow', 'chapter', 'days', 'diary']);
+  // v0.15 (D-054·D-055): shadow·diary 블록, chapter.maxDays·days.dailyLimit/storeCap는 삭제 → 남아 있으면 "알 수 없는 키"
+  const b = c.obj(v, p, [
+    'version', 'start', 'grid', 'lane', 'happy', 'wave', 'enemy', 'guardian', 'carry', 'core', 'hero', 'feed', 'buff', 'merge', 'offense', 'chapter', 'days',
+  ]);
   if (!b) return {};
-  if (b.version !== 3) c.fail(`${p}.version`, `3이어야 함 (현재 ${String(b.version)})`);
-  const st = c.obj(b.start, `${p}.start`, ['joy', 'shadow', 'swapHeroes']);
+  if (b.version !== 4) c.fail(`${p}.version`, `4여야 함 (현재 ${String(b.version)})`);
+  const st = c.obj(b.start, `${p}.start`, ['joy', 'swapHeroes']);
   if (st) {
     c.num(st.joy, `${p}.start.joy`, { min: 0 });
-    c.num(st.shadow, `${p}.start.shadow`, { min: 0 });
     c.bool(st.swapHeroes, `${p}.start.swapHeroes`);
   }
 
@@ -169,28 +171,20 @@ function checkBalance(c: Checker, v: unknown): { maxTier?: number; maxDays?: num
   const h = c.nums(b.happy, `${p}.happy`, ['atk', 'atkInterval', 'range'], { min: 0 });
   if (h) c.num(h.atkInterval, `${p}.happy.atkInterval`, { min: 0.01 });
 
-  const w = c.obj(b.wave, `${p}.wave`, ['wavesPerNight', 'countBase', 'countStep', 'spawnInterval', 'waveGap', 'dayStartDelay', 'bossPrepSeconds', 'hpGrowthPerDay']);
-  if (w) {
-    c.num(w.wavesPerNight, `${p}.wave.wavesPerNight`, { int: true, min: 1 });
-    c.num(w.countBase, `${p}.wave.countBase`, { int: true, min: 0 });
-    c.num(w.countStep, `${p}.wave.countStep`, { min: 0 });
-    c.num(w.spawnInterval, `${p}.wave.spawnInterval`, { min: 0 });
-    c.num(w.waveGap, `${p}.wave.waveGap`, { min: 0 });
-    c.num(w.dayStartDelay, `${p}.wave.dayStartDelay`, { min: 0 });
-    c.num(w.bossPrepSeconds, `${p}.wave.bossPrepSeconds`, { min: 0 });
-    c.num(w.hpGrowthPerDay, `${p}.wave.hpGrowthPerDay`, { min: 0 });
+  c.nums(b.wave, `${p}.wave`, ['spawnInterval', 'waveGap', 'nightStartDelay'], { min: 0 });
+  c.nums(b.enemy, `${p}.enemy`, ['hpGrowthPerStage'], { min: 0.01 });
+  const gd = c.nums(b.guardian, `${p}.guardian`, ['counterAtk', 'counterAtkInterval', 'counterRange', 'bossCounterMult', 'bossWildcards'], { min: 0 });
+  if (gd) {
+    c.num(gd.counterAtkInterval, `${p}.guardian.counterAtkInterval`, { min: 0.01 });
+    c.num(gd.bossWildcards, `${p}.guardian.bossWildcards`, { int: true });
   }
-
-  const a = c.nums(b.abyss, `${p}.abyss`, [
-    'layerHpBase', 'layerHpGrowth', 'counterAtk', 'counterAtkInterval', 'counterRange', 'abyssDeathShadow',
-    'layerClearShadowReduce', 'bossFloorEvery', 'bossFloorHpMult', 'bossFloorCounterMult', 'bossFloorWildcards',
-  ], { min: 0 });
-  if (a) {
-    c.num(a.bossFloorEvery, `${p}.abyss.bossFloorEvery`, { int: true, min: 1 });
-    c.num(a.bossFloorWildcards, `${p}.abyss.bossFloorWildcards`, { int: true, min: 0 });
-    c.num(a.layerHpBase, `${p}.abyss.layerHpBase`, { min: 1 });
-    c.num(a.counterAtkInterval, `${p}.abyss.counterAtkInterval`, { min: 0.01 });
+  const cr = c.nums(b.carry, `${p}.carry`, ['speedMult', 'atkIntervalMult', 'chaseInterval', 'pickupRange'], { min: 0 });
+  if (cr) {
+    c.num(cr.speedMult, `${p}.carry.speedMult`, { min: 0.01 });
+    c.num(cr.atkIntervalMult, `${p}.carry.atkIntervalMult`, { min: 0.01 });
   }
+  const co = c.nums(b.core, `${p}.core`, ['hp', 'sinkDamage', 'bossSinkDamage'], { min: 0 });
+  if (co) c.num(co.hp, `${p}.core.hp`, { min: 1 });
 
   // 영웅·먹이기·버프·병사 (§5.17, [11])
   const hr = c.nums(b.hero, `${p}.hero`, ['dmgReduceMax', 'atkIntervalMin', 'reviveSeconds', 'reviveHpRatio'], { min: 0 });
@@ -215,71 +209,43 @@ function checkBalance(c: Checker, v: unknown): { maxTier?: number; maxDays?: num
     c.num(mg.affinityMult, `${p}.merge.affinityMult`, { min: 0 });
   }
 
-  // 낮 = 오펜스 (§5.17-10, 구 night 블록)
-  const n = c.nums(b.offense, `${p}.offense`, ['seconds', 'stallShadowPerSec'], { min: 0 });
-  if (n) c.num(n.seconds, `${p}.offense.seconds`, { min: 1 });
+  // 낮 = 오펜스 (§5.19-2)
+  c.nums(b.offense, `${p}.offense`, ['seconds'], { min: 1 });
 
-  const shadowKeys = ['shadowMax', 'sinkShadow', 'sinkLayerHp', 'shadowAfterBossWin', 'shadowAfterBossLose'];
-  const s = c.obj(b.shadow, `${p}.shadow`, [...shadowKeys, 'weatherThresholds']);
-  if (s) {
-    for (const k of shadowKeys) if (k in s) c.num(s[k], `${p}.shadow.${k}`, { min: 0 });
-    if (typeof s.shadowMax === 'number') {
-      c.num(s.shadowMax, `${p}.shadow.shadowMax`, { min: 1 });
-      c.num(s.shadowAfterBossWin, `${p}.shadow.shadowAfterBossWin`, { max: s.shadowMax });
-      c.num(s.shadowAfterBossLose, `${p}.shadow.shadowAfterBossLose`, { max: s.shadowMax });
-    }
-    const wt = c.arr(s.weatherThresholds, `${p}.shadow.weatherThresholds`);
-    if (wt) {
-      if (wt.length !== 3) c.fail(`${p}.shadow.weatherThresholds`, '[흐림, 비, 폭우] 세 값이어야 함');
-      const vals = wt.map((v, i) => c.num(v, `${p}.shadow.weatherThresholds[${i}]`, { min: 0 }));
-      for (let i = 1; i < vals.length; i++) {
-        const a = vals[i - 1];
-        const v = vals[i];
-        if (a !== undefined && v !== undefined && v <= a) c.fail(`${p}.shadow.weatherThresholds`, '오름차순이어야 함');
-      }
-    }
-  }
-
-  // 챕터 진행 (§5.15-1): 1 ≤ turningPoint < length, maxDays ≥ 1
-  let maxDays: number | undefined;
+  // 챕터 진행 (§5.19-1): 1 ≤ turningPoint < length
   let chapterLength: number | undefined;
-  const ch = c.obj(b.chapter, `${p}.chapter`, ['length', 'turningPoint', 'turningPointHpMult', 'maxDays']);
+  const ch = c.obj(b.chapter, `${p}.chapter`, ['length', 'turningPoint']);
   if (ch) {
     chapterLength = c.num(ch.length, `${p}.chapter.length`, { int: true, min: 2 });
     const tp = c.num(ch.turningPoint, `${p}.chapter.turningPoint`, { int: true, min: 1 });
     if (tp !== undefined && chapterLength !== undefined && tp >= chapterLength) c.fail(`${p}.chapter.turningPoint`, 'length보다 작아야 함');
-    c.num(ch.turningPointHpMult, `${p}.chapter.turningPointHpMult`, { min: 0.01 });
-    maxDays = c.num(ch.maxDays, `${p}.chapter.maxDays`, { int: true, min: 1 });
   }
 
-  const d = c.obj(b.days, `${p}.days`, ['dailyLimit', 'storeCap', 'morningJoyFloor']);
-  if (d) {
-    const limit = c.num(d.dailyLimit, `${p}.days.dailyLimit`, { int: true, min: 1 });
-    const cap = c.num(d.storeCap, `${p}.days.storeCap`, { int: true, min: 1 });
-    c.num(d.morningJoyFloor, `${p}.days.morningJoyFloor`, { int: true, min: 0 });
-    if (limit !== undefined && cap !== undefined && cap < limit) c.fail(`${p}.days.storeCap`, 'dailyLimit 이상이어야 함');
-  }
-
-  c.nums(b.diary, `${p}.diary`, ['diarySinkThreshold'], { int: true, min: 0 });
-  return { maxTier, maxDays, chapterLength };
+  c.nums(b.days, `${p}.days`, ['morningJoyFloor'], { int: true, min: 0 });
+  return { maxTier, chapterLength };
 }
 
-/** heroes.json (§5.17-1): 영웅 능력치, 기본 배정 offense ≠ defense (둘 다 heroes에 있는 id) */
+/** heroes.json (§5.17-1, §5.19-9): 영웅 능력치, 기본 배정 offense ≠ defense (둘 다 heroes에 있고 보상 영웅이 아닌 id) */
 function checkHeroes(c: Checker, v: unknown): void {
   const o = c.obj(v, 'heroes', ['heroes', 'offense', 'defense']);
   if (!o) return;
   const list = c.arr(o.heroes, 'heroes.heroes', 2) ?? [];
+  const rewards = new Set<string>();
   const ids = list.map((e, i) => {
-    const h = checkCombat(c, e, `heroes.heroes[${i}]`, ['id', 'name']);
+    const h = checkCombat(c, e, `heroes.heroes[${i}]`, ['id', 'name'], ['reward']);
     if (!h) return undefined;
     c.str(h.name, `heroes.heroes[${i}].name`);
-    return c.str(h.id, `heroes.heroes[${i}].id`);
+    const id = c.str(h.id, `heroes.heroes[${i}].id`);
+    if ('reward' in h && c.str(h.reward, `heroes.heroes[${i}].reward`) !== undefined && id !== undefined) rewards.add(id);
+    return id;
   });
   c.unique(ids, 'heroes.heroes', '영웅 id');
   const off = c.str(o.offense, 'heroes.offense');
   const def = c.str(o.defense, 'heroes.defense');
   for (const [k, id] of [['offense', off], ['defense', def]] as const) {
     if (id !== undefined && !ids.includes(id)) c.fail(`heroes.${k}`, `heroes에 없는 영웅 "${id}"`);
+    // 보상 영웅은 시작 명단에서 뺀다 (D-057)
+    if (id !== undefined && rewards.has(id)) c.fail(`heroes.${k}`, `보상 영웅 "${id}"은 시작 배정에 둘 수 없음`);
   }
   if (off !== undefined && off === def) c.fail('heroes.defense', 'offense와 다른 영웅이어야 함 (양쪽 최소 1명)');
 }
@@ -331,32 +297,77 @@ function checkChains(c: Checker, v: unknown, maxTier: number | undefined, world:
   return ids.filter((s): s is string => s !== undefined);
 }
 
-function checkMonsters(c: Checker, v: unknown): void {
-  const m = c.obj(v, 'monsters', ['worry', 'backflowBoss']);
-  if (!m) return;
-  const w = c.obj(m.worry, 'monsters.worry', ['name', 'hpBase', 'speed', 'atk', 'atkInterval', 'joyReward']);
-  if (w) {
-    c.str(w.name, 'monsters.worry.name');
-    c.num(w.hpBase, 'monsters.worry.hpBase', { min: 1 });
-    c.num(w.speed, 'monsters.worry.speed', { min: 0 });
-    c.num(w.atk, 'monsters.worry.atk', { min: 0 });
-    c.num(w.atkInterval, 'monsters.worry.atkInterval', { min: 0.01 });
-    c.num(w.joyReward, 'monsters.worry.joyReward', { min: 0 });
-  }
-  const b = c.obj(m.backflowBoss, 'monsters.backflowBoss', [
-    'name', 'hp', 'speed', 'atk', 'atkInterval', 'joyReward', 'joyPenalty', 'sinkLayerHp', 'hpGrowthPerDay',
-  ]);
+/** monsters.json (§5.19-5): 공통 능력치 + 종류별 배수. 돌려주는 값 = 적 id 목록 */
+function checkMonsters(c: Checker, v: unknown): string[] {
+  const m = c.obj(v, 'monsters', ['base', 'enemies']);
+  if (!m) return [];
+  const b = c.obj(m.base, 'monsters.base', ['hp', 'speed', 'atk', 'atkInterval', 'joyReward']);
   if (b) {
-    c.str(b.name, 'monsters.backflowBoss.name');
-    c.num(b.hp, 'monsters.backflowBoss.hp', { min: 1 });
-    c.num(b.speed, 'monsters.backflowBoss.speed', { min: 0 });
-    c.num(b.atk, 'monsters.backflowBoss.atk', { min: 0 });
-    c.num(b.atkInterval, 'monsters.backflowBoss.atkInterval', { min: 0.01 });
-    c.num(b.joyReward, 'monsters.backflowBoss.joyReward', { min: 0 });
-    c.num(b.joyPenalty, 'monsters.backflowBoss.joyPenalty', { min: 0 });
-    c.num(b.sinkLayerHp, 'monsters.backflowBoss.sinkLayerHp', { min: 0 });
-    c.num(b.hpGrowthPerDay, 'monsters.backflowBoss.hpGrowthPerDay', { min: 0.01 });
+    c.num(b.hp, 'monsters.base.hp', { min: 1 });
+    c.num(b.speed, 'monsters.base.speed', { min: 0 });
+    c.num(b.atk, 'monsters.base.atk', { min: 0 });
+    c.num(b.atkInterval, 'monsters.base.atkInterval', { min: 0.01 });
+    c.num(b.joyReward, 'monsters.base.joyReward', { min: 0 });
   }
+  const list = c.arr(m.enemies, 'monsters.enemies', 1) ?? [];
+  const ids = list.map((e, i) => {
+    const p = `monsters.enemies[${i}]`;
+    const o = c.obj(e, p, ['id', 'name', 'hpMult', 'speedMult', 'atkMult']);
+    if (!o) return undefined;
+    c.str(o.name, `${p}.name`);
+    c.num(o.hpMult, `${p}.hpMult`, { min: 0.01 });
+    c.num(o.speedMult, `${p}.speedMult`, { min: 0 });
+    c.num(o.atkMult, `${p}.atkMult`, { min: 0 });
+    return c.str(o.id, `${p}.id`);
+  });
+  c.unique(ids, 'monsters.enemies', '적 id');
+  return ids.filter((s): s is string => s !== undefined);
+}
+
+/** stages.json (§5.19-4): 챕터 길이만큼, stage 1..n 순서, 필수 문구, 적 id 참조. 1-length는 밤 없음 */
+function checkStages(c: Checker, v: unknown, enemyIds: string[], length: number | undefined): void {
+  const o = c.obj(v, 'stages', ['stages']);
+  if (!o) return;
+  const list = c.arr(o.stages, 'stages.stages', 1) ?? [];
+  if (length !== undefined && list.length !== length) c.fail('stages.stages', `balance.chapter.length(${length})개여야 함 (현재 ${list.length})`);
+  const groups = (g: unknown, path: string, minLen: number) => {
+    const a = c.arr(g, path, minLen) ?? [];
+    a.forEach((it, k) => {
+      const q = `${path}[${k}]`;
+      const e = c.obj(it, q, ['type', 'count']);
+      if (!e) return;
+      const t = c.str(e.type, `${q}.type`);
+      if (t !== undefined && !enemyIds.includes(t)) c.fail(`${q}.type`, `monsters.enemies에 없는 적 "${t}"`);
+      c.num(e.count, `${q}.count`, { int: true, min: 1 });
+    });
+  };
+  list.forEach((it, i) => {
+    const p = `stages.stages[${i}]`;
+    const s = c.obj(it, p, ['stage', 'title', 'intro', 'coreName', 'page', 'retryIntro', 'day', 'night'], ['coreText']);
+    if (!s) return;
+    if (s.stage !== i + 1) c.fail(`${p}.stage`, `${i + 1}이어야 함 (순서대로)`);
+    for (const k of ['title', 'intro', 'coreName', 'page', 'retryIntro']) c.str(s[k], `${p}.${k}`);
+    if ('coreText' in s) c.str(s.coreText, `${p}.coreText`);
+    const d = c.obj(s.day, `${p}.day`, ['guardian', 'guardianHp', 'enemies', 'chase'], ['boss']);
+    if (d) {
+      const gt = c.str(d.guardian, `${p}.day.guardian`);
+      if (gt !== undefined && !enemyIds.includes(gt)) c.fail(`${p}.day.guardian`, `monsters.enemies에 없는 적 "${gt}"`);
+      c.num(d.guardianHp, `${p}.day.guardianHp`, { min: 1 });
+      if ('boss' in d) c.bool(d.boss, `${p}.day.boss`);
+      groups(d.enemies, `${p}.day.enemies`, 0);
+      groups(d.chase, `${p}.day.chase`, 0);
+    }
+    const nt = c.obj(s.night, `${p}.night`, ['waves'], ['bossWave']);
+    if (nt) {
+      const waves = c.arr(nt.waves, `${p}.night.waves`) ?? [];
+      waves.forEach((w, k) => groups(w, `${p}.night.waves[${k}]`, 1));
+      if ('bossWave' in nt) groups(nt.bossWave, `${p}.night.bossWave`, 1);
+      const last = length !== undefined && i + 1 === length;
+      // 1-length 낮 성공 = 챕터 완성 (밤 없음). 그 밖의 스테이지는 밤이 있어야 한다
+      if (last && (waves.length > 0 || 'bossWave' in nt)) c.fail(`${p}.night`, '마지막 스테이지는 밤이 없어야 함 (waves 비움)');
+      if (!last && waves.length === 0) c.fail(`${p}.night.waves`, '밤 웨이브가 하나 이상이어야 함');
+    }
+  });
 }
 
 function checkWorld(c: Checker, v: unknown, path: string, world: string | undefined): void {
@@ -419,7 +430,7 @@ function checkEvents(c: Checker, v: unknown, chainIds: string[], maxTier: number
       if (co.flag !== 'avoid' && co.flag !== 'face') c.fail(`${cp}.flag`, '"avoid" 또는 "face"여야 함');
       c.num(co.joy, `${cp}.joy`);
       c.num(co.shadow, `${cp}.shadow`);
-      // 비율: 0.3 = 그날 심연 층 HP 30% 감소
+      // 비율: 0.3 = 다음 스테이지 첫 시도 guardian HP 30% 감소
       if ('faceLayerHpReduce' in co) c.num(co.faceLayerHpReduce, `${cp}.faceLayerHpReduce`, { min: 0, max: 1 });
       if ('bonusReturnPiece' in co) c.bool(co.bonusReturnPiece, `${cp}.bonusReturnPiece`);
       return c.str(co.id, `${cp}.id`);
@@ -464,7 +475,7 @@ function checkEvents(c: Checker, v: unknown, chainIds: string[], maxTier: number
   return { fixable: defined([...milestoneIds, ...seasonalIds]), all: defined(all), milestones: defined(milestoneIds) };
 }
 
-function checkDays(c: Checker, v: unknown, eventIds: EventIds, maxDays: number | undefined): void {
+function checkDays(c: Checker, v: unknown, eventIds: EventIds): void {
   const d = c.obj(v, 'days', ['fixed', 'dailyEventChance', 'dailyEventCooldownDays', 'quietDays']);
   if (!d) return;
   c.num(d.dailyEventChance, 'days.dailyEventChance', { min: 0, max: 1 });
@@ -476,7 +487,6 @@ function checkDays(c: Checker, v: unknown, eventIds: EventIds, maxDays: number |
     const p = `days.fixed.${dayKey}`;
     const day = Number(dayKey);
     if (!Number.isInteger(day) || day < 1) c.fail(p, '일차 키는 1 이상의 정수여야 함');
-    else if (maxDays !== undefined && day > maxDays) c.fail(p, `chapter.maxDays(${maxDays})를 넘는 일차`);
     const s = c.str(id, p);
     if (s === undefined) continue;
     if (!eventIds.all.includes(s)) c.fail(p, `events.json에 없는 이벤트 "${s}"`);
@@ -484,36 +494,22 @@ function checkDays(c: Checker, v: unknown, eventIds: EventIds, maxDays: number |
   }
 }
 
-function checkDiary(c: Checker, v: unknown): void {
-  const d = c.obj(v, 'diary', ['result', 'night', 'forgottenDay']);
-  if (!d) return;
-  const r = c.obj(d.result, 'diary.result', ['backflow', 'manySunk', 'default']);
-  if (r) for (const k of ['backflow', 'manySunk', 'default']) if (k in r) c.strList(r[k], `diary.result.${k}`);
-  const n = c.obj(d.night, 'diary.night', ['layerCleared', 'tried', 'none']);
-  if (n) for (const k of ['layerCleared', 'tried', 'none']) if (k in n) c.strList(n[k], `diary.night.${k}`);
-  c.str(d.forgottenDay, 'diary.forgottenDay');
-}
-
-/** chapter.json (§5.15-2): world, 갈림길 id(이정표), 보스 이름, 층·낮 장면 이름 각 chapter.length개 */
-function checkChapter(c: Checker, v: unknown, milestoneIds: string[] | undefined, length: number | undefined): void {
-  const o = c.obj(v, 'chapter', ['world', 'crossroad', 'bossName', 'sceneNames', 'dayScenes']);
+/** chapter.json (§5.15-2): world, 갈림길 id(이정표), 보스 이름 (스테이지 이름은 stages.json) */
+function checkChapter(c: Checker, v: unknown, milestoneIds: string[] | undefined): void {
+  const o = c.obj(v, 'chapter', ['id', 'world', 'crossroad', 'bossName']);
   if (!o) return;
+  c.str(o.id, 'chapter.id');
   c.str(o.world, 'chapter.world');
   c.str(o.bossName, 'chapter.bossName');
   const cr = c.str(o.crossroad, 'chapter.crossroad');
   if (cr !== undefined && milestoneIds && !milestoneIds.includes(cr)) c.fail('chapter.crossroad', `events.milestones에 없는 갈림길 "${cr}"`);
-  for (const k of ['sceneNames', 'dayScenes']) {
-    c.strList(o[k], `chapter.${k}`);
-    const a = o[k];
-    if (Array.isArray(a) && length !== undefined && a.length !== length) c.fail(`chapter.${k}`, `balance.chapter.length(${length})개여야 함 (현재 ${a.length})`);
-  }
 }
 
 /** chapter_complete.json (§5.15-5) */
 function checkChapterComplete(c: Checker, v: unknown): void {
-  const o = c.obj(v, 'chapterComplete', ['title', 'doneText', 'notDoneText', 'learnedRecipes']);
+  const o = c.obj(v, 'chapterComplete', ['title', 'doneText', 'learnedRecipes']);
   if (!o) return;
-  for (const k of ['title', 'doneText', 'notDoneText']) c.str(o[k], `chapterComplete.${k}`);
+  for (const k of ['title', 'doneText']) c.str(o[k], `chapterComplete.${k}`);
   const list = c.arr(o.learnedRecipes, 'chapterComplete.learnedRecipes') ?? [];
   const ids: (string | undefined)[] = [];
   list.forEach((it, i) => {
@@ -559,15 +555,15 @@ function checkRecipes(c: Checker, v: unknown, chainIds: string[]): void {
 /** 원본 JSON 묶음을 검증한다. 하나라도 문제가 있으면 전체 목록을 돌려준다. */
 export function validateGameData(raw: Record<keyof GameData, unknown>): ValidationResult {
   const c = new Checker();
-  const { maxTier, maxDays, chapterLength } = checkBalance(c, raw.balance);
+  const { maxTier, chapterLength } = checkBalance(c, raw.balance);
   const world = typeof (raw.chapter as Obj | null)?.world === 'string' ? ((raw.chapter as Obj).world as string) : undefined;
   checkHeroes(c, raw.heroes);
   const chainIds = checkChains(c, raw.chains, maxTier, world);
-  checkMonsters(c, raw.monsters);
+  const enemyIds = checkMonsters(c, raw.monsters);
+  checkStages(c, raw.stages, enemyIds, chapterLength);
   const eventIds = checkEvents(c, raw.events, chainIds, maxTier, world);
-  checkDays(c, raw.days, eventIds, maxDays);
-  checkDiary(c, raw.diary);
-  checkChapter(c, raw.chapter, eventIds.milestones, chapterLength);
+  checkDays(c, raw.days, eventIds);
+  checkChapter(c, raw.chapter, eventIds.milestones);
   checkChapterComplete(c, raw.chapterComplete);
   checkRecipes(c, raw.recipes, chainIds);
 

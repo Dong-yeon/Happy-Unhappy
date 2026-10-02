@@ -25,9 +25,9 @@ describe('validateGameData', () => {
 
   it('알 수 없는 키 (키 이름 불일치)', () => {
     const issues = issuesAfter((d) => {
-      (d.monsters.backflowBoss as Record<string, unknown>).bossJoyReward = 40;
+      (d.monsters.base as Record<string, unknown>).bossJoyReward = 40;
     });
-    expectIssue(issues, 'monsters.backflowBoss.bossJoyReward', /알 수 없는 키/);
+    expectIssue(issues, 'monsters.base.bossJoyReward', /알 수 없는 키/);
   });
 
   it('v0.3에서 삭제된 balance.lane.defenseLineY는 알 수 없는 키', () => {
@@ -37,45 +37,41 @@ describe('validateGameData', () => {
     expectIssue(issues, 'balance.lane.defenseLineY', /알 수 없는 키/);
   });
 
-  it('M4: abyss.counterRange 필수, weatherThresholds는 오름차순 세 값', () => {
+  it('M8.10: guardian.counterRange 필수, core.hp ≥ 1, carry 배수 > 0', () => {
     expectIssue(
       issuesAfter((d) => {
-        delete (d.balance.abyss as Partial<Raw['balance']['abyss']>).counterRange;
+        delete (d.balance.guardian as Partial<Raw['balance']['guardian']>).counterRange;
       }),
-      'balance.abyss.counterRange',
+      'balance.guardian.counterRange',
       /필수 키/,
     );
-    expectIssue(
-      issuesAfter((d) => {
-        (d.balance.shadow as Record<string, unknown>).weatherThresholds = [50, 25, 75];
-      }),
-      'balance.shadow.weatherThresholds',
-      /오름차순/,
-    );
-    expectIssue(
-      issuesAfter((d) => {
-        (d.balance.shadow as Record<string, unknown>).weatherThresholds = [25, 50];
-      }),
-      'balance.shadow.weatherThresholds',
-      /세 값/,
-    );
+    expectIssue(issuesAfter((d) => (d.balance.core.hp = 0)), 'balance.core.hp', /이상/);
+    expectIssue(issuesAfter((d) => (d.balance.carry.speedMult = 0)), 'balance.carry.speedMult', /이상/);
   });
 
-  it('monsters.backflowBoss.hpGrowthPerDay 필수, 0보다 커야 함', () => {
-    expectIssue(
-      issuesAfter((d) => {
-        delete (d.monsters.backflowBoss as Partial<Raw['monsters']['backflowBoss']>).hpGrowthPerDay;
-      }),
-      'monsters.backflowBoss.hpGrowthPerDay',
-      /필수 키/,
-    );
-    expectIssue(
-      issuesAfter((d) => {
-        d.monsters.backflowBoss.hpGrowthPerDay = 0;
-      }),
-      'monsters.backflowBoss.hpGrowthPerDay',
-      /이상/,
-    );
+  it('M8.10: monsters.json 종류별 배수, 적 id 중복 금지', () => {
+    expectIssue(issuesAfter((d) => delete (d.monsters.enemies[1] as Partial<Raw['monsters']['enemies'][number]>).hpMult), 'monsters.enemies[1].hpMult', /필수 키/);
+    expectIssue(issuesAfter((d) => (d.monsters.enemies[1].id = 'shadow')), 'monsters.enemies', /중복/);
+    for (const id of ['shadow', 'wildcat', 'mitten', 'boss']) expect(rawGameData.monsters.enemies.map((e) => e.id)).toContain(id);
+    const m = (id: string) => rawGameData.monsters.enemies.find((e) => e.id === id)!;
+    expect([m('wildcat').speedMult, m('wildcat').hpMult]).toEqual([1.6, 0.6]);
+    expect([m('mitten').hpMult, m('mitten').speedMult]).toEqual([2.5, 0.7]);
+  });
+
+  it('M8.10: stages.json — chapter.length개, 순서, 필수 문구, 적 id 참조, 1-length는 밤 없음 (§5.19-4)', () => {
+    expect(rawGameData.stages.stages).toHaveLength(rawGameData.balance.chapter.length);
+    for (const st of rawGameData.stages.stages) {
+      for (const k of ['title', 'intro', 'coreName', 'page', 'retryIntro'] as const) expect(st[k].length).toBeGreaterThan(0);
+    }
+    expect(rawGameData.stages.stages[0].intro).toContain('해 지기 전에 돌아오마');
+    expect(rawGameData.stages.stages[9].page).toContain('누이는 해가, 오라비는 달이 되었다');
+    expectIssue(issuesAfter((d) => d.stages.stages.pop()), 'stages.stages', /length/);
+    expectIssue(issuesAfter((d) => (d.stages.stages[1].stage = 5)), 'stages.stages[1].stage', /순서/);
+    expectIssue(issuesAfter((d) => ((d.stages.stages[2] as Record<string, unknown>).page = '')), 'stages.stages[2].page', /비어 있지 않은/);
+    expectIssue(issuesAfter((d) => delete (d.stages.stages[2] as Record<string, unknown>).retryIntro), 'stages.stages[2].retryIntro', /필수 키/);
+    expectIssue(issuesAfter((d) => (d.stages.stages[0].day.enemies[0].type = 'dragon')), 'stages.stages[0].day.enemies[0].type', /없는 적/);
+    expectIssue(issuesAfter((d) => (d.stages.stages[0].night.waves = [])), 'stages.stages[0].night.waves', /하나 이상/);
+    expectIssue(issuesAfter((d) => (d.stages.stages[9].night.waves = [[{ type: 'shadow', count: 1 }]])), 'stages.stages[9].night', /밤이 없어야/);
   });
 
   it('필수 키 없음', () => {
@@ -109,7 +105,7 @@ describe('validateGameData', () => {
   it('heroes.json: offense = defense면 오류 (양쪽 최소 1명), 없는 영웅 id 오류 (§5.17-1, [11]-3)', () => {
     expectIssue(issuesAfter((d) => (d.heroes.defense = d.heroes.offense)), 'heroes.defense', /다른 영웅/);
     expectIssue(issuesAfter((d) => (d.heroes.offense = 'nobody')), 'heroes.offense', /없는 영웅/);
-    expectIssue(issuesAfter((d) => d.heroes.heroes.pop()), 'heroes.heroes', /2개 이상/);
+    expectIssue(issuesAfter((d) => d.heroes.heroes.splice(1)), 'heroes.heroes', /2개 이상/);
   });
 
   it('spawnWeight 합이 0이면 오류', () => {
@@ -138,13 +134,6 @@ describe('validateGameData', () => {
       (d.days.fixed as Record<string, string>)['3'] = 'rainy_day';
     });
     expectIssue(issues, 'days.fixed.3', /일상 이벤트/);
-  });
-
-  it('days.fixed 일차가 chapter.maxDays를 넘음', () => {
-    const issues = issuesAfter((d) => {
-      (d.days.fixed as Record<string, string>)['21'] = 'first_tooth';
-    });
-    expectIssue(issues, 'days.fixed.21', /maxDays/);
   });
 
   it('freePieces.chain이 chains.json에 없음', () => {
@@ -195,17 +184,15 @@ describe('validateGameData', () => {
   it('M8.8: balance.chapter (turningPoint < length), days.lifeLengthDays·growthDays·world·age 는 알 수 없는 키', () => {
     expectIssue(issuesAfter((d) => (d.balance.chapter.turningPoint = 10)), 'balance.chapter.turningPoint', /length보다 작아야/);
     expectIssue(issuesAfter((d) => delete (d.balance as Record<string, unknown>).chapter), 'balance.chapter', /필수 키/);
-    expectIssue(issuesAfter((d) => (d.balance.chapter.maxDays = 0)), 'balance.chapter.maxDays', /이상/);
     expectIssue(issuesAfter((d) => ((d.balance.days as Record<string, unknown>).lifeLengthDays = 14)), 'balance.days.lifeLengthDays', /알 수 없는 키/);
     for (const k of ['growthDays', 'world', 'age']) {
       expectIssue(issuesAfter((d) => ((d.days as Record<string, unknown>)[k] = 1)), `days.${k}`, /알 수 없는 키/);
     }
   });
 
-  it('M8.8: chapter.json (갈림길 id = 이정표, 장면 이름 length개)·chapter_complete.json (learnedRecipes)', () => {
+  it('M8.8: chapter.json (갈림길 id = 이정표)·chapter_complete.json (learnedRecipes)', () => {
     expectIssue(issuesAfter((d) => (d.chapter.crossroad = 'scraped_knee')), 'chapter.crossroad', /없는 갈림길/);
-    expectIssue(issuesAfter((d) => d.chapter.sceneNames.pop()), 'chapter.sceneNames', /length/);
-    expectIssue(issuesAfter((d) => d.chapter.dayScenes.push('하나 더')), 'chapter.dayScenes', /length/);
+    expectIssue(issuesAfter((d) => ((d.chapter as Record<string, unknown>).sceneNames = ['a'])), 'chapter.sceneNames', /알 수 없는 키/);
     expectIssue(issuesAfter((d) => ((d.chapterComplete.learnedRecipes[0] as Record<string, unknown>).side = 'noon')), 'chapterComplete.learnedRecipes[0].side', /day 또는 night/);
     expectIssue(issuesAfter((d) => ((d.chapterComplete as Record<string, unknown>).companions = [])), 'chapterComplete.companions', /알 수 없는 키/);
   });
@@ -230,6 +217,26 @@ describe('validateGameData', () => {
       /알 수 없는 키/,
     );
     expectIssue(issuesAfter((d) => delete (d.balance as Record<string, unknown>).offense), 'balance.offense', /필수 키/);
+  });
+
+  it('M8.10: 일차·gating·그림자 키가 남아 있으면 오류 (maxDays·dailyLimit·storeCap·shadow·diary·stallShadowPerSec, D-054·D-055)', () => {
+    const b = (d: Raw) => d.balance as unknown as Record<string, Record<string, unknown>>;
+    expectIssue(issuesAfter((d) => (b(d).chapter.maxDays = 20)), 'balance.chapter.maxDays', /알 수 없는 키/);
+    expectIssue(issuesAfter((d) => (b(d).days.dailyLimit = 2)), 'balance.days.dailyLimit', /알 수 없는 키/);
+    expectIssue(issuesAfter((d) => (b(d).days.storeCap = 4)), 'balance.days.storeCap', /알 수 없는 키/);
+    expectIssue(issuesAfter((d) => (b(d).shadow = { shadowMax: 100 } as never)), 'balance.shadow', /알 수 없는 키/);
+    expectIssue(issuesAfter((d) => (b(d).diary = { diarySinkThreshold: 3 } as never)), 'balance.diary', /알 수 없는 키/);
+    expectIssue(issuesAfter((d) => (b(d).offense.stallShadowPerSec = 0.3)), 'balance.offense.stallShadowPerSec', /알 수 없는 키/);
+    expectIssue(issuesAfter((d) => (b(d).start.shadow = 0)), 'balance.start.shadow', /알 수 없는 키/);
+    expectIssue(issuesAfter((d) => (b(d).abyss = { layerHpBase: 120 } as never)), 'balance.abyss', /알 수 없는 키/);
+    expectIssue(issuesAfter((d) => (b(d).wave.wavesPerNight = 3)), 'balance.wave.wavesPerNight', /알 수 없는 키/);
+    expectIssue(issuesAfter((d) => ((d.chapterComplete as Record<string, unknown>).notDoneText = '아직')), 'chapterComplete.notDoneText', /알 수 없는 키/);
+  });
+
+  it('M8.10: heroes reward (보상 영웅은 시작 배정 불가), chapter.id 필수 (D-057)', () => {
+    expectIssue(issuesAfter((d) => (d.heroes.offense = 'nui')), 'heroes.offense', /보상 영웅/);
+    expectIssue(issuesAfter((d) => delete (d.chapter as Record<string, unknown>).id), 'chapter.id', /필수 키/);
+    expect(rawGameData.heroes.heroes.filter((h) => 'reward' in h).map((h) => h.id)).toEqual(['nui', 'orabi']);
   });
 
   it('M8.9: 먹이기 tierScore는 maxTier개, 병사 단은 maxTier − 1개, side·buff 값 ([11])', () => {
@@ -267,7 +274,7 @@ describe('validateGameData', () => {
     expectIssue(issues, 'balance.lane.defenseInterceptRange', /0 이상/);
   });
 
-  it('balance.version ≠ 2', () => {
+  it('balance.version ≠ 4', () => {
     const issues = issuesAfter((d) => {
       (d.balance as Record<string, unknown>).version = 1;
     });

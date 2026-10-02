@@ -38,20 +38,21 @@ describe('키 경로', () => {
 describe('applyOverrides', () => {
   it('사본만 바꾸고 원본은 그대로', () => {
     const before = structuredClone(data);
-    const out = applyOverrides(data, [parseSet('shadow.shadowAfterBossWin=50'), parseSet('monsters.backflowBoss.hp=300')]);
-    expect(out.balance.shadow.shadowAfterBossWin).toBe(50);
-    expect(out.monsters.backflowBoss.hp).toBe(300);
+    const out = applyOverrides(data, [parseSet('core.hp=150'), parseSet('monsters.base.hp=30')]);
+    expect(out.balance.core.hp).toBe(150);
+    expect(out.monsters.base.hp).toBe(30);
     expect(data).toEqual(before);
   });
 
   it('배열 원소·배열 값도 바꿀 수 있다', () => {
-    const out = applyOverrides(data, [parseSet('chains.1.growth.atk=1.5'), parseSet('shadow.weatherThresholds=[20,40,60]')]);
+    const out = applyOverrides(data, [parseSet('chains.1.growth.atk=1.5'), parseSet('feed.tierScore=[2,4,8]'), parseSet('stages.stages.0.day.guardianHp=99')]);
     expect(out.chains[1].growth.atk).toBe(1.5);
-    expect(out.balance.shadow.weatherThresholds).toEqual([20, 40, 60]);
+    expect(out.balance.feed.tierScore).toEqual([2, 4, 8]);
+    expect(out.stages.stages[0].day.guardianHp).toBe(99);
   });
 
   it('없는 키는 만들지 않는다 (오타 방지)', () => {
-    expect(() => applyOverrides(data, [parseSet('shadow.shadowAfterBossWinn=50')])).toThrow(/없음/);
+    expect(() => applyOverrides(data, [parseSet('core.hpp=50')])).toThrow(/없음/);
     expect(() => applyOverrides(data, [parseSet('nothere.x=1')])).toThrow(/없음/);
   });
 
@@ -60,8 +61,8 @@ describe('applyOverrides', () => {
   });
 
   it('적용 후 데이터 검증을 다시 한다', () => {
-    expect(() => applyOverrides(data, [parseSet('shadow.shadowAfterBossWin=500')])).toThrow(/검증 실패[\s\S]*shadowAfterBossWin/);
-    expect(() => applyOverrides(data, [parseSet('shadow.weatherThresholds=[60,40,20]')])).toThrow(/오름차순/);
+    expect(() => applyOverrides(data, [parseSet('core.hp=0')])).toThrow(/검증 실패[\s\S]*core\.hp/);
+    expect(() => applyOverrides(data, [parseSet('feed.tierScore=[1,3]')])).toThrow(/maxTier/);
   });
 
   it('리포트 기록은 전체 경로', () => {
@@ -71,9 +72,9 @@ describe('applyOverrides', () => {
   it('덮어쓴 값이 시뮬레이션에 실제로 반영된다', () => {
     const cfg = simJson as SimConfig;
     const opt = { seed: 1, grid: { cols: 5, rows: 4 } };
-    const plain = runOne(data, cfg, POLICIES.idle, opt);
-    const calm = runOne(applyOverrides(data, [parseSet('offense.stallShadowPerSec=0'), parseSet('abyss.abyssDeathShadow=0'), parseSet('shadow.sinkShadow=0')]), cfg, POLICIES.idle, opt);
-    expect(plain.backflows).toBeGreaterThan(0);
-    expect(calm.backflows).toBe(0); // 그림자 증가원을 끄면 역류 없음
+    const plain = runOne(data, cfg, POLICIES.idle, { ...opt, maxAttempts: 6 });
+    const easy = runOne(applyOverrides(data, [parseSet('core.sinkDamage=0'), parseSet('core.bossSinkDamage=0')]), cfg, POLICIES.idle, { ...opt, maxAttempts: 6 });
+    expect(plain.results.night + plain.results.dayFall + plain.results.dayTime).toBeGreaterThan(0);
+    expect(easy.results.night).toBe(0); // 핵 피해를 끄면 밤 실패 없음
   });
 });

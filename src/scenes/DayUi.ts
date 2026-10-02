@@ -1,17 +1,14 @@
-// 하루 구조 UI (§5.7, §5.8, §5.15): 이야기 장면 카드·갈림길 모달, "내일 또 만나요", 역류 준비 경고 띠, 이야기 한 장 패널,
-// 이야기책 목록(+ 펼치지 못한 날), 영웅 배정(1-1, [11]-3), 챕터 완성·미완성 화면.
+// 스테이지 UI (§5.19, §5.15): 장면 카드(탭하면 시작, 재도전이면 실패 사유 + retryIntro)·갈림길, 이야기 한 장(아침),
+// 이야기책(펼친 장), 영웅 배정(1-1, [11]-3), 챕터 완성 화면.
 // 도형 + 텍스트만. 상태는 core(GameState)에서 읽고, 버튼은 core 메서드·hooks만 호출한다.
 import Phaser from 'phaser';
 import type { GameState, Role } from '../core/game';
-import type { ForgottenEntry } from '../core/gating';
 import type { GameData } from '../data/types';
 import { showRatings } from '../debug/gridPreset';
 import type { DayRating } from '../metrics/model';
-import { minutesUntilMidnight } from '../platform/clock';
-import { REGION, VIEW_H, VIEW_W } from './layout';
-import { chainShort } from './labels';
+import { VIEW_H, VIEW_W } from './layout';
+import { FAIL_LINE, chainShort, stageLabel } from './labels';
 import { heroName } from './laneUnits';
-import { mergeDiary } from './diaryList';
 import { Button, COLOR, text } from './ui';
 
 const OVERLAY_DEPTH = 60;
@@ -22,15 +19,9 @@ export interface DayUiHooks {
   onChange(): void;
   /** [처음부터] (두 번 탭 확인 뒤) */
   onRestart(): void;
-  /** 날을 시작할 수 있는지 (gating: 열 수 있는 날 ≥ 1 또는 디버그 우회) */
-  canOpenDay(): boolean;
-  /** "내일 또 만나요"의 [다시 확인]: gating 지급 확인 */
-  recheck(): void;
-  /** 이번 일생의 기억나지 않는 날 (일기장 병합) */
-  forgottenLog(): readonly ForgottenEntry[];
-  /** 하루 끝 주관 평가 (§5.10-4, ?debug=1·?playtest=1에서만 표시) */
-  rating(day: number): DayRating | null;
-  rate<K extends keyof DayRating>(day: number, key: K, value: DayRating[K]): void;
+  /** 시도 끝 주관 평가 (§5.10-4, ?debug=1·?playtest=1에서만 표시). 키 = 판 통산 시도 번호 */
+  rating(attempt: number): DayRating | null;
+  rate<K extends keyof DayRating>(attempt: number, key: K, value: DayRating[K]): void;
   endingAgree(): boolean | null;
   setEndingAgree(v: boolean): void;
   /** 영웅 배정을 바꾼 뒤 바로 저장 (dayStart 경계) */
@@ -42,9 +33,9 @@ const DAY_RATINGS: { value: NonNullable<DayRating['day']>; label: string }[] = [
   { value: 'meh', label: '그저 그랬다' },
   { value: 'bad', label: '별로였다' },
 ];
-const BACKFLOW_RATINGS: { value: NonNullable<DayRating['backflow']>; label: string }[] = [
-  { value: 'tense', label: '긴장됐다' },
-  { value: 'annoyed', label: '짜증났다' },
+const RETRY_RATINGS: { value: NonNullable<DayRating['retry']>; label: string }[] = [
+  { value: 'again', label: '다시 하고 싶다' },
+  { value: 'tired', label: '지친다' },
 ];
 
 /** [처음부터] 두 번 탭: 첫 탭 후 이 시간 안에 다시 눌러야 한다 */
@@ -96,135 +87,112 @@ export class DayUi {
   private modal: Modal | null = null;
   private diaryList: Phaser.GameObjects.GameObject[] | null = null;
   private shownFor = '';
-  private readonly prepBand: Phaser.GameObjects.Container;
-  private readonly prepText: Phaser.GameObjects.Text;
-  /** "내일 또 만나요"의 남은 시간 텍스트 (떠 있을 때만) */
-  private waitText: Phaser.GameObjects.Text | null = null;
-  private waitCheckedAt = 0;
-  /** 1-1 영웅 배정 화면을 이 세션에서 넘겼는지 (core가 1일차 카드를 닫으면 잠근다) */
+  /** 1-1 영웅 배정 화면을 이 세션에서 넘겼는지 (core가 첫 카드를 닫으면 잠근다) */
   private assignSeen = false;
+  /** 갈림길에서 고른 선택지 (장면 카드를 닫을 때 confirmDay에 넘긴다) */
+  private crossChoice: string | null = null;
 
   constructor(
     private readonly scene: Phaser.Scene,
     private readonly state: GameState,
     private readonly data: GameData,
     private readonly hooks: DayUiHooks,
-  ) {
-    // 역류 준비 시간 경고 띠: 방어 레인 위쪽
-    const r = REGION.ground;
-    const band = scene.add.rectangle(0, 0, r.w, 22, 0x7a2e3e, 0.92).setOrigin(0);
-    this.prepText = text(scene, r.w / 2, 11, '', { fontSize: '11px', color: '#ffd6de', fontStyle: 'bold' }).setOrigin(0.5);
-    this.prepBand = scene.add.container(r.x, r.y + 2, [band, this.prepText]).setDepth(45).setVisible(false);
-  }
+  ) {}
 
-  /** 입력 차단 중 (모달·일기장이 떠 있음) */
+  /** 입력 차단 중 (모달·이야기책이 떠 있음) */
   get blocking(): boolean {
     return this.modal !== null || this.diaryList !== null;
   }
 
-  /** 매 프레임: 단계에 맞는 모달을 띄우고 경고 띠를 갱신 */
+  /** 매 프레임: 단계에 맞는 모달을 띄운다 */
   sync(): void {
     const s = this.state;
     const key = this.phaseKey();
-    if (key !== this.shownFor) {
-      this.shownFor = key;
-      this.closeModal();
-      if (s.phase === 'dayStart') {
-        if (!this.hooks.canOpenDay()) this.showSeeYouTomorrow();
-        else if (!s.assignmentDone && !this.assignSeen) this.showAssign(); // 1-1 카드보다 먼저 ([11]-3)
-        else this.showEventCard();
-      } else if (s.phase === 'diary') this.showDiaryPanel();
-      else if (s.phase === 'chapterComplete') this.showChapterComplete(s.completed);
-    }
-    // 다음 지급까지 남은 시간: 1초마다 확인 (표시는 분 단위라 1분마다 바뀐다)
-    if (this.waitText && this.scene.time.now - this.waitCheckedAt >= 1000) {
-      this.waitCheckedAt = this.scene.time.now;
-      const t = this.waitLabel();
-      if (this.waitText.text !== t) this.waitText.setText(t);
-    }
-    const prep = s.phase === 'night' && s.wave.inBossPrep;
-    this.prepBand.setVisible(prep);
-    if (prep) this.prepText.setText(`⚠ ${this.data.monsters.backflowBoss.name}가 다가온다 · ${Math.ceil(s.wave.timer)}초`);
+    if (key === this.shownFor) return;
+    this.shownFor = key;
+    this.closeModal();
+    if (s.phase === 'dayStart') {
+      if (!s.assignmentDone && !this.assignSeen) this.showAssign(); // 1-1 카드보다 먼저 ([11]-3)
+      else if (s.crossroad && this.crossChoice === null) this.showCrossroad();
+      else this.showSceneCard();
+    } else if (s.phase === 'diary') this.showPagePanel();
+    else if (s.phase === 'chapterComplete') this.showChapterComplete();
   }
 
-  /** 단계별 모달을 다시 띄울지 판단하는 키. dayStart는 날을 시작할 수 있는지도 포함 */
+  /** 단계별 모달을 다시 띄울지 판단하는 키 */
   private phaseKey(): string {
     const s = this.state;
-    const open = s.phase === 'dayStart' ? `:${this.hooks.canOpenDay()}` : '';
-    return `${s.phase}:${s.day}:${s.today.id}${open}:a${this.assignSeen}`;
+    return `${s.phase}:${s.stage}:${s.attempt}:${s.retry}:${s.pendingCrossroad}:a${this.assignSeen}:c${this.crossChoice}`;
   }
 
   private closeModal(): void {
     this.modal?.destroy();
     this.modal = null;
-    this.waitText = null;
   }
 
-  private waitLabel(): string {
-    const m = minutesUntilMidnight();
-    const h = Math.floor(m / 60);
-    return `다음 날이 열리기까지 ${h > 0 ? `${h}시간 ` : ''}${m % 60}분`;
-  }
-
-  /** 열 수 있는 날이 0: 마지막 그림일기 한 줄 + "내일 또 만나요" + 남은 시간 + [일기장] [다시 확인] */
-  private showSeeYouTomorrow(): void {
+  /**
+   * 장면 카드 (§5.19-4): "1-3 · 셋째 고개" + 여는 글. 재도전이면 실패 사유 + retryIntro. 탭(어디든)하면 낮 시작.
+   * 갈림길 선택이 있으면 그 선택과 함께 confirmDay.
+   */
+  private showSceneCard(): void {
     const s = this.state;
-    const m = new Modal(this.scene, 230);
-    const last = s.diary[s.diary.length - 1];
-    let y = 20;
-    if (last) {
-      m.text(y, `${last.day}일째 · ${last.line}`, { fontSize: '11px', color: '#8a8f9e', lineSpacing: 3 });
-      y += 52;
-    } else {
-      y += 20;
-    }
-    m.text(y, '내일 또 만나요', { fontSize: '20px', color: '#f2c94c', fontStyle: 'bold' });
-    this.waitText = m.text(y + 40, this.waitLabel(), { fontSize: '11px', color: '#9fb4e0' });
-    this.waitCheckedAt = this.scene.time.now;
-    m.button(VIEW_W / 2 - 64, 190, 110, '이야기책', () => this.showDiaryList());
-    m.button(VIEW_W / 2 + 64, 190, 110, '다시 확인', () => {
-      this.hooks.recheck();
-      this.hooks.onChange();
+    const st = s.stageDef;
+    const retry = s.retry;
+    const m = new Modal(this.scene, retry ? 232 : 200);
+    const tries = s.attempts[s.stage - 1];
+    m.text(16, retry ? `다시 도전 · ${tries + 1}번째` : s.stage === s.chapterLength ? '마지막 장' : '이야기의 다음 장', {
+      fontSize: '11px',
+      color: retry ? '#ffb46b' : '#9fb4e0',
     });
-    this.modal = m;
-  }
-
-  /** 이야기 장면 카드: 제목 + 본문 + [확인]. 갈림길(이정표)은 두 선택 버튼 */
-  private showEventCard(): void {
-    const s = this.state;
-    const e = s.today;
-    const milestone = e.kind === 'milestone';
-    const m = new Modal(this.scene, milestone ? 250 : 200);
-    m.text(16, `${milestone ? '갈림길 · ' : ''}${s.day}일째 (${s.maxDays}일 안에) · 1-${s.stage}`, { fontSize: '11px', color: '#9fb4e0' });
-    m.text(36, e.title, { fontSize: '17px', color: '#f2c94c', fontStyle: 'bold' });
-    const body = e.kind === 'plain' ? '이야기가 조용히 흘러간다.' : e.text;
-    m.text(70, body, { fontSize: '12px', lineSpacing: 4 });
-    if (s.carryBackflow) m.text(milestone ? 124 : 112, `⚠ 오늘 밤 ${this.data.monsters.backflowBoss.name}가 온다 (준비 시간 있음)`, { fontSize: '10px', color: '#ff9e9e' });
-    const confirm = (choice?: string) => {
-      if (this.state.confirmDay(choice).ok) {
+    m.text(36, stageLabel(this.data, s.stage), { fontSize: '17px', color: '#f2c94c', fontStyle: 'bold' });
+    let y = 70;
+    if (retry) {
+      m.text(y, FAIL_LINE[retry], { fontSize: '11px', color: '#ff9e9e' });
+      y += 26;
+    }
+    m.text(y, retry ? st.retryIntro : st.intro, { fontSize: '12px', lineSpacing: 4 });
+    const confirm = () => {
+      if (this.state.confirmDay(this.crossChoice ?? undefined).ok) {
+        this.crossChoice = null;
         this.closeModal();
         this.shownFor = this.phaseKey();
         this.hooks.onChange();
       }
     };
-    if (milestone) {
-      s.choices.forEach((c, i) => m.button(VIEW_W / 2, 160 + i * 40, 286, c.label, () => confirm(c.id), '11px'));
-    } else {
-      m.button(VIEW_W / 2, 158, 120, '확인', () => confirm());
-    }
+    // 탭하면 넘김: 막 전체 + [시작]
+    (m.objects[0] as Phaser.GameObjects.Rectangle).on('pointerup', confirm);
+    (m.objects[1] as Phaser.GameObjects.Rectangle).setInteractive().on('pointerup', confirm);
+    m.button(VIEW_W / 2, (retry ? 232 : 200) - 34, 140, '☀ 낮으로', confirm);
+    this.modal = m;
+  }
+
+  /** 갈림길 (§5.15, 1-turningPoint 성공 다음 장면 카드): 두 선택 버튼 → 고르면 장면 카드 */
+  private showCrossroad(): void {
+    const s = this.state;
+    const c = s.crossroad!;
+    const m = new Modal(this.scene, 250);
+    m.text(16, `갈림길 · 1-${s.stage - 1}를 지나`, { fontSize: '11px', color: '#9fb4e0' });
+    m.text(36, c.title, { fontSize: '17px', color: '#f2c94c', fontStyle: 'bold' });
+    m.text(70, c.text, { fontSize: '12px', lineSpacing: 4 });
+    s.choices.forEach((ch, i) =>
+      m.button(VIEW_W / 2, 164 + i * 40, 286, ch.label, () => {
+        this.crossChoice = ch.id;
+        this.closeModal();
+      }, '11px'),
+    );
     this.modal = m;
   }
 
   /**
-   * 영웅 배정 (1-1 dayStart, [11]-3): 누이·오라비를 낮덱(오펜스)·밤덱(디펜스)에 하나씩. 기본은 heroes.json(+ start.swapHeroes).
-   * 양쪽 최소 1명이라 고르는 것은 "누가 낮에 나가는가" 하나. [이대로 시작] → 이야기 장면 카드. 판 중 변경은 M8.10.
+   * 영웅 배정 (1-1 dayStart, [11]-3): 삽살·해태(모험대)를 낮덱(오펜스)·밤덱(디펜스)에 하나씩. 기본은 heroes.json(+ start.swapHeroes).
+   * 양쪽 최소 1명이라 고르는 것은 "누가 낮에 나가는가" 하나. [이대로 시작] → 장면 카드. 판 중 변경은 M8.11.
    */
   private showAssign(): void {
     const s = this.state;
     const m = new Modal(this.scene, 268);
     m.text(16, '1-1 · 판 시작', { fontSize: '11px', color: '#9fb4e0' });
     m.text(34, '누가 낮에 나갈까?', { fontSize: '17px', color: '#f2c94c', fontStyle: 'bold' });
-    m.text(64, '낮덱 = 해가 있는 동안 그림자 층을 정화 (오펜스)\n밤덱 = 몰려오는 무리로부터 집을 지킴 (디펜스)', {
+    m.text(64, '낮덱 = 해가 있는 동안 동화의 핵을 찾아 돌아옴 (오펜스)\n밤덱 = 몰려오는 무리로부터 핵을 지킴 (디펜스)', {
       fontSize: '10px',
       color: '#cfd6ea',
       lineSpacing: 3,
@@ -240,7 +208,9 @@ export class DayUi {
       return `${role === 'offense' ? '☀' : '☾'} ${h.name} 체력 ${h.hp} · 공격 ${h.atk}`;
     };
     const info = m.text(192, '', { fontSize: '9px', color: '#8a8f9e', lineSpacing: 3 });
-    const opts = [...ids].sort().map((offId) => ({ offId, btn: null as Button | null }));
+    // heroes.json 순서 (모험대 삽살 → 해태, 보상 영웅 제외)
+    const order = this.data.heroes.heroes.map((h) => h.id).filter((id) => ids.includes(id));
+    const opts = order.map((offId) => ({ offId, btn: null as Button | null }));
     const mark = () => {
       opts.forEach((o) => o.btn?.setActive(s.heroes.offense.id === o.offId));
       info.setText(`${stat('offense')}\n${stat('defense')}`);
@@ -262,41 +232,33 @@ export class DayUi {
     this.modal = m;
   }
 
-  /** 하루 끝: 그림일기 + [다음 날] [일기장] */
-  private showDiaryPanel(): void {
+  /** 아침 이야기 한 장 (§5.19-4): 펼친 장 문구 + 이번 스테이지 기록 + [다음 이야기] [이야기책] [추억 조합] */
+  private showPagePanel(): void {
     const s = this.state;
-    const entry = s.diary[s.diary.length - 1];
-    const st = s.lastDayStats;
-    const ratings = showRatings();
-    const backflowRow = ratings && st?.backflow === 1;
-    const extra = ratings ? (backflowRow ? 68 : 36) : 0;
+    const st = s.stageDef;
+    const rec = s.lastAttempt;
+    const ratings = showRatings() && rec !== null;
+    const extra = ratings ? 68 : 0;
     const m = new Modal(this.scene, 250 + extra);
-    m.text(16, `${entry.day}일째 · 이야기 한 장`, { fontSize: '14px', color: '#f2c94c', fontStyle: 'bold' });
-    m.text(38, entry.eventTitle, { fontSize: '11px', color: '#9fb4e0' });
-    m.text(62, entry.line, { fontSize: '13px', lineSpacing: 5 });
-    if (st) {
-      const bossName = this.data.monsters.backflowBoss.name;
-      const boss = st.bossWin === null ? '' : st.bossWin ? ` · ${bossName}를 막아냄` : ` · ${bossName}에 휩쓸림`;
-      m.text(
-        140,
-        `막아낸 ${this.data.monsters.worry.name} ${st.defeated} · 가라앉음 ${st.sunk} · 층 돌파 ${st.layersCleared}${boss}\n하루 ${Math.round(st.realSeconds)}초`,
-        { fontSize: '10px', color: '#8a8f9e', lineSpacing: 3 },
-      );
+    m.text(16, `${stageLabel(this.data, s.stage)} · 이야기 한 장`, { fontSize: '13px', color: '#f2c94c', fontStyle: 'bold' });
+    m.text(38, `◆ ${st.coreName}`, { fontSize: '11px', color: '#ffe08a' });
+    m.text(62, st.page, { fontSize: '13px', lineSpacing: 5 });
+    const tries = s.attempts[s.stage - 1];
+    if (rec) {
+      m.text(150, `${tries}번째 도전에 펼침 · 핵 ${Math.ceil(rec.coreHpEnd ?? 0)}/${this.data.balance.core.hp} 지킴 · 처치 ${rec.defeated}`, {
+        fontSize: '10px',
+        color: '#8a8f9e',
+      });
     }
-    // 주관 평가 (선택 안 해도 다음 날로 갈 수 있음)
+    // 주관 평가 (선택 안 해도 넘어갈 수 있음)
     if (ratings) {
-      const day = entry.day;
-      this.ratingRow(m, 184, '오늘은?', DAY_RATINGS, () => this.hooks.rating(day)?.day ?? null, (v) => this.hooks.rate(day, 'day', v));
-      if (backflowRow) {
-        this.ratingRow(m, 216, '역류는?', BACKFLOW_RATINGS, () => this.hooks.rating(day)?.backflow ?? null, (v) =>
-          this.hooks.rate(day, 'backflow', v),
-        );
-      }
+      const at = rec!.attempt;
+      this.ratingRow(m, 172, '이번 장은?', DAY_RATINGS, () => this.hooks.rating(at)?.day ?? null, (v) => this.hooks.rate(at, 'day', v));
+      this.ratingRow(m, 204, '다시 하기는?', RETRY_RATINGS, () => this.hooks.rating(at)?.retry ?? null, (v) => this.hooks.rate(at, 'retry', v));
     }
     const by = 204 + extra;
-    const next = s.chapterCleared ? '챕터 완성' : s.day >= s.maxDays ? '이야기 덮기' : '다음 날';
-    m.button(VIEW_W / 2 - 94, by, 86, next, () => {
-      if (this.state.nextDay()) this.hooks.onChange();
+    m.button(VIEW_W / 2 - 94, by, 86, '다음 이야기', () => {
+      if (this.state.nextStage()) this.hooks.onChange();
     });
     m.button(VIEW_W / 2, by, 86, '이야기책', () => this.showDiaryList());
     m.button(VIEW_W / 2 + 94, by, 86, '추억 조합', () => this.showRecipes());
@@ -326,23 +288,38 @@ export class DayUi {
   }
 
   /**
-   * 챕터 완성 화면 (§5.15-5, D-043): 제목, 완성 문구, 조합법 카드 2장(해·달, 표시만 — 조합표에는 추가하지 않음),
-   * 기록(걸린 일수·스테이지·영웅 둘의 떡/동아줄 점수·먹이기·병사), [이야기책] [처음부터].
-   * 미완성(completed false)이면 미완성 문구 + 기록, 조합법 카드 없음.
+   * 챕터 완성 화면 (§5.15-5, D-043, §5.19-4·9): 제목, 1-length 이야기 한 장("…누이와 오라비가 이야기 모험대에 합류했다"), 완성 문구,
+   * 해님·달님 각성(합류한 보상 영웅),
+   * 조합법 카드 2장(해·달, 표시만 — 조합표에는 추가하지 않음), 기록(시도 수·영웅 둘의 떡/동아줄 점수·먹이기·병사), [이야기책] [처음부터].
    */
-  showChapterComplete(completed: boolean | null): void {
+  showChapterComplete(): void {
     this.closeModal();
     const s = this.state;
     const cc = this.data.chapterComplete;
-    const done = completed === true;
-    const agree = showRatings() && completed !== null;
-    const cardsH = done ? 110 : 0;
-    const recordH = 112;
-    const m = new Modal(this.scene, 96 + cardsH + recordH + (agree ? 34 : 0) + 56);
+    const last = this.data.stages.stages[this.data.stages.stages.length - 1];
+    const agree = showRatings();
+    const m = new Modal(this.scene, 96 + 70 + 110 + 112 + (agree ? 34 : 0) + 26 + (s.joinedHeroes.length ? 68 : 0));
     m.text(16, cc.title, { fontSize: '12px', color: '#9fb4e0' });
-    const head = m.text(36, done ? cc.doneText : cc.notDoneText, { fontSize: '17px', color: done ? '#f2c94c' : '#cfd6ea', fontStyle: 'bold' });
-    let y = 36 + head.height + 16;
-    if (done) {
+    const page = m.text(36, last.page, { fontSize: '11px', color: '#e8e8e8', lineSpacing: 4 });
+    let y = 36 + page.height + 12;
+    const head = m.text(y, cc.doneText, { fontSize: '16px', color: '#f2c94c', fontStyle: 'bold' });
+    y += head.height + 10;
+    // 해님·달님 각성 (D-057): 합류한 보상 영웅 = 해(낮)·달(밤) 원이 떠오른다
+    const joined = s.joinedHeroes.map((id) => heroName(this.data, id));
+    if (joined.length) {
+      joined.forEach((nm, i) => {
+        const sun = i === 0;
+        const cx = VIEW_W / 2 + (i === 0 ? -60 : 60);
+        const orb = this.scene.add.circle(cx, m.top + y + 26, 11, sun ? 0xffd36b : 0xe6e9f5).setStrokeStyle(2, sun ? 0xfff1c4 : 0x9fb0e0).setDepth(OVERLAY_DEPTH + 3);
+        const cap = text(this.scene, cx, m.top + y + 42, `${nm} — ${sun ? '해님' : '달님'}`, { fontSize: '10px', color: sun ? '#ffe08a' : '#dfe6ff' })
+          .setOrigin(0.5, 0)
+          .setDepth(OVERLAY_DEPTH + 3);
+        m.objects.push(orb, cap);
+        this.scene.tweens.add({ targets: orb, y: { from: m.top + y + 40, to: m.top + y + 14 }, duration: 900, delay: 300 * i, ease: 'Sine.easeOut' });
+      });
+      y += 68;
+    }
+    {
       const learned = m.text(y, `${cc.learnedRecipes.map((r) => r.name.replace(/^해와 달이 된 /, '')).join('와 ')}를 만드는 법을 알게 되었다`, { fontSize: '12px', color: '#ffe08a' });
       y += learned.height + 8;
       const cards = cc.learnedRecipes.slice(0, 2);
@@ -363,7 +340,8 @@ export class DayUi {
       });
       y += 88;
     }
-    m.text(y, `${s.day}일 동안 · 1-${s.stage}까지`, { fontSize: '11px', color: '#cfd6ea' });
+    const fails = s.attemptLog.filter((x) => x.result !== 'success').length;
+    m.text(y, `1-1 ~ 1-${s.chapterLength} · 도전 ${s.attempt}번 (다시 도전 ${fails}번)`, { fontSize: '11px', color: '#cfd6ea' });
     y += 20;
     for (const role of ['offense', 'defense'] as const) {
       const h = s.heroes[role];
@@ -453,7 +431,7 @@ export class DayUi {
     this.diaryList = objs;
   }
 
-  /** 일기장: 목록(일차 · 이벤트명 · 문장). 드래그·휠로 스크롤만 */
+  /** 이야기책: 펼친 장 목록 (스테이지 · 제목 · 이야기 한 장). 드래그·휠로 스크롤만 */
   showDiaryList(): void {
     if (this.diaryList) return;
     const scene = this.scene;
@@ -469,17 +447,18 @@ export class DayUi {
 
     const list = scene.add.container(0, top).setDepth(OVERLAY_DEPTH + 11);
     let y = 0;
-    const rows = mergeDiary(this.state.diary, this.hooks.forgottenLog(), this.data.diary.forgottenDay);
-    if (rows.length === 0) {
-      list.add(text(scene, x0, 0, '아직 쓴 일기가 없다.', { fontSize: '12px', color: '#8a8f9e' }));
+    const pages = this.state.pages;
+    if (pages.length === 0) {
+      list.add(text(scene, x0, 0, '아직 펼친 장이 없다.', { fontSize: '12px', color: '#8a8f9e' }));
     }
-    for (const r of rows) {
-      const head = text(scene, x0, y, r.head, { fontSize: '11px', color: r.forgotten ? '#6d7282' : '#9fb4e0' });
-      const body = text(scene, x0, y + 16, r.line, {
+    for (const n of pages) {
+      const st = this.data.stages.stages[n - 1];
+      const head = text(scene, x0, y, `${stageLabel(this.data, n)} · ◆ ${st.coreName}`, { fontSize: '11px', color: '#9fb4e0' });
+      const body = text(scene, x0, y + 16, st.page, {
         fontSize: '12px',
         wordWrap: { width: VIEW_W - x0 * 2 },
         lineSpacing: 3,
-        color: r.forgotten ? '#8a8f9e' : '#e8e8e8',
+        color: '#e8e8e8',
       });
       list.add([head, body]);
       y += 16 + body.height + 14;

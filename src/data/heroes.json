@@ -1,12 +1,29 @@
 {
   "heroes": [
     {
+      "id": "sapsal",
+      "name": "삽살",
+      "hp": 120,
+      "atk": 18,
+      "atkInterval": 0.9,
+      "range": 50
+    },
+    {
+      "id": "haetae",
+      "name": "해태",
+      "hp": 160,
+      "atk": 14,
+      "atkInterval": 1.0,
+      "range": 50
+    },
+    {
       "id": "nui",
       "name": "누이",
       "hp": 120,
       "atk": 18,
       "atkInterval": 0.9,
-      "range": 50
+      "range": 50,
+      "reward": "ch01"
     },
     {
       "id": "orabi",
@@ -14,9 +31,10 @@
       "hp": 160,
       "atk": 14,
       "atkInterval": 1.0,
-      "range": 50
+      "range": 50,
+      "reward": "ch01"
     }
   ],
-  "offense": "nui",
-  "defense": "orabi"
+  "offense": "sapsal",
+  "defense": "haetae"
 }

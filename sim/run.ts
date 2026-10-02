@@ -1,16 +1,15 @@
 // 자동 플레이 시뮬레이터 CLI (스펙 §8.1). Node 전용: core + data + layout 좌표만 import (Phaser 없음).
 //
-//   npm run sim -- --policy balanced --seeds 200 --grid 5x4 [--until life] [--out 파일]   (실제 하루 구조, 한 판 = 1챕터)
+//   npm run sim -- --policy balanced --seeds 200 --grid 5x4 [--until chapter] [--maxAttempts 50] [--out 파일]   (한 판 = 1챕터, 시도 상한까지)
 //   npm run sim -- --policy idle,random,balanced,lazy,dayOnly,nightOnly,hoarder,noFeed ...   (여러 정책 + 비교 표)
 //   먹이기 배분 r(낮덱 몫, balanced·lazy): --sweep feedRatio=0,0.25,0.5,0.75,1 (sim.json feedRatio, 데이터 수치가 아님)
 //   npm run sim -- --compare a.json b.json
-//   (--until wave:N · --dayReset · --dayMode m5는 M5에서 없어짐: 무한 웨이브가 하루 3웨이브로 바뀌었다)
 //
 // JSON 수치를 파일 수정 없이 덮어쓰기 (여러 번 가능, 키는 balance.json 기준 — 다른 파일은 monsters.… 처럼 앞에 붙임)
-//   npm run sim -- --policy all --set shadow.shadowAfterBossWin=50 --set abyss.unhappyStallShadowPerSec=0.15
-// 한 키를 여러 값으로 돌려 비교 표 (§8.2 M4 목표 충족 여부 포함). --policy를 안 주면 전 정책
-//   npm run sim -- --sweep abyss.unhappyStallShadowPerSec=0.1,0.2,0.3 [--set happy.atk=6]
-// 저장 누락 필드 검출 (§5.8-4): 경계마다 저장 round-trip한 실행이 끈 실행과 완전히 같은지 비교
+//   npm run sim -- --policy all --set carry.speedMult=0.8 --set core.hp=120
+// 한 키를 여러 값으로 돌려 비교 표 (§5.19-6 진행 목표 충족 여부 포함). --policy를 안 주면 전 정책
+//   npm run sim -- --sweep offense.seconds=100,120,140 [--set happy.atk=6]
+// 저장 누락 필드 검출 (§5.19-7): 경계마다 저장 round-trip한 실행이 끈 실행과 완전히 같은지 비교
 //   npm run sim -- --policy all --seeds 200 --saveRoundTrip
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -22,9 +21,7 @@ import { applyOverrides, overridesRecord, parseSet, parseSweep, type Override } 
 import { POLICIES, POLICY_ALIASES } from './policies';
 import {
   buildReport,
-  checkM3Goals,
-  checkM5Goals,
-  checkM89Goals,
+  checkM810Goals,
   formatComparison,
   formatCompare,
   formatGoals,
@@ -53,6 +50,7 @@ interface Args {
   sets: Override[];
   sweep: { key: string; values: Override[] } | null;
   saveRoundTrip: boolean;
+  maxAttempts: number;
 }
 
 function fail(msg: string): never {
@@ -101,11 +99,13 @@ function parseArgs(argv: string[]): Args {
   if (!m) fail('--grid는 5x4 형식');
   const grid = { cols: Number(m[1]), rows: Number(m[2]) };
 
-  const untilArg = get('until') ?? 'life';
-  if (untilArg !== 'life') fail(`--until ${untilArg}: M5부터는 실제 하루 구조(--until life)만 지원합니다 (무한 웨이브 없음)`);
+  const untilArg = get('until') ?? 'chapter';
+  if (untilArg !== 'chapter' && untilArg !== 'life') fail(`--until ${untilArg}: 한 판(1챕터, --until chapter)만 지원합니다`);
   for (const gone of ['dayReset', 'dayMode']) {
-    if (get(gone) !== undefined) fail(`--${gone}: M5에서 없어졌습니다. 실제 하루 구조(--until life)가 기본입니다`);
+    if (get(gone) !== undefined) fail(`--${gone}: 없어졌습니다. 한 판(--until chapter)이 기본입니다`);
   }
+  const maxAttempts = Number(get('maxAttempts') ?? (simJson as SimConfig).maxAttempts);
+  if (!Number.isInteger(maxAttempts) || maxAttempts < 1) fail('--maxAttempts는 1 이상의 정수');
 
   return {
     policies,
@@ -117,6 +117,7 @@ function parseArgs(argv: string[]): Args {
     sets,
     sweep,
     saveRoundTrip: argv.includes('--saveRoundTrip'),
+    maxAttempts,
   };
 }
 
@@ -139,7 +140,7 @@ function runPolicies(args: Args, data: GameData, sets: Override[], cfg: SimConfi
   for (const name of args.policies) {
     const started = Date.now();
     const runs = Array.from({ length: args.seeds }, (_, i) =>
-      runOne(data, cfg, POLICIES[name], { seed: i + 1, grid: args.grid }),
+      runOne(data, cfg, POLICIES[name], { seed: i + 1, grid: args.grid, maxAttempts: args.maxAttempts }),
     );
     const report = buildReport(
       name,
@@ -147,9 +148,7 @@ function runPolicies(args: Args, data: GameData, sets: Override[], cfg: SimConfi
       {
         seeds: args.seeds,
         grid: `${args.grid.cols}x${args.grid.rows}`,
-        mode: 'life',
-        days: data.balance.chapter.maxDays,
-        wavesPerNight: data.balance.wave.wavesPerNight,
+        maxAttempts: args.maxAttempts,
         feedRatio: cfg.feedRatio,
         ...(sets.length ? { overrides: overridesRecord(sets) } : {}),
       },
@@ -158,7 +157,7 @@ function runPolicies(args: Args, data: GameData, sets: Override[], cfg: SimConfi
     reports.push(report);
     if (verbose) {
       const file =
-        args.out ?? join(OUT_DIR, `${today()}_${name}_life${setsTag(sets)}.json`);
+        args.out ?? join(OUT_DIR, `${today()}_${name}_chapter${setsTag(sets)}.json`);
       writeFileSync(file, JSON.stringify(report, null, 2));
       console.log(formatReport(report));
       console.log(`→ ${file} (${((Date.now() - started) / 1000).toFixed(1)}초)\n`);
@@ -176,9 +175,10 @@ function checkRoundTrip(args: Args, data: GameData, cfg: SimConfig): RoundTripCh
     let matched = 0;
     const mismatchSeeds: number[] = [];
     for (let seed = 1; seed <= args.seeds; seed++) {
-      const a = runLife(data, cfg, POLICIES[name], { seed, grid: args.grid });
-      const b = runLife(data, cfg, POLICIES[name], { seed, grid: args.grid, saveRoundTrip: true });
-      const fin = (s: typeof a.state) => (s.phase === 'chapterComplete' ? JSON.stringify(serializeGame(s)) : '');
+      const a = runLife(data, cfg, POLICIES[name], { seed, grid: args.grid, maxAttempts: args.maxAttempts });
+      const b = runLife(data, cfg, POLICIES[name], { seed, grid: args.grid, maxAttempts: args.maxAttempts, saveRoundTrip: true });
+      const boundary = (s: typeof a.state) => s.phase === 'chapterComplete' || s.phase === 'dayStart' || s.phase === 'diary';
+      const fin = (s: typeof a.state) => (boundary(s) ? JSON.stringify(serializeGame(s)) : '');
       if (JSON.stringify(a.result) === JSON.stringify(b.result) && fin(a.state) === fin(b.state)) matched += 1;
       else if (mismatchSeeds.length < 5) mismatchSeeds.push(seed);
     }
@@ -229,7 +229,7 @@ function main(): void {
       rows.push({
         value: v.value,
         reports,
-        goals: [...checkM89Goals(reports, runCfg.m89Goals, null).filter((g) => g.id && g.id !== 'roundTrip'), ...checkM5Goals(reports, runCfg.m5Goals)],
+        goals: checkM810Goals(reports, runCfg.m810Goals, null).filter((g) => g.id && g.id !== 'roundTrip'),
       });
       console.log(`  ${key}=${JSON.stringify(v.value)} 완료 (${((Date.now() - started) / 1000).toFixed(1)}초)`);
     }
@@ -241,12 +241,14 @@ function main(): void {
     const valuesTag = values.map((v) => String(v.value)).join(',');
     const file = join(
       OUT_DIR,
-      `${today()}_sweep_${values[0].path.slice(1).join('.')}=${valuesTag}${setsTag(fixed)}_life.json`.replace(/[^\w.=+,-]/g, '_'),
+      `${today()}_sweep_${values[0].path.slice(1).join('.')}=${valuesTag}${setsTag(fixed)}_chapter.json`.replace(/[^\w.=+,-]/g, '_'),
     );
     const compact = rows.map((r) => ({
       value: r.value,
       goals: r.goals.map(({ id, label, pass, detail }) => ({ id, label, pass, detail })),
-      policies: Object.fromEntries(r.reports.map((p) => [p.policy, { summary: p.summary, feedTierShare: p.feedTierShare, chapter: p.chapter, soldiersByKind: p.soldiersByKind }])),
+      policies: Object.fromEntries(
+        r.reports.map((p) => [p.policy, { summary: p.summary, completedRate: p.completedRate, completeAttempts: p.completeAttempts, stages: p.stages, soldiersByKind: p.soldiersByKind }]),
+      ),
     }));
     writeFileSync(
       file,
@@ -272,10 +274,6 @@ function main(): void {
     console.log(formatComparison(reports));
     console.log();
   }
-  console.log(formatGoals(checkM3Goals(reports, cfg.m3Goals)));
-  console.log();
-  console.log(formatGoals(checkM5Goals(reports, cfg.m5Goals), '§8.2 M5 부분 목표'));
-  console.log();
 
   let roundTrip: RoundTripCheck[] | null = null;
   if (args.saveRoundTrip) {
@@ -287,7 +285,7 @@ function main(): void {
     );
     console.log();
   }
-  console.log(formatGoals(checkM89Goals(reports, cfg.m89Goals, roundTrip), '§8.2 M8.9 진행 목표 (판정 출력만, 통과는 (b) 튜닝)'));
+  console.log(formatGoals(checkM810Goals(reports, cfg.m810Goals, roundTrip), '§5.19-6 M8.10 진행 목표 (판정 출력만, 통과는 (b) 튜닝)'));
 }
 
 main();

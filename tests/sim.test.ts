@@ -1,23 +1,25 @@
-// 시뮬레이터 하네스 (스펙 §8.1, §5.17-7, [11]-4): 재현성, 정책 기본 동작, 통계, 진행 목표
+// 시뮬레이터 하네스 (스펙 §8.1, §5.19-6, [11]-4): 재현성, 시도 상한, 정책 기본 동작, 통계, 진행 목표
 import { describe, expect, it } from 'vitest';
 import { rawGameData } from '../src/data';
 import type { GameData } from '../src/data/types';
+import type { AttemptStats } from '../src/core/day';
 import { GameState } from '../src/core/game';
 import { mulberry32 } from '../src/core/rng';
 import { gameGeometry } from '../src/scenes/layout';
 import { applyOverrides, parseSet } from '../sim/overrides';
 import { POLICIES } from '../sim/policies';
 import { feedRole } from '../sim/policies/helpers';
-import { bossDiagnostics, buildReport, checkM3Goals, checkM5Goals, checkM89Goals, chapterStats, quantile, summarize } from '../sim/report';
-import { runOne, type RunOptions, type RunResult } from '../sim/runner';
+import { buildReport, checkM810Goals, formatReport, quantile, summarize } from '../sim/report';
+import { maxFailStreak, runOne, type RunOptions, type RunResult } from '../sim/runner';
 import simJson from '../sim/sim.json';
 import type { SimConfig } from '../sim/types';
 
 const data = structuredClone(rawGameData) as unknown as GameData;
 const cfg = simJson as SimConfig;
-const DAYS = data.balance.chapter.maxDays;
-const opt = (seed: number): RunOptions => ({ seed, grid: { cols: 5, rows: 4 } });
-const options = { seeds: 1, grid: '5x4', mode: 'life' as const, days: DAYS, wavesPerNight: data.balance.wave.wavesPerNight, feedRatio: cfg.feedRatio };
+/** 테스트는 시도 상한을 줄여 빨리 */
+const MAX = 12;
+const opt = (seed: number, maxAttempts = MAX): RunOptions => ({ seed, grid: { cols: 5, rows: 4 }, maxAttempts });
+const options = { seeds: 1, grid: '5x4', maxAttempts: MAX, feedRatio: cfg.feedRatio };
 
 /** 정책별 한 판은 비싸지 않지만 여러 번 쓰므로 캐시 */
 const cache = new Map<string, RunResult>();
@@ -29,7 +31,7 @@ function run(policy: string, seed: number): RunResult {
 
 describe('재현성', () => {
   it.each(Object.keys(POLICIES))('%s: 같은 시드·같은 정책 → 같은 결과', (name) => {
-    expect(runOne(data, cfg, POLICIES[name], opt(7))).toEqual(runOne(data, cfg, POLICIES[name], opt(7)));
+    expect(runOne(data, cfg, POLICIES[name], opt(7, 6))).toEqual(runOne(data, cfg, POLICIES[name], opt(7, 6)));
   });
 
   it('시드가 다르면 결과가 달라질 수 있다 (random)', () => {
@@ -37,46 +39,36 @@ describe('재현성', () => {
   });
 });
 
-describe('실제 하루 구조', () => {
-  it('한 판 = 1챕터: 완성하면 그날 끝, 못 하면 maxDays일 (일차별 기록 길이 = 끝난 날 수)', () => {
-    const done = run('balanced', 1);
-    expect(done.completed).toBe(true);
-    expect(done.stage).toBe(data.balance.chapter.length);
-    expect(done.days).toBe(done.endDay);
-    // 층 HP를 아주 높이면 못 깬다 → maxDays일 미완성
-    const hard = runOne(applyOverrides(data, [parseSet('abyss.layerHpBase=1000000')]), cfg, POLICIES.idle, opt(1));
-    expect(hard.completed).toBe(false);
-    expect(hard.days).toBe(DAYS);
-    for (const r of [done, hard]) {
-      for (const k of ['sunkByDay', 'joyByDay', 'shadowByDay', 'dayLengths', 'dayStartJoy', 'dayEndJoy'] as const) {
-        expect(r[k]).toHaveLength(r.days);
-      }
-      expect(Math.min(...r.dayLengths)).toBeGreaterThan(20);
-    }
-  });
-
-  it('하루 길이 = 오펜스(낮) + 디펜스(밤), 오펜스는 offense.seconds 이하', () => {
-    const r = run('balanced', 1);
-    for (let i = 0; i < r.days; i++) {
-      expect(r.dayLengthsOffense[i]).toBeLessThanOrEqual(data.balance.offense.seconds + 1e-6);
-      expect(r.dayLengths[i]).toBeCloseTo(r.dayLengthsOffense[i] + r.dayLengthsDefense[i], 6);
-    }
-  });
-
-  it('1-5를 정화한 다음 날 갈림길에서 정책이 고른다 (balanced = 달이 맡음), 1-5에 못 가면 갈림길 없음', () => {
-    const b = run('balanced', 1);
-    expect(b.turningPointClearedDay).not.toBeNull();
-    expect(b.flags).toEqual(['face']);
-    const i = run('idle', 1);
-    expect(i.flags).toEqual(i.turningPointClearedDay !== null && i.endDay > i.turningPointClearedDay ? ['avoid'] : []); // 기본 = 첫 선택지
-  });
-
-  it('보스 진단 기록이 역류 수와 같고, 결과(win)가 채워진다', () => {
+describe('한 판 = 1챕터, 시도 상한 (§5.19-6)', () => {
+  it('시도 상한에 닿으면 멈춘다 (미완성), 스테이지별 시도 수 합 = 총 시도', () => {
     const r = run('idle', 1);
-    expect(r.backflows).toBeGreaterThan(0);
-    expect(r.bossLog).toHaveLength(r.backflows);
-    expect(r.bossLog.every((b) => b.win !== null)).toBe(true);
-    expect(r.bossWins + r.bossLosses).toBe(r.backflows);
+    expect(r.completed).toBe(false);
+    expect(r.attempts).toBe(MAX);
+    expect(r.attemptsByStage.reduce((a, b) => a + b, 0)).toBe(MAX);
+    const res = Object.values(r.results).reduce((a, b) => a + b, 0);
+    expect(res).toBe(MAX);
+  });
+
+  it('balanced는 진행한다: 첫 시도 성공 기록·핵 남은 HP·운반 시간', () => {
+    const r = run('balanced', 1);
+    expect(r.stage).toBeGreaterThan(1);
+    expect(r.firstTry[0]).not.toBeNull();
+    expect(r.coreHpLeft.length).toBeGreaterThan(0);
+    for (const hp of r.coreHpLeft) expect(hp).toBeGreaterThan(0);
+    expect(r.carryTimes.length).toBeGreaterThan(0);
+  });
+
+  it('maxFailStreak: 같은 스테이지 연속 실패 최대 (성공하면 끊김, 끝까지 못 넘은 것도 센다)', () => {
+    const a = (stage: number, result: AttemptStats['result']) => ({ stage, result }) as AttemptStats;
+    expect(maxFailStreak([a(1, 'success'), a(2, 'night'), a(2, 'dayFall'), a(2, 'success'), a(3, 'night')])).toBe(2);
+    expect(maxFailStreak([a(1, 'night'), a(1, 'night'), a(1, 'night')])).toBe(3);
+    expect(maxFailStreak([])).toBe(0);
+  });
+
+  it('갈림길(1-5 성공 다음)에서 정책이 고른다 (balanced = 달이 맡음)', () => {
+    const r = runOne(data, cfg, POLICIES.balanced, opt(1, 50));
+    if (r.stage >= 6) expect(r.flags).toEqual(['face']);
+    else expect(r.flags).toEqual([]);
   });
 });
 
@@ -154,82 +146,34 @@ describe('정책 기본 동작 (§5.17-7)', () => {
 
 describe('통계·리포트', () => {
   it('선형 보간 백분위', () => {
-    const xs = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11];
-    expect(quantile(xs, 0.5)).toBe(6);
-    expect(quantile(xs, 0.1)).toBe(2);
-    expect(quantile(xs, 0.9)).toBe(10);
-    expect(quantile([5], 0.9)).toBe(5);
+    expect(quantile([1, 2, 3, 4], 0.5)).toBe(2.5);
+    expect(quantile([10], 0.9)).toBe(10);
+    expect(Number.isNaN(quantile([], 0.5))).toBe(true);
   });
 
   it('summarize는 null을 제외한다', () => {
-    expect(summarize([null, 2, 4, null])).toMatchObject({ mean: 3, median: 3, n: 2 });
+    expect(summarize([1, null, 3])).toMatchObject({ mean: 2, median: 2, n: 2 });
   });
 
-  it('리포트: 곡선 길이 = 일차 수, 먹인 단계 비율 합 = 1, 병사 체인:단 합 = 병사 수, 피해 비중 0~1', () => {
-    const runs = [1, 2].map((s) => run('balanced', s));
-    const rep = buildReport('balanced', runs, { ...options, seeds: 2 }, cfg);
-    expect(rep.curves).toHaveLength(Math.max(...runs.map((r) => r.days)));
-    expect(rep.curves.every((c) => c.lengthMedian > 0)).toBe(true);
-    const share = Object.values(rep.feedTierShare).reduce((s, v) => s + v, 0);
-    expect(share).toBeCloseTo(1, 10);
-    expect(Object.values(rep.soldiersByKind).reduce((s, v) => s + v, 0)).toBe(runs.reduce((s, r) => s + r.soldiers, 0));
-    const ss = rep.summary.soldierShare;
-    expect(ss.p10).toBeGreaterThanOrEqual(0);
-    expect(ss.p90).toBeLessThanOrEqual(1);
+  it('리포트: 스테이지 표·결과 비율 합 = 1·핵 HP 구간 합 = 성공한 밤 수·병사 체인:단 합 = 병사 수', () => {
+    const runs = [run('balanced', 1), run('balanced', 2)];
+    const rep = buildReport('balanced', runs, options, cfg);
+    expect(rep.stages).toHaveLength(data.balance.chapter.length);
+    expect(Object.values(rep.resultShare).reduce((a, b) => a + b, 0)).toBeCloseTo(1, 9);
+    expect(rep.coreHp.buckets.reduce((a, b) => a + b, 0)).toBe(runs.reduce((s, r) => s + r.coreHpLeft.length, 0));
+    expect(Object.values(rep.soldiersByKind).reduce((a, b) => a + b, 0)).toBe(runs.reduce((s, r) => s + r.soldiers, 0));
+    expect(rep.stages[0].reachedRate).toBe(1);
+    expect(formatReport(rep)).toContain('스테이지별');
   });
 
-  it('보스 진단: 웨이브|준비 여부별, 디펜스 우리 편 수별 처치율', () => {
-    const fake = {
-      bossLog: [
-        { slot: 'morning', prep: true, defenseUnits: 0, win: false },
-        { slot: 'morning', prep: true, defenseUnits: 2, win: true },
-        { slot: 'noon', prep: false, defenseUnits: 2, win: true },
-        { slot: 'evening', prep: false, defenseUnits: 0, win: null },
-      ],
-    } as unknown as RunResult;
-    const d = bossDiagnostics([fake]);
-    expect(d.total).toBe(4);
-    expect(d.bySlot['morning|prep']).toEqual({ n: 2, wins: 1, winRate: 0.5 });
-    expect(d.bySlot['noon|-']).toEqual({ n: 1, wins: 1, winRate: 1 });
-    expect(d.bySlot['evening|-']).toEqual({ n: 1, wins: 0, winRate: null }); // 결과 전
-    expect(d.byDefense['2']).toEqual({ n: 2, wins: 2, winRate: 1 });
-    expect(d.byDefense['0']).toEqual({ n: 2, wins: 0, winRate: 0 });
-  });
-
-  it('M3·M5 목표 판정이 돌아간다 (하루 길이는 보고만)', () => {
-    const idle = buildReport('idle', [run('idle', 1)], options, cfg);
-    const bal = buildReport('balanced', [run('balanced', 1)], options, cfg);
-    const m3 = checkM3Goals([idle, bal], cfg.m3Goals);
-    expect(typeof m3.find((c) => c.label.startsWith('idle'))?.pass).toBe('boolean');
-    const m5 = checkM5Goals([bal], cfg.m5Goals);
-    expect(m5.find((c) => c.label.startsWith('하루 길이'))?.pass).toBeNull();
-    expect(m5.find((c) => c.id === 'B 역류')).toBeDefined();
-  });
-});
-
-describe('M8.9: 챕터 진행 리포트·진행 목표 (§5.17-7, [11]-4)', () => {
-  it('완성률·완성 일차·1-5 도달 일차', () => {
-    const hard = runOne(applyOverrides(data, [parseSet('abyss.layerHpBase=1000000')]), cfg, POLICIES.idle, opt(1));
-    const runs = [run('balanced', 1), hard];
-    const c = chapterStats(runs);
-    expect(c.n).toBe(2);
-    expect(c.completedRate).toBeCloseTo(1 / 2);
-    expect(c.unfinishedRate).toBeCloseTo(1 / 2);
-    expect(c.completeDay.median).toBe(runs[0].endDay);
-    expect(runs[0].turningPointReachedDay!).toBeLessThanOrEqual(runs[0].turningPointClearedDay!);
-  });
-
-  it('checkM89Goals: 항목이 모두 나오고, roundTrip 없으면 미판정 / 있으면 일치 여부', () => {
-    const reports = ['balanced', 'lazy', 'dayOnly', 'nightOnly', 'noFeed', 'random', 'idle', 'hoarder'].map((p) => buildReport(p, [run(p, 1)], options, cfg));
-    const none = checkM89Goals(reports, cfg.m89Goals, null);
-    expect(none.find((c) => c.label.startsWith('--saveRoundTrip'))?.pass).toBeNull();
-    for (const id of ['B 완성률', 'B 완성일', 'B 중반', 'B 초반', 'B 병사', 'dayOnly<30', 'nightOnly<30', 'lazy 격차', 'noFeed<30', 'idle 0%', 'random 낮음', 'hoarder<B']) {
-      expect(none.find((c) => c.id === id), id).toBeDefined();
-    }
-    expect(typeof none.find((c) => c.id === 'idle 0%')?.pass).toBe('boolean');
-    const ok = checkM89Goals(reports, cfg.m89Goals, [{ policy: 'balanced', matched: 1, total: 1, mismatchSeeds: [] }]);
-    expect(ok.find((c) => c.id === 'roundTrip')?.pass).toBe(true);
-    const ng = checkM89Goals(reports, cfg.m89Goals, [{ policy: 'balanced', matched: 0, total: 1, mismatchSeeds: [1] }]);
-    expect(ng.find((c) => c.id === 'roundTrip')?.pass).toBe(false);
+  it('checkM810Goals: 항목이 모두 나오고, roundTrip 없으면 그 항목 없음 / 있으면 일치 여부', () => {
+    const names = ['idle', 'random', 'balanced', 'dayOnly', 'nightOnly', 'noFeed'];
+    const reports = names.map((n) => buildReport(n, [run(n, 1)], options, cfg));
+    const goals = checkM810Goals(reports, cfg.m810Goals, null);
+    const ids = goals.map((g) => g.id);
+    expect(ids).toEqual(['B 시도', 'B 1-1', 'B 1-9', 'B 연속실패', 'B 완성', 'idle', 'dayOnly', 'nightOnly', 'noFeed', 'random']);
+    expect(goals.find((g) => g.id === 'idle')!.pass).toBe(true);
+    const withRt = checkM810Goals(reports, cfg.m810Goals, [{ policy: 'balanced', matched: 1, total: 1, mismatchSeeds: [] }]);
+    expect(withRt.find((g) => g.id === 'roundTrip')!.pass).toBe(true);
   });
 });

@@ -12,8 +12,7 @@ const DOG = 'companion_animal';
 
 function game(seed = 1, cols = 4, rows = 4): GameState {
   const g = new GameState(data, { cols, rows }, mulberry32(seed), gameGeometry(data.balance.merge.soldierCap + 1));
-  // 1일차를 평범한 하루로 시작 (이벤트 효과가 수치를 흔들지 않게) → waves 단계
-  g.debugForceEvent('plain');
+  // 1-1 장면 카드를 닫고 낮 시작
   g.confirmDay();
   return g;
 }

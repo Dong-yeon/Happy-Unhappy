@@ -1,19 +1,20 @@
 // metrics 수집·저장 (스펙 §5.10-2·3). 씬 층에서 쓴다: core 상태는 읽기만 하고, 입력·실제 시간은 씬이 넘겨준다.
-// 저장 키 hau_metrics_v3는 게임 저장(hau_save_v3)과 분리. 새 일생·저장 초기화에도 지워지지 않는다.
+// 저장 키 hau_metrics_v4는 게임 저장(hau_save_v4)과 분리. 새 판·저장 초기화에도 지워지지 않는다.
 // localStorage 예외는 무시하고 게임을 계속한다 (platform/storage가 console.warn).
 
+import type { AttemptStats } from '../core/day';
 import type { GameState } from '../core/game';
 import type { GridSize } from '../core/grid';
-import { nowIso, realToday, today } from '../platform/clock';
+import { nowIso, realToday } from '../platform/clock';
 import { METRICS_KEY, readKey, removeKey, writeKey } from '../platform/storage';
 import {
-  detectMidDayRestore,
+  detectMidAttemptRestore,
   emptyDropFails,
   emptyMetrics,
   enforceLimits,
   newLife,
   parseMetrics,
-  type DayMetrics,
+  type AttemptMetrics,
   type DayRating,
   type DropFails,
   type LifeMetrics,
@@ -30,14 +31,13 @@ export class MetricsRecorder {
   data: MetricsData;
   life!: LifeMetrics;
   private session!: SessionRecord;
-  // 그날 입력 카운터 (메모리에만. 판 도중 종료하면 버려진다)
+  // 이번 시도 입력 카운터 (메모리에만. 시도 도중 종료하면 버려진다)
   private active = false;
   private dropFails = emptyDropFails();
   private dragDistance = 0;
   private dayRealSeconds = 0;
   private nightRealSeconds = 0;
   private speedUsed = 0;
-  private bypass = false;
 
   constructor(
     private readonly state: GameState,
@@ -50,13 +50,13 @@ export class MetricsRecorder {
     }
     this.data = r.ok ? r.data : emptyMetrics(nowIso());
     this.attach();
-    if (detectMidDayRestore(this.data, this.life, state.day, state.phase)) {
-      console.info(`[metrics] 판 도중 복원 감지 (${state.day}일째) → midDayRestores ${this.life.midDayRestores}`);
+    if (detectMidAttemptRestore(this.data, this.life, state.attempt, state.phase)) {
+      console.info(`[metrics] 시도 도중 복원 감지 (1-${state.stage}) → midAttemptRestores ${this.life.midAttemptRestores}`);
     }
     this.write();
   }
 
-  /** 현재 일생·세션을 찾거나 만든다 */
+  /** 현재 판·세션을 찾거나 만든다 */
   private attach(): void {
     const s = this.state;
     const same = (l: LifeMetrics) => l.seed === s.seed && l.gridSize.cols === this.gridSize.cols && l.gridSize.rows === this.gridSize.rows;
@@ -70,7 +70,7 @@ export class MetricsRecorder {
     const sess = this.data.sessions.find((x) => x.startedAt === sessionStartedAt);
     if (sess) this.session = sess;
     else {
-      this.session = { date: today(), realDate: realToday(), startedAt: sessionStartedAt, foregroundSeconds: 0, daysCompleted: 0 };
+      this.session = { realDate: realToday(), startedAt: sessionStartedAt, foregroundSeconds: 0, attemptsCompleted: 0 };
       this.data.sessions.push(this.session);
     }
   }
@@ -91,8 +91,8 @@ export class MetricsRecorder {
     if (fail) this.dropFails[fail] += 1;
   }
 
-  /** confirmDay (dayBegin 이벤트): 카운터 초기화 + inProgress 기록 */
-  beginDay(bypass: boolean): void {
+  /** 장면 카드를 닫음 (dayBegin 이벤트): 카운터 초기화 + inProgress 기록 + 갈림길 선택 */
+  beginAttempt(): void {
     const s = this.state;
     this.active = true;
     this.dropFails = emptyDropFails();
@@ -100,67 +100,60 @@ export class MetricsRecorder {
     this.dayRealSeconds = 0;
     this.nightRealSeconds = 0;
     this.speedUsed = 0;
-    this.bypass = bypass;
-    if (bypass) this.life.gatingBypassUsed = true;
-    if (s.today.kind === 'milestone') {
-      // 선택지의 flag는 서로 다르므로 마지막 flag로 고른 선택지를 찾는다
+    const crossroad = s.flags.length > this.life.milestoneChoices.length;
+    if (crossroad) {
       const flag = s.flags[s.flags.length - 1];
-      const choice = s.today.event.choices.find((c) => c.flag === flag);
-      if (choice) this.life.milestoneChoices.push({ day: s.day, eventId: s.today.id, choiceId: choice.id });
+      this.life.milestoneChoices.push({ stage: s.stage, eventId: 'crossroad', choiceId: flag });
     }
-    this.data.inProgress = { lifeId: this.life.lifeId, day: s.day };
+    this.data.inProgress = { lifeId: this.life.lifeId, attempt: s.attempt };
     this.write();
   }
 
-  /** 하루 끝 (diary 진입): 그날 DayMetrics 확정 */
-  endDay(): void {
+  /** 시도 끝 (실패·성공): AttemptMetrics 확정 */
+  endAttempt(record: AttemptStats): void {
     const s = this.state;
-    const st = s.lastDayStats;
-    if (!st) return;
-    const m: DayMetrics = {
-      day: s.day,
-      date: today(),
+    const m: AttemptMetrics = {
+      attempt: record.attempt,
+      stage: record.stage,
+      result: record.result,
       realDate: realToday(),
-      eventId: s.today.id,
-      dayStats: structuredClone(st),
-      feeds: s.feedLog.filter((r) => r.day === s.day).map((r) => ({ ...r, cell: { ...r.cell } })),
+      record: structuredClone(record),
+      feeds: s.feedLog.filter((r) => r.attempt === record.attempt).map((r) => ({ ...r, cell: { ...r.cell } })),
       dropFails: { ...this.dropFails },
       dragDistance: this.dragDistance,
       realSeconds: this.dayRealSeconds + this.nightRealSeconds,
       dayRealSeconds: this.dayRealSeconds,
       nightRealSeconds: this.nightRealSeconds,
       speedUsed: this.speedUsed,
-      bypass: this.bypass,
       rating: null,
     };
-    // 디버그 일차 이동으로 같은 날을 다시 끝내면 덮어쓴다
-    const i = this.life.days.findIndex((d) => d.day === m.day);
-    if (i >= 0) this.life.days[i] = m;
-    else this.life.days.push(m);
+    const i = this.life.attempts.findIndex((d) => d.attempt === m.attempt);
+    if (i >= 0) this.life.attempts[i] = m;
+    else this.life.attempts.push(m);
     this.data.inProgress = null;
-    this.session.daysCompleted += 1;
+    this.session.attemptsCompleted += 1;
     this.active = false;
     this.write();
   }
 
-  /** chapterComplete 진입: 결말·일생 stats */
+  /** chapterComplete 진입: 판 기록 */
   chapterEnd(): void {
     const s = this.state;
-    this.life.chapter = s.completed === null ? null : { completed: s.completed, day: s.day, stage: s.stage };
+    this.life.chapter = { completed: true, attempts: s.attempt, stage: s.stage };
     this.life.stats = structuredClone(s.stats);
     this.life.endedAt = nowIso();
     this.data.inProgress = null;
     this.write();
   }
 
-  rating(day: number): DayRating | null {
-    return this.life.days.find((d) => d.day === day)?.rating ?? null;
+  rating(attempt: number): DayRating | null {
+    return this.life.attempts.find((d) => d.attempt === attempt)?.rating ?? null;
   }
 
-  rate<K extends keyof DayRating>(day: number, key: K, value: DayRating[K]): void {
-    const d = this.life.days.find((x) => x.day === day);
+  rate<K extends keyof DayRating>(attempt: number, key: K, value: DayRating[K]): void {
+    const d = this.life.attempts.find((x) => x.attempt === attempt);
     if (!d) return;
-    d.rating = { ...(d.rating ?? { day: null, backflow: null }), [key]: value };
+    d.rating = { ...(d.rating ?? { day: null, retry: null }), [key]: value };
     this.write();
   }
 

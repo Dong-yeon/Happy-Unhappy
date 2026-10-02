@@ -22,8 +22,8 @@ import type { Role } from '../core/game';
 const MAX_FRAME_MS = 100;
 
 /**
- * M8.9: 하루 = 낮(오펜스: 낮덱 영웅이 심연 층을 친다) → 밤(디펜스: 밤덱 영웅이 집을 지킨다) (§5.17-10, D-046).
- * 화면은 가로 레인 하나 + 하늘 띠(해/달) + 영웅 슬롯 두 칸(먹이기). + C안 gating·하루 경계 저장/복원 (§5.8), metrics (§5.10).
+ * M8.10: 스테이지 = 장면 카드 → 낮(핵 찾아 돌아오기) → 밤(핵 지키기) → 이야기 한 장 (§5.19, D-053).
+ * 화면은 가로 레인 하나 + 하늘 띠(해/달) + 영웅 슬롯 두 칸(먹이기). + 경계 저장/복원 (§5.19-7), metrics (§5.10).
  * 게임 규칙은 core(GameState)에서, 이 씬은 표시·입력만.
  */
 export class GameScene extends Phaser.Scene {
@@ -37,11 +37,7 @@ export class GameScene extends Phaser.Scene {
   private laneView!: DefenseLaneView;
   private abyssView!: AbyssLaneView;
   private dayUi!: DayUi;
-  private weatherText!: Phaser.GameObjects.Text;
-  private shadowFill!: Phaser.GameObjects.Rectangle;
-  private shadowFrame!: Phaser.GameObjects.Rectangle;
-  private shadowBarW = 0;
-  private shadowMax = 1;
+  private retryText!: Phaser.GameObjects.Text;
   private slots!: Record<Role, HeroSlotView>;
   private sky!: SkyView;
   /** 땅 띠가 지금 보여주는 단계 (전환 연출 중에는 core 단계와 다를 수 있다) */
@@ -58,7 +54,7 @@ export class GameScene extends Phaser.Scene {
     setupCamera(this);
     const data = this.registry.get('data') as GameData;
     const size = this.registry.get('gridSize') as GridSize;
-    // 저장 복원(하루 경계) 또는 새 일생 (?seed= 가 있으면 그 시드) → gating 지급 확인
+    // 저장 복원(경계) 또는 새 판 (?seed= 가 있으면 그 시드)
     this.session = new SaveSession(data, size);
     this.state = this.session.boot();
     // metrics (§5.10): 관찰만. 판 도중 복원 감지는 생성 시
@@ -72,9 +68,9 @@ export class GameScene extends Phaser.Scene {
       offense: new HeroSlotView(this, this.state, data, 'offense'),
       defense: new HeroSlotView(this, this.state, data, 'defense'),
     };
-    this.drawBottomBar(data);
+    this.drawBottomBar();
     this.laneView = new DefenseLaneView(this, this.state, data, { x: this.joyText.x, y: this.joyText.y });
-    this.abyssView = new AbyssLaneView(this, this.state, data, data.balance.abyss, (n) => stageLabel(data, n, 'night'));
+    this.abyssView = new AbyssLaneView(this, this.state, data);
     this.drawRecipeButton();
     this.gridView = new GridView(this, this.state, data, {
       onChange: () => this.syncUi(),
@@ -87,19 +83,15 @@ export class GameScene extends Phaser.Scene {
     this.dayUi = new DayUi(this, this.state, data, {
       onChange: () => this.onDebugChange(),
       onRestart: () => this.restartLife(),
-      canOpenDay: () => this.session.canOpenDay,
-      recheck: () => this.session.checkGrant(this.state),
-      forgottenLog: () => this.session.gating.forgottenLog,
-      rating: (day) => this.metrics.rating(day),
-      rate: (day, key, value) => this.metrics.rate(day, key, value),
+      rating: (attempt) => this.metrics.rating(attempt),
+      rate: (attempt, key, value) => this.metrics.rate(attempt, key, value),
       endingAgree: () => this.metrics.endingAgree,
       setEndingAgree: (v) => this.metrics.setEndingAgree(v),
       persist: () => this.session.saveGame(this.state),
     });
-    // 지급 확인: 앱이 다시 보일 때 (§5.8-1) / metrics 세션 시간 쓰기: 숨겨질 때 (§5.10-3)
+    // metrics 세션 시간 쓰기: 숨겨질 때 (§5.10-3)
     const onVisible = () => {
-      if (document.visibilityState === 'visible') this.session.checkGrant(this.state);
-      else this.metrics.onHidden();
+      if (document.visibilityState !== 'visible') this.metrics.onHidden();
     };
     document.addEventListener('visibilitychange', onVisible);
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => document.removeEventListener('visibilitychange', onVisible));
@@ -119,29 +111,26 @@ export class GameScene extends Phaser.Scene {
     this.syncUi();
   }
 
-  /** [처음부터]: 새 일생 (gating 유지) → 다시 부팅하면 새 시드로 만들고 dayStart 저장 */
+  /** [처음부터]: 새 판 → 다시 부팅하면 새 시드로 만들고 장면 카드 저장 */
   private restartLife(): void {
-    this.session.newLife();
+    this.session.resetGame();
     this.scene.start('Boot');
   }
 
   /**
-   * 하루 경계 저장 (§5.8-2): dayStart 진입 → game / diary 진입 → gating 소비 + game (한 번의 쓰기) / chapterComplete 진입 → game.
+   * 경계 저장 (§5.19-7): 장면 카드(스테이지 시작·실패 직후) / 이야기 한 장 / 챕터 완성 진입 → game.
    * 이벤트를 처리하는 시점에 경계 단계가 아니면(같은 프레임에 다음 단계로 넘어간 경우) 건너뛴다.
    */
   private persist(events: CoreEvent[]): void {
     const boundary = this.state.phase === 'dayStart' || this.state.phase === 'diary' || this.state.phase === 'chapterComplete';
+    let save = false;
     for (const e of events) {
-      if (e.type === 'dayEnd') {
-        if (boundary) this.session.endDay(this.state);
-        this.metrics.endDay();
-      } else if (e.type === 'dayStart' || e.type === 'chapterComplete') {
-        if (boundary) this.session.saveGame(this.state);
-        if (e.type === 'chapterComplete') this.metrics.chapterEnd();
-      } else if (e.type === 'dayBegin') {
-        this.metrics.beginDay(this.session.bypass);
-      }
+      if (e.type === 'attemptFail' || e.type === 'stageClear') this.metrics.endAttempt(e.record);
+      if (e.type === 'stageStart' || e.type === 'stageClear' || e.type === 'chapterComplete') save = true;
+      if (e.type === 'chapterComplete') this.metrics.chapterEnd();
+      else if (e.type === 'dayBegin') this.metrics.beginAttempt();
     }
+    if (save && boundary) this.session.saveGame(this.state);
   }
 
   update(_time: number, delta: number): void {
@@ -156,8 +145,8 @@ export class GameScene extends Phaser.Scene {
     this.laneView.handle(events);
     this.abyssView.handle(events);
     this.onMergeEvents(events);
-    // 지급 조각(선물·보너스·와일드카드)은 core에서 이미 그리드에 들어가 있다
-    const gridEvents = ['layerClear', 'freePiece', 'bossFloorClear'];
+    // 지급 조각(갈림길 보너스·와일드카드)은 core에서 이미 그리드에 들어가 있다
+    const gridEvents = ['coreFound', 'freePiece', 'bossReward'];
     if (events.some((e) => gridEvents.includes(e.type))) this.gridView.refresh();
     this.laneView.sync();
     this.abyssView.sync();
@@ -195,7 +184,7 @@ export class GameScene extends Phaser.Scene {
     this.tweens.add({ targets: t, y: at.y + 8, alpha: 0, delay: 600, duration: 400, onComplete: () => t.destroy() });
   }
 
-  /** 낮/밤 전환: 해질녘 → 1.5초 연출 (절반에서 땅 띠 교체) / 새 하루(dayStart) → 낮 */
+  /** 낮/밤 전환: 해질녘 → 1.5초 연출 (절반에서 땅 띠 교체) / 장면 카드(스테이지 시작·실패 뒤) → 낮 */
   private onPhaseEvents(events: CoreEvent[]): void {
     for (const e of events) {
       if (e.type === 'dusk') {
@@ -204,7 +193,8 @@ export class GameScene extends Phaser.Scene {
           () => this.showGround('night'),
           () => this.syncUi(),
         );
-      } else if (e.type === 'dayStart' || e.type === 'dayBegin') {
+      } else if (e.type === 'stageStart' || e.type === 'dayBegin') {
+        this.gridView.cancel();
         if (this.groundShown !== 'day' || this.sky.mode !== 'day') {
           this.sky.setMode('day');
           this.showGround('day');
@@ -213,7 +203,7 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
-  /** 땅 띠 내용 교체 (낮 = 심연 레인 오펜스, 밤 = 방어 레인 디펜스, §5.17-10) */
+  /** 땅 띠 내용 교체 (낮 = 핵 찾아 돌아오기, 밤 = 핵 지키기) */
   private showGround(which: 'day' | 'night'): void {
     this.groundShown = which;
     this.abyssView.setShown(which === 'day');
@@ -241,20 +231,15 @@ export class GameScene extends Phaser.Scene {
   /** core 상태 → HUD·버튼 */
   private syncUi(): void {
     const s = this.state;
+    const data = this.registry.get('data') as GameData;
     const joy = `기쁨 ${s.joy}`;
     if (this.joyText.text !== joy) this.joyText.setText(joy);
-    const w = s.wave;
-    // HUD (§5.15-2, §5.17-10): 낮 = 오펜스 층 "1-3 셋째 고개 · 낮" / 밤 = 디펜스 배경 "1-3 고갯마루 들꽃 · 밤" (보스 웨이브면 "역류")
-    const night = s.phase === 'night';
-    const when = night ? '밤' : s.phase === 'diary' ? '새벽' : s.phase === 'chapterComplete' ? '끝' : '낮';
-    const tag = s.bossActive ? ' 역류' : w.inBossPrep ? ' 역류 준비' : s.pendingBackflow ? ' · 역류 예약' : w.paused ? ' (정지)' : '';
-    const phase = `${stageLabel(this.registry.get('data') as GameData, s.stage, night ? 'day' : 'night')} · ${when}${tag}`;
-    if (this.phaseText.text !== phase) this.phaseText.setText(phase).setColor(s.shadowLocked ? '#ff9e9e' : '#e8e8e8');
-    const weather = `마음 날씨 ${s.weather}`;
-    if (this.weatherText.text !== weather) this.weatherText.setText(weather);
-    this.shadowFill.width = this.shadowBarW * (s.shadow / this.shadowMax);
-    this.shadowFill.setFillStyle(s.shadowLocked ? 0xd0607a : COLOR.unhappy);
-    this.shadowFrame.setStrokeStyle(1, s.shadowLocked ? 0xff9e9e : COLOR.cellLine);
+    // HUD (§5.19-1): "1-3 · 셋째 고개", 재도전일 때만 "다시 도전". 일차는 쓰지 않는다
+    const phase = s.phase === 'chapterComplete' ? '이야기 끝' : stageLabel(data, s.stage);
+    if (this.phaseText.text !== phase) this.phaseText.setText(phase);
+    const retry = (s.phase === 'dayStart' && s.retry !== null) || ((s.phase === 'day' || s.phase === 'night') && s.attempts[s.stage - 1] > 1);
+    const tag = retry ? '다시 도전' : s.wave.paused ? '(웨이브 정지)' : '';
+    if (this.retryText.text !== tag) this.retryText.setText(tag);
     // 영웅 슬롯: 낮·밤 언제든 양쪽 먹이기 (§5.17-2)
     this.slots.offense.setClosed(!s.feedOpen);
     this.slots.defense.setClosed(!s.feedOpen);
@@ -279,10 +264,9 @@ export class GameScene extends Phaser.Scene {
     const r = REGION.hud;
     this.fill(r, COLOR.hud);
     const midY = r.y + r.h / 2;
-    // 일차·날씨는 M5/M4에서 core 상태로 연결. 시간대 칸은 M3 임시로 "웨이브 n"
     this.phaseText = text(this, 8, midY, '', { fontSize: '11px' }).setOrigin(0, 0.5);
     this.joyText = text(this, VIEW_W / 2 + 30, midY, `기쁨 ${data.balance.start.joy}`, { fontSize: '12px', color: '#f2c94c' }).setOrigin(0.5);
-    this.weatherText = text(this, VIEW_W - 8, midY, '', { fontSize: '12px', color: '#9fb4e0' }).setOrigin(1, 0.5);
+    this.retryText = text(this, VIEW_W - 8, midY, '', { fontSize: '11px', color: '#ffb46b' }).setOrigin(1, 0.5);
   }
 
   /** [추억 조합] 도감 (§5.13-5): 하늘 띠 오른쪽 위, 언제나 */
@@ -306,18 +290,16 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
-  private drawBottomBar(data: GameData): void {
+  private drawBottomBar(): void {
     const r = REGION.bottomBar;
     this.fill(r, COLOR.bar);
     const midY = r.y + r.h / 2;
     this.spawnBtn = new Button(this, 62, midY, 108, 34, '', () => this.onSpawn());
     // 놓아주기는 버튼이 아니라 드롭 영역 (D-019)
     this.releaseZone = new ReleaseZoneView(this);
-    this.shadowMax = data.balance.shadow.shadowMax;
-    text(this, 210, midY, '그림자', { fontSize: '10px', color: '#9fb4e0' }).setOrigin(0, 0.5);
-    const barX = 248;
-    this.shadowBarW = VIEW_W - barX - 10;
-    this.shadowFrame = this.add.rectangle(barX, midY, this.shadowBarW, 10, COLOR.wall).setOrigin(0, 0.5).setStrokeStyle(1, COLOR.cellLine);
-    this.shadowFill = this.add.rectangle(barX, midY, 0, 10, COLOR.unhappy).setOrigin(0, 0.5);
+    // 이야기책 (펼친 장, §5.19-4)
+    new Button(this, VIEW_W - 64, midY, 108, 34, '이야기책', () => {
+      if (!this.dayUi.blocking) this.dayUi.showDiaryList();
+    }, '12px');
   }
 }

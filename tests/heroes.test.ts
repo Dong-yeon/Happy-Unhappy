@@ -7,7 +7,6 @@ import { WILDCARD } from '../src/core/grid';
 import { FIXED_DT } from '../src/core/lane';
 import { mulberry32 } from '../src/core/rng';
 import { makeSaveData, parseSave, serializeGame } from '../src/core/save';
-import { emptyGating } from '../src/core/gating';
 import { gameGeometry } from '../src/scenes/layout';
 
 const base = structuredClone(rawGameData) as unknown as GameData;
@@ -26,7 +25,6 @@ function fresh(edit: (d: GameData) => void = () => {}): GameState {
 /** 낮(오펜스) 시작 */
 function day(edit: (d: GameData) => void = () => {}): GameState {
   const g = fresh(edit);
-  g.debugForceEvent('plain');
   g.confirmDay();
   return g;
 }
@@ -37,44 +35,43 @@ const ofType = <T extends CoreEvent['type']>(es: CoreEvent[], t: T) =>
   es.filter((e): e is Extract<CoreEvent, { type: T }> => e.type === t);
 
 describe('시작 영웅 (§5.17-1, [11]-3)', () => {
-  it('heroes.json 기본 배정: 누이 = 낮(오펜스), 오라비 = 밤(디펜스), 기본 능력치', () => {
+  it('heroes.json 기본 배정: 삽살 = 낮(오펜스), 해태 = 밤(디펜스), 기본 능력치 (구 누이·오라비 수치, D-057)', () => {
     const g = fresh();
-    expect(g.heroes.offense.id).toBe('nui');
-    expect(g.heroes.defense.id).toBe('orabi');
+    expect(g.heroes.offense.id).toBe('sapsal');
+    expect(g.heroes.defense.id).toBe('haetae');
     expect(g.heroStats('offense')).toMatchObject({ hp: 120, atk: 18, atkInterval: 0.9, range: 50, dmgMult: 1 });
     expect(g.heroStats('defense')).toMatchObject({ hp: 160, atk: 14, atkInterval: 1.0, range: 50, dmgMult: 1 });
   });
 
   it('start.swapHeroes = true면 반대로 배정', () => {
     const g = fresh((d) => (d.balance.start.swapHeroes = true));
-    expect([g.heroes.offense.id, g.heroes.defense.id]).toEqual(['orabi', 'nui']);
+    expect([g.heroes.offense.id, g.heroes.defense.id]).toEqual(['haetae', 'sapsal']);
   });
 
   it('배정: 1-1 dayStart에서만, 양쪽에 한 명씩 (다른 사람이 자동으로 반대 덱), 카드를 닫으면 잠김', () => {
     const g = fresh();
     expect(g.assignHeroes('nobody')).toBe(false);
-    expect(g.assignHeroes('orabi')).toBe(true);
-    expect([g.heroes.offense.id, g.heroes.defense.id]).toEqual(['orabi', 'nui']);
-    expect(g.assignHeroes('nui')).toBe(true);
-    expect([g.heroes.offense.id, g.heroes.defense.id]).toEqual(['nui', 'orabi']);
+    expect(g.assignHeroes('haetae')).toBe(true);
+    expect([g.heroes.offense.id, g.heroes.defense.id]).toEqual(['haetae', 'sapsal']);
+    expect(g.assignHeroes('sapsal')).toBe(true);
+    expect([g.heroes.offense.id, g.heroes.defense.id]).toEqual(['sapsal', 'haetae']);
     g.confirmDay();
     expect(g.assignmentDone).toBe(true);
-    expect(g.assignHeroes('orabi')).toBe(false); // 판 중 변경은 M8.10
+    expect(g.assignHeroes('haetae')).toBe(false); // 판 중 변경은 M8.11
   });
 
-  it('각 단계 시작 시 그 덱 영웅이 레인에 hp 가득 (낮 = 심연, 밤 = 방어)', () => {
+  it('각 단계 시작 시 그 덱 영웅이 레인에 hp 가득 (낮 = 핵 찾아 돌아오기, 밤 = 핵 지키기)', () => {
     const g = day();
-    expect(g.abyss.units.map((u) => [u.role, u.chain, u.hp])).toEqual([['hero', 'nui', 120]]);
+    expect(g.abyss.units.map((u) => [u.role, u.chain, u.hp])).toEqual([['hero', 'sapsal', 120]]);
     expect(g.defense.units).toEqual([]);
     g.abyss.units[0].hp = 10;
     g.debugToNight();
     expect(g.abyss.units).toEqual([]);
-    expect(g.defense.units.map((u) => [u.role, u.chain, u.hp])).toEqual([['hero', 'orabi', 160]]);
+    expect(g.defense.units.map((u) => [u.role, u.chain, u.hp])).toEqual([['hero', 'haetae', 160]]);
     g.debugEndNight();
-    g.nextDay();
-    g.debugForceEvent('plain');
+    g.nextStage();
     g.confirmDay();
-    expect(g.heroUnitOf('offense')!.hp).toBe(120); // 다음 날 낮에도 가득
+    expect(g.heroUnitOf('offense')!.hp).toBe(120); // 다음 스테이지 낮에도 가득
   });
 });
 
@@ -98,7 +95,7 @@ describe('먹이기 (§5.17-2)', () => {
     const g = fresh();
     g.heroes.offense.points = { [DOG]: 10, [ROPE]: 10 };
     const s = g.heroStats('offense');
-    const n = hero('nui');
+    const n = hero('sapsal');
     expect(s.hp).toBeCloseTo(n.hp + 60, 9);
     expect(s.dmgMult).toBeCloseTo(1 - 0.05, 9);
     expect(s.atk).toBeCloseTo(n.atk + 8, 9);
@@ -114,7 +111,6 @@ describe('먹이기 (§5.17-2)', () => {
     const g = fresh();
     put(g, 0, DOG, 1);
     expect(g.canFeed(0, 'offense')).toBe('closed');
-    g.debugForceEvent('plain');
     g.confirmDay();
     expect(g.canFeed(0, 'defense')).toBeNull();
     expect(g.feed(0, 'defense').ok).toBe(true);
@@ -141,7 +137,7 @@ describe('먹이기 (§5.17-2)', () => {
     u.hp = 100;
     put(g, 0, DOG, 3);
     g.feed(0, 'offense');
-    expect(u.maxHp).toBe(hero('nui').hp + 42);
+    expect(u.maxHp).toBe(hero('sapsal').hp + 42);
     expect(u.hp).toBe(142);
     expect(u.dmgMult).toBeCloseTo(1 - 7 * 0.005, 9);
   });
@@ -239,19 +235,18 @@ describe('전투 중 머지 버프 (§5.17-3, [11]-2)', () => {
 });
 
 describe('쓰러짐 (§5.17-10)', () => {
-  it('낮(오펜스) 영웅 hp 0 → 그 낮 끝 + 남은 초 × stallShadowPerSec 그림자 → 바로 밤', () => {
-    const g = day((d) => (d.balance.abyss.abyssDeathShadow = 0));
-    for (let k = 0; k < 600; k++) g.tick(FIXED_DT); // 10초 지남
-    const left = g.offenseTimer - FIXED_DT;
-    const shadow = g.shadow;
+  it('낮 가는 길(guardian 전) 영웅 hp 0 → 그 낮 실패 → 밤 없이 같은 스테이지 장면 카드 (§5.19-2)', () => {
+    const g = day();
+    for (let k = 0; k < 60; k++) g.tick(FIXED_DT);
     g.heroUnitOf('offense')!.hp = 0;
     const es = g.tick(FIXED_DT);
-    const [f] = ofType(es, 'offenseFall');
-    expect(f.skipped).toBeCloseTo(left, 6);
-    expect(g.shadow).toBeCloseTo(shadow + B.offense.stallShadowPerSec * left, 6);
-    expect(g.phase).toBe('night');
+    const [f] = ofType(es, 'attemptFail');
+    expect(f).toMatchObject({ stage: 1, reason: 'dayFall' });
+    expect(g.phase).toBe('dayStart');
+    expect(g.retry).toBe('dayFall');
+    expect(g.stage).toBe(1);
     expect(g.stats.offenseFalls).toBe(1);
-    expect(g.dayStats.offenseFell).toBe(1);
+    expect(g.stats.dayFailFall).toBe(1);
   });
 
   it('밤(디펜스) 영웅 hp 0 → reviveSeconds(8초) 뒤 hp × 50%로 일어남, 쓰러진 동안 레인에 없음', () => {
@@ -274,17 +269,18 @@ describe('쓰러짐 (§5.17-10)', () => {
 });
 
 describe('저장·결정성 (§5.17-8)', () => {
-  it('영웅 점수·배정·기세가 저장 round-trip, 옛 저장(v2)은 초기화', () => {
+  it('영웅 점수·배정·기세가 저장 round-trip, 옛 저장(v3)은 초기화', () => {
     const g = fresh();
-    g.assignHeroes('orabi');
+    g.assignHeroes('haetae');
     g.confirmDay();
     put(g, 0, DOG, 3);
     g.feed(0, 'defense');
-    g.debugEndDay();
+    g.debugToNight();
+    g.debugEndNight();
     const save = serializeGame(g);
     expect(save.heroes).toEqual(g.heroes);
     expect(save.assignmentDone).toBe(true);
-    const raw = JSON.stringify(makeSaveData(SIZE, emptyGating(), save, 'x'));
+    const raw = JSON.stringify(makeSaveData(SIZE, save, 'x'));
     const r = parseSave(raw, base, SIZE);
     expect(r.ok).toBe(true);
     if (!r.ok) return;
@@ -293,7 +289,7 @@ describe('저장·결정성 (§5.17-8)', () => {
     expect(back.heroStats('defense')).toEqual(g.heroStats('defense'));
     expect(JSON.stringify(serializeGame(back))).toBe(JSON.stringify(save));
     const v2 = JSON.parse(raw);
-    v2.version = 2;
+    v2.version = 3;
     expect(parseSave(JSON.stringify(v2), base, SIZE).ok).toBe(false);
     const same = JSON.parse(raw);
     same.game.heroes.defense.id = same.game.heroes.offense.id;
@@ -311,7 +307,7 @@ describe('저장·결정성 (§5.17-8)', () => {
       g.feed(2, 'offense');
       const n = Math.round(30 / dt);
       for (let k = 0; k < n; k++) g.tick(dt);
-      return { tick: g.tickCount, wall: g.abyss.wall.hp, units: g.abyss.units.map((u) => [u.id, u.hp, u.y]), stats: { ...g.stats } };
+      return { tick: g.tickCount, guardian: g.abyss.guardian.hp, units: g.abyss.units.map((u) => [u.id, u.hp, u.y]), stats: { ...g.stats } };
     };
     expect(play(1)).toEqual(play(FIXED_DT));
   });

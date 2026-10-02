@@ -1,0 +1,219 @@
+{
+  "stages": [
+    {
+      "stage": 1,
+      "title": "첫째 고개",
+      "intro": "엄마가 떡 광주리를 이고 첫째 고개를 넘는다. \"해 지기 전에 돌아오마.\"",
+      "coreName": "엄마의 떡 한 조각",
+      "coreText": "엄마가 길에 떨어뜨린 첫 조각",
+      "page": "떡 조각이 길을 가리키고 있었다. 엄마는 이 길로 갔다.",
+      "retryIntro": "해가 다시 떴다. 오누이는 첫째 고개 그늘로 다시 나선다.",
+      "day": {
+        "guardian": "shadow",
+        "guardianHp": 120,
+        "enemies": [{ "type": "shadow", "count": 6 }],
+        "chase": [{ "type": "shadow", "count": 3 }]
+      },
+      "night": {
+        "waves": [
+          [{ "type": "shadow", "count": 6 }],
+          [{ "type": "shadow", "count": 6 }]
+        ]
+      }
+    },
+    {
+      "stage": 2,
+      "title": "둘째 고개",
+      "intro": "둘째 고개에서 낯선 목소리가 묻는다. \"떡 하나 주면 보내주지.\"",
+      "coreName": "엄마의 짚신 한 짝",
+      "page": "엄마는 떡을 나눠 주며 고개를 넘었다. 그 목소리는 계속 따라왔다.",
+      "retryIntro": "둘째 고개의 목소리가 또 묻는다. 오누이는 다시 고개를 오른다.",
+      "day": {
+        "guardian": "shadow",
+        "guardianHp": 160,
+        "enemies": [{ "type": "shadow", "count": 6 }, { "type": "wildcat", "count": 3 }],
+        "chase": [{ "type": "shadow", "count": 3 }, { "type": "wildcat", "count": 2 }]
+      },
+      "night": {
+        "waves": [
+          [{ "type": "shadow", "count": 3 }, { "type": "wildcat", "count": 5 }],
+          [{ "type": "shadow", "count": 3 }, { "type": "wildcat", "count": 5 }]
+        ]
+      }
+    },
+    {
+      "stage": 3,
+      "title": "셋째 고개",
+      "intro": "셋째 고개, 안개 속에서 엄마의 발자국이 끊긴다.",
+      "coreName": "엄마의 발자국",
+      "coreText": "빛나는 흙",
+      "page": "발자국은 엄마가 길을 잃었다고 말해 주었다. 사라진 게 아니라고.",
+      "retryIntro": "안개가 다시 짙어진다. 오누이는 발자국을 다시 찾아 나선다.",
+      "day": {
+        "guardian": "shadow",
+        "guardianHp": 210,
+        "enemies": [{ "type": "wildcat", "count": 8 }],
+        "chase": [{ "type": "wildcat", "count": 4 }]
+      },
+      "night": {
+        "waves": [
+          [{ "type": "shadow", "count": 10 }],
+          [{ "type": "shadow", "count": 10 }],
+          [{ "type": "shadow", "count": 10 }]
+        ]
+      }
+    },
+    {
+      "stage": 4,
+      "title": "해가 진 숲",
+      "intro": "해가 진다. 엄마는 오지 않는다. 오누이는 등불을 켜고 기다린다.",
+      "coreName": "엄마의 등불",
+      "page": "등불 하나가 오두막을 지켰다. 오누이는 서로의 손을 잡았다.",
+      "retryIntro": "숲은 아직 어둡다. 오누이는 등불을 다시 찾으러 간다.",
+      "day": {
+        "guardian": "shadow",
+        "guardianHp": 270,
+        "enemies": [{ "type": "shadow", "count": 8 }, { "type": "wildcat", "count": 4 }],
+        "chase": [{ "type": "shadow", "count": 4 }, { "type": "wildcat", "count": 2 }]
+      },
+      "night": {
+        "waves": [
+          [{ "type": "shadow", "count": 6 }, { "type": "wildcat", "count": 6 }],
+          [{ "type": "shadow", "count": 6 }, { "type": "wildcat", "count": 6 }],
+          [{ "type": "shadow", "count": 6 }, { "type": "wildcat", "count": 6 }]
+        ]
+      }
+    },
+    {
+      "stage": 5,
+      "title": "문틈의 털복숭이 손",
+      "intro": "문틈으로 털복숭이 손이 들어온다. \"얘들아, 엄마 왔다.\"",
+      "coreName": "진짜 엄마의 목소리",
+      "coreText": "기억",
+      "page": "그건 엄마의 손이 아니었다. 오누이는 진짜 목소리를 기억해 냈다.",
+      "retryIntro": "털복숭이 손이 다시 문틈을 두드린다. 오누이는 진짜 목소리를 다시 떠올린다.",
+      "day": {
+        "guardian": "mitten",
+        "guardianHp": 510,
+        "boss": true,
+        "enemies": [{ "type": "mitten", "count": 2 }, { "type": "shadow", "count": 6 }],
+        "chase": [{ "type": "mitten", "count": 1 }, { "type": "shadow", "count": 3 }]
+      },
+      "night": {
+        "waves": [
+          [{ "type": "shadow", "count": 8 }, { "type": "wildcat", "count": 6 }],
+          [{ "type": "shadow", "count": 8 }, { "type": "wildcat", "count": 6 }],
+          [{ "type": "shadow", "count": 8 }, { "type": "wildcat", "count": 6 }]
+        ],
+        "bossWave": [{ "type": "mitten", "count": 1 }]
+      }
+    },
+    {
+      "stage": 6,
+      "title": "쫓아오는 발소리",
+      "intro": "오누이는 뒷문으로 빠져나간다. 장독대 뒤에 숨는다.",
+      "coreName": "장독대의 달그림자",
+      "page": "달그림자가 오누이를 가려 주었다.",
+      "retryIntro": "오누이는 장독대 뒤로 다시 숨는다. 달그림자를 다시 찾는다.",
+      "day": {
+        "guardian": "shadow",
+        "guardianHp": 420,
+        "enemies": [{ "type": "mitten", "count": 3 }, { "type": "wildcat", "count": 4 }],
+        "chase": [{ "type": "mitten", "count": 2 }, { "type": "wildcat", "count": 2 }]
+      },
+      "night": {
+        "waves": [
+          [{ "type": "shadow", "count": 10 }, { "type": "wildcat", "count": 6 }],
+          [{ "type": "shadow", "count": 10 }, { "type": "wildcat", "count": 6 }],
+          [{ "type": "shadow", "count": 10 }, { "type": "wildcat", "count": 6 }]
+        ]
+      }
+    },
+    {
+      "stage": 7,
+      "title": "미끄러운 나무",
+      "intro": "우물가 큰 나무. 오누이는 나무 위로 올라간다.",
+      "coreName": "우물에 비친 달",
+      "page": "우물에 비친 건 오누이가 아니라 달이었다. 호랑이 그림자는 한참을 헤맸다.",
+      "retryIntro": "오누이는 우물가 큰 나무로 다시 간다.",
+      "day": {
+        "guardian": "shadow",
+        "guardianHp": 500,
+        "enemies": [{ "type": "shadow", "count": 6 }, { "type": "wildcat", "count": 4 }, { "type": "mitten", "count": 2 }],
+        "chase": [{ "type": "shadow", "count": 3 }, { "type": "wildcat", "count": 2 }, { "type": "mitten", "count": 1 }]
+      },
+      "night": {
+        "waves": [
+          [{ "type": "shadow", "count": 10 }, { "type": "wildcat", "count": 8 }],
+          [{ "type": "shadow", "count": 10 }, { "type": "wildcat", "count": 8 }],
+          [{ "type": "shadow", "count": 10 }, { "type": "wildcat", "count": 8 }]
+        ]
+      }
+    },
+    {
+      "stage": 8,
+      "title": "나무 아래 그림자",
+      "intro": "호랑이 그림자가 나무를 기어오르다 미끄러진다. \"어떻게 올라갔니?\"",
+      "coreName": "나뭇가지의 새 둥지",
+      "coreText": "함께 지키는 작은 것",
+      "page": "오누이는 작은 둥지를 품고 버텼다. 함께라서 무섭지 않았다.",
+      "retryIntro": "그림자가 또 나무를 기어오른다. 오누이는 둥지를 다시 지키러 간다.",
+      "day": {
+        "guardian": "shadow",
+        "guardianHp": 590,
+        "enemies": [{ "type": "mitten", "count": 5 }, { "type": "shadow", "count": 6 }],
+        "chase": [{ "type": "mitten", "count": 3 }, { "type": "shadow", "count": 3 }]
+      },
+      "night": {
+        "waves": [
+          [{ "type": "shadow", "count": 8 }, { "type": "mitten", "count": 4 }, { "type": "wildcat", "count": 8 }],
+          [{ "type": "shadow", "count": 8 }, { "type": "mitten", "count": 4 }, { "type": "wildcat", "count": 8 }],
+          [{ "type": "shadow", "count": 8 }, { "type": "mitten", "count": 4 }, { "type": "wildcat", "count": 8 }],
+          [{ "type": "shadow", "count": 8 }, { "type": "mitten", "count": 4 }, { "type": "wildcat", "count": 8 }]
+        ],
+        "bossWave": [{ "type": "mitten", "count": 2 }]
+      }
+    },
+    {
+      "stage": 9,
+      "title": "썩은 동아줄 냄새",
+      "intro": "오누이가 하늘에 빈다. 튼튼한 동아줄이 내려온다.",
+      "coreName": "튼튼한 동아줄",
+      "page": "동아줄은 둘이 함께 잡아야 끊어지지 않았다.",
+      "retryIntro": "오누이는 다시 하늘에 빈다. 동아줄이 다시 내려오기를.",
+      "day": {
+        "guardian": "shadow",
+        "guardianHp": 690,
+        "enemies": [{ "type": "shadow", "count": 8 }, { "type": "wildcat", "count": 5 }, { "type": "mitten", "count": 3 }],
+        "chase": [{ "type": "shadow", "count": 4 }, { "type": "wildcat", "count": 3 }, { "type": "mitten", "count": 2 }]
+      },
+      "night": {
+        "waves": [
+          [{ "type": "shadow", "count": 12 }, { "type": "wildcat", "count": 10 }],
+          [{ "type": "shadow", "count": 12 }, { "type": "wildcat", "count": 10 }],
+          [{ "type": "shadow", "count": 12 }, { "type": "wildcat", "count": 10 }],
+          [{ "type": "shadow", "count": 12 }, { "type": "wildcat", "count": 10 }]
+        ]
+      }
+    },
+    {
+      "stage": 10,
+      "title": "호랑이",
+      "intro": "오누이가 하늘로 오른다. 호랑이 그림자가 썩은 동아줄을 잡는다.",
+      "coreName": "호랑이의 외로움",
+      "coreText": "정화하면 달이 안아 준다",
+      "page": "누이는 해가, 오라비는 달이 되었다. 해와 달은 엄마의 길을 비춰 집으로 데려왔다. 수수밭의 붉은 노을은 호랑이의 외로움이었다. 누이와 오라비가 이야기 모험대에 합류했다.",
+      "retryIntro": "호랑이 그림자가 다시 동아줄을 잡는다. 오누이는 한 번 더 손을 맞잡는다.",
+      "day": {
+        "guardian": "boss",
+        "guardianHp": 900,
+        "boss": true,
+        "enemies": [{ "type": "mitten", "count": 4 }],
+        "chase": [{ "type": "mitten", "count": 2 }]
+      },
+      "night": {
+        "waves": []
+      }
+    }
+  ]
+}

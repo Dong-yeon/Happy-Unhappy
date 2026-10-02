@@ -1,6 +1,6 @@
 // --set / --sweep: JSON 수치를 파일 수정 없이 메모리 사본에서 덮어쓴다 (시뮬레이터 전용).
 // 키 경로: 첫 마디가 데이터 파일 이름(balance, units, chains, monsters, events, days, diary, endings)이면 그 파일,
-// 아니면 balance.json으로 본다.  예) shadow.shadowAfterBossWin=50 → balance.shadow.shadowAfterBossWin
+// 아니면 balance.json으로 본다.  예) core.hp=120 → balance.core.hp
 //                               monsters.backflowBoss.hp=300 / chains.0.hero.atk=16
 // 이미 있는 키만 바꿀 수 있고(오타 방지), 값의 타입이 원래와 같아야 한다. 적용 후 데이터 검증을 다시 돌린다.
 import type { GameData } from '../src/data/types';
@@ -16,7 +16,7 @@ export interface Override {
   value: OverrideValue;
 }
 
-const FILES: (keyof GameData)[] = ['balance', 'heroes', 'chains', 'monsters', 'events', 'days', 'diary', 'chapter', 'chapterComplete', 'recipes'];
+const FILES: (keyof GameData)[] = ['balance', 'heroes', 'chains', 'monsters', 'events', 'days', 'stages', 'chapter', 'chapterComplete', 'recipes'];
 
 export function resolvePath(key: string): string[] {
   const parts = key.split('.').filter((p) => p.length > 0);

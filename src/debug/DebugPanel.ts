@@ -1,15 +1,14 @@
 // ?debug=1 디버그 패널. M7에서 정식 디버그 패널로 흡수.
 // 기본은 접힘: 포탈 받침 왼쪽 빈 자리의 [DBG] 토글만 보인다. 펼치면 방어 레인 위에 겹쳐 뜬다 (심연 레인은 가리지 않음).
-// 탭: 기본(그리드·기쁨·조각) / 웨이브(정지·다음·배속) / 심연(그림자·역류·층·영웅 쓰러짐) / 하루(일차·하루 끝·이벤트·일기장)
-//     / 챕터(스테이지 이동·즉시 완성/미완성) / 저장(gating·저장 초기화·JSON 복사·시드) / metrics(내보내기·요약·초기화)
+// 탭: 기본(그리드·기쁨·조각) / 웨이브(정지·다음·배속) / 낮밤(guardian·쓰러짐·즉시 성공·실패) / 스테이지(이동·갈림길·완성·이야기책)
+//     / 저장(초기화·JSON 복사) / metrics(내보내기·요약·초기화)
 import Phaser from 'phaser';
-import { allEventIds } from '../core/day';
 import type { GameState } from '../core/game';
 import { WILDCARD, type GridSize } from '../core/grid';
 import type { GameData } from '../data/types';
 import type { MetricsRecorder } from '../metrics/recorder';
 import { formatSummary, summarizeMetrics } from '../metrics/model';
-import { dateOffset, realToday, setDateOffset, today } from '../platform/clock';
+import { realToday } from '../platform/clock';
 import { storageStatus } from '../platform/storage';
 import { REGION } from '../scenes/layout';
 import type { SaveSession } from '../scenes/session';
@@ -19,11 +18,11 @@ import { saveGridOverride } from './gridPreset';
 
 const DEBUG_JOY = 100;
 const SPEEDS = [1, 3, 10] as const;
-// 모달(DayUi, depth 60~72) 위: "내일 또 만나요"·결과 화면에서도 우회·미리보기를 쓸 수 있게
+// 모달(DayUi, depth 60~72) 위: 장면 카드·결과 화면에서도 쓸 수 있게
 const PANEL_DEPTH = 100;
 const PANEL_BG = 0x111318;
 const PANEL_ALPHA = 0.92;
-const TABS = ['기본', '웨이브', '심연', '하루', '챕터', '저장', 'metrics'] as const;
+const TABS = ['기본', '웨이브', '낮밤', '스테이지', '저장', 'metrics'] as const;
 /** 탭 버튼 한 줄에 4개 (두 줄) */
 const TABS_PER_ROW = 4;
 const ROWS = 7;
@@ -36,9 +35,8 @@ export interface DebugControls {
   setSpeed(speed: number): void;
   /** core 상태를 바꾼 뒤 표시 갱신 */
   onChange(): void;
-  /** 일기장 열기 */
+  /** 이야기책 열기 */
   openDiary(): void;
-  /** 결과 화면만 띄움 (게임 상태·저장은 바꾸지 않음) */
   /** 저장을 바꾼 뒤 다시 부팅 */
   reboot(): void;
   metrics: MetricsRecorder;
@@ -157,172 +155,96 @@ export function createDebugPanel(
     });
   }
 
-  // ── 심연: 그림자·역류·층 ──
+  // ── 낮밤: guardian·쓰러짐·즉시 성공·실패 (§5.19) ──
   {
     let y = y0;
-    label('심연', y - 16, '그림자 · 역류 · 심연');
+    label('낮밤', y - 16, '낮(핵 찾아 돌아오기) · 밤(핵 지키기)');
     y += 10;
-    const nearMax = Math.round(data.balance.shadow.shadowMax * 0.9);
-    btn('심연', scene, x0 + 40, y, 80, 20, '그림자 0', () => {
-      state.debugSetShadow(0);
+    btn('낮밤', scene, x0 + 40, y, 80, 20, 'guardian HP 0', () => {
+      state.debugKillGuardian();
       controls.onChange();
     }, '10px');
-    btn('심연', scene, x0 + 124, y, 80, 20, `그림자 ${nearMax}`, () => {
-      state.debugSetShadow(nearMax);
-      controls.onChange();
-    }, '10px');
-    y += 26;
-    btn('심연', scene, x0 + 40, y, 80, 20, '역류 예약', () => {
-      state.debugScheduleBackflow();
-      controls.onChange();
-    }, '10px');
-    btn('심연', scene, x0 + 124, y, 80, 20, '층 HP 0', () => {
-      state.debugBreakLayer();
-      controls.onChange();
-    }, '10px');
-    y += 26;
-    btn('심연', scene, x0 + 40, y, 80, 20, '낮 우리 편 전멸', () => {
+    btn('낮밤', scene, x0 + 124, y, 80, 20, '낮 우리 편 전멸', () => {
       state.debugKillAbyssUnits();
       controls.onChange();
     }, '10px');
-    btn('심연', scene, x0 + 124, y, 80, 20, '밤 영웅 쓰러짐', () => {
-      state.debugKnockDefenseHero();
-      controls.onChange();
-    }, '10px');
-  }
-
-  // ── 하루: 일차 이동·하루 끝·이벤트 강제·이정표·일기장 ──
-  {
-    let y = y0;
-    label('하루', y - 16, '일차 · 이벤트 · 이야기책');
-    y += 10;
-    let target = state.day;
-    const dayLabel = () => `${target}일째`;
-    btn('하루', scene, x0 + 14, y, 26, 20, '−', () => {
-      target = Math.max(1, target - 1);
-      dayBtn.setLabel(dayLabel());
-    }, '11px');
-    const dayBtn = btn('하루', scene, x0 + 58, y, 56, 20, dayLabel(), () => undefined, '10px');
-    btn('하루', scene, x0 + 102, y, 26, 20, '+', () => {
-      target = Math.min(state.maxDays, target + 1);
-      dayBtn.setLabel(dayLabel());
-    }, '11px');
-    btn('하루', scene, x0 + 142, y, 44, 20, '이동', () => {
-      state.debugGotoDay(target);
-      controls.onChange();
-    }, '10px');
     y += 26;
-    // 낮 → 밤(해질녘) / 하루 끝(그림일기까지) / 일기장
-    btn('하루', scene, x0 + 27, y, 52, 20, '밤으로', () => {
+    btn('낮밤', scene, x0 + 40, y, 80, 20, '낮 성공 → 밤', () => {
       state.debugToNight();
       controls.onChange();
     }, '10px');
-    btn('하루', scene, x0 + 82, y, 52, 20, '하루 끝', () => {
-      state.debugEndDay();
-      controls.onChange();
-    }, '10px');
-    btn('하루', scene, x0 + 137, y, 52, 20, '일기장', () => controls.openDiary(), '10px');
-    y += 26;
-    const ids = allEventIds(data);
-    let evIdx = 0;
-    btn('하루', scene, x0 + 52, y, 104, 20, ids[evIdx], (b) => {
-      evIdx = (evIdx + 1) % ids.length;
-      b.setLabel(ids[evIdx]);
-    }, '9px');
-    btn('하루', scene, x0 + 136, y, 56, 20, '강제', () => {
-      // dayStart면 오늘 바로, 아니면 다음 날
-      state.debugForceEvent(ids[evIdx]);
+    btn('낮밤', scene, x0 + 124, y, 80, 20, '밤 영웅 쓰러짐', () => {
+      state.debugKnockDefenseHero();
       controls.onChange();
     }, '10px');
     y += 26;
-    const milestone = data.events.milestones[0]?.id;
-    btn('하루', scene, x0 + 80, y, 160, 20, '갈림길 즉시 열기', () => {
-      if (!milestone) return;
-      // 오늘 아침으로 돌아가 갈림길 카드를 띄운다 (자라기 없이)
-      state.debugGotoDay(state.day);
-      state.debugForceEvent(milestone);
+    btn('낮밤', scene, x0 + 40, y, 80, 20, '밤 성공', () => {
+      state.debugEndNight();
+      controls.onChange();
+    }, '10px');
+    btn('낮밤', scene, x0 + 124, y, 80, 20, '지금 시도 실패', () => {
+      state.debugFail();
       controls.onChange();
     }, '10px');
   }
 
-  // ── 챕터: 스테이지 이동·즉시 완성/미완성 (§5.15) ──
+  // ── 스테이지: 이동·갈림길·즉시 완성·이야기책 (§5.19-1) ──
   {
     let y = y0;
-    label('챕터', y - 16, '챕터 진행 (스테이지 이동은 dayStart·이야기 한 장에서만)');
+    label('스테이지', y - 16, '스테이지 (이동은 장면 카드·이야기 한 장에서만)');
     y += 10;
     const len = data.balance.chapter.length;
     let target = state.stage;
     const stageLabel = () => `1-${target}`;
-    btn('챕터', scene, x0 + 14, y, 26, 20, '−', () => {
+    btn('스테이지', scene, x0 + 14, y, 26, 20, '−', () => {
       target = Math.max(1, target - 1);
       stageBtn.setLabel(stageLabel());
     }, '11px');
-    const stageBtn = btn('챕터', scene, x0 + 58, y, 56, 20, stageLabel(), () => undefined, '10px');
-    btn('챕터', scene, x0 + 102, y, 26, 20, '+', () => {
+    const stageBtn = btn('스테이지', scene, x0 + 58, y, 56, 20, stageLabel(), () => undefined, '10px');
+    btn('스테이지', scene, x0 + 102, y, 26, 20, '+', () => {
       target = Math.min(len, target + 1);
       stageBtn.setLabel(stageLabel());
     }, '11px');
-    btn('챕터', scene, x0 + 142, y, 44, 20, '이동', () => {
+    btn('스테이지', scene, x0 + 142, y, 44, 20, '이동', () => {
       state.debugSetStage(target);
       controls.onChange();
     }, '10px');
     y += 26;
-    // chapterComplete 이벤트 → 씬이 저장
-    btn('챕터', scene, x0 + 40, y, 80, 20, '즉시 완성', () => {
-      state.debugCompleteChapter(true);
+    btn('스테이지', scene, x0 + 40, y, 80, 20, '갈림길 열기', () => {
+      state.debugOpenCrossroad();
       controls.onChange();
     }, '10px');
-    btn('챕터', scene, x0 + 124, y, 80, 20, '즉시 미완성', () => {
-      state.debugCompleteChapter(false);
+    // chapterComplete 이벤트 → 씬이 저장
+    btn('스테이지', scene, x0 + 124, y, 80, 20, '즉시 완성', () => {
+      state.debugCompleteChapter();
       controls.onChange();
     }, '10px');
     y += 26;
-    const now = label('챕터', y - 8, '');
+    btn('스테이지', scene, x0 + 40, y, 80, 20, '이야기책', () => controls.openDiary(), '10px');
+    // 보상 영웅(누이·오라비) 합류 (덱 화면 M8.11 테스트용, D-057)
+    btn('스테이지', scene, x0 + 124, y, 80, 20, '보상 영웅 지급', () => {
+      state.debugGrantRewardHeroes();
+      controls.onChange();
+    }, '9px');
+    y += 26;
+    const now = label('스테이지', y - 8, '');
     scene.time.addEvent({
       delay: 500,
       loop: true,
       callback: () => {
-        const flags = [state.pendingCrossroad ? '갈림길 대기' : '', state.chapterCleared ? '1-10 정화됨' : ''].filter(Boolean).join(' · ');
-        now.setText(`1-${state.stage} · ${state.day}/${state.maxDays}일 · 먹이기 ${state.stats.feeds}회${flags ? ` · ${flags}` : ''}`);
+        const tries = state.attempts[state.stage - 1];
+        const flags = [state.pendingCrossroad ? '갈림길 대기' : '', state.retry ? `재도전(${state.retry})` : ''].filter(Boolean).join(' · ');
+        const joined = state.joinedHeroes.length ? ` · 합류 ${state.joinedHeroes.join(',')}` : '';
+        now.setText(`1-${state.stage} · 이 스테이지 ${tries}번 · 통산 ${state.attempt}번 · 먹이기 ${state.stats.feeds}회${flags ? ` · ${flags}` : ''}${joined}`);
       },
     });
   }
 
-  // ── 저장: gating·초기화·JSON·시드 ──
+  // ── 저장: 초기화·JSON ──
   {
     let y = y0;
-    label('저장', y - 16, 'gating · 저장');
+    label('저장', y - 16, '저장 (hau_save_v4)');
     y += 10;
-    const bypassLabel = () => `우회 ${session.bypass ? 'ON' : 'OFF'}`;
-    btn('저장', scene, x0 + 40, y, 80, 20, bypassLabel(), (b) => {
-      session.bypass = !session.bypass;
-      b.setLabel(bypassLabel()).setActive(session.bypass);
-      controls.onChange();
-    }, '10px');
-    btn('저장', scene, x0 + 124, y, 80, 20, '열 수 있는 날 +1', () => {
-      session.addOpenable(1);
-      controls.onChange();
-    }, '9px');
-    y += 26;
-    const shiftDate = (d: number) => {
-      setDateOffset(dateOffset() + d);
-      session.checkGrant(state);
-      controls.onChange();
-    };
-    btn('저장', scene, x0 + 40, y, 80, 20, '날짜 −1일', () => shiftDate(-1), '10px');
-    btn('저장', scene, x0 + 124, y, 80, 20, '날짜 +1일', () => shiftDate(1), '10px');
-    y += 18;
-    const status = label('저장', y, '');
-    const syncStatus = () => {
-      const g = session.gating;
-      status.setText(
-        `열 수 있는 날 ${g.openableDays} · last ${g.lastGrantDate ?? '-'}\n` +
-          `forgotten ${g.forgottenDays} (log ${g.forgottenLog.length}) · 오늘 ${today()} (오프셋 ${dateOffset()})`,
-      );
-    };
-    scene.time.addEvent({ delay: 500, loop: true, callback: () => (syncStatus(), syncHeader()) });
-    syncStatus();
-    y += 34;
     btn('저장', scene, x0 + 40, y, 80, 20, '초기화: 게임만', () => {
       session.resetGame();
       controls.reboot();
@@ -337,13 +259,14 @@ export function createDebugPanel(
       console.info('[debug] 저장 JSON', raw);
       navigator.clipboard?.writeText(raw).catch(() => console.warn('[debug] 클립보드 복사 실패 — 콘솔 참고'));
     }, '9px');
+    scene.time.addEvent({ delay: 500, loop: true, callback: () => syncHeader() });
   }
 
   // ── metrics: 내보내기·요약·초기화 (§5.10-5) ──
   {
     const m = controls.metrics;
     let y = y0;
-    label('metrics', y - 16, 'metrics (hau_metrics_v2)');
+    label('metrics', y - 16, 'metrics (hau_metrics_v4)');
     y += 10;
     const status = label('metrics', y + 16, '');
     btn('metrics', scene, x0 + 40, y, 80, 20, 'JSON 복사', () => {
@@ -374,7 +297,7 @@ export function createDebugPanel(
       summary.setText(
         `${formatSummary('현재 일생', summarizeMetrics([m.life], d.sessions.filter((x) => x.startedAt >= m.life.startedAt)))}\n` +
           `${formatSummary('전체', summarizeMetrics(d.lives, d.sessions))}\n` +
-          `판 도중 복원 ${m.life.midDayRestores} · 우회 사용 ${m.life.gatingBypassUsed ? '예' : '아니오'}`,
+          `시도 도중 복원 ${m.life.midAttemptRestores}`,
       );
     };
     scene.time.addEvent({ delay: 1000, loop: true, callback: () => page === 'metrics' && syncSummary() });

@@ -1,8 +1,9 @@
 {
-  "worry": { "name": "줄무늬 그림자", "hpBase": 18, "speed": 35, "atk": 3, "atkInterval": 1.2, "joyReward": 3 },
-  "backflowBoss": {
-    "name": "성난 호랑이 그림자",
-    "hp": 350, "speed": 20, "atk": 8, "atkInterval": 1.0,
-    "joyReward": 0, "joyPenalty": 30, "sinkLayerHp": 80, "hpGrowthPerDay": 1
-  }
+  "base": { "hp": 18, "speed": 35, "atk": 3, "atkInterval": 1.2, "joyReward": 3 },
+  "enemies": [
+    { "id": "shadow", "name": "줄무늬 그림자", "hpMult": 1, "speedMult": 1, "atkMult": 1 },
+    { "id": "wildcat", "name": "덤불 살쾡이", "hpMult": 0.6, "speedMult": 1.6, "atkMult": 1 },
+    { "id": "mitten", "name": "털장갑 손", "hpMult": 2.5, "speedMult": 0.7, "atkMult": 1.5 },
+    { "id": "boss", "name": "성난 호랑이 그림자", "hpMult": 19.4, "speedMult": 0.57, "atkMult": 2.7 }
+  ]
 }

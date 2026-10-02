@@ -1,42 +1,42 @@
 // 한 판(챕터) 누적 stats (저장·시뮬·metrics). Phaser 의존 없음.
 
 export interface GameStats {
+  /** 처치 수 (낮 + 밤) */
   worriesDefeated: number;
   totalJoyEarned: number;
-  /** 가라앉은 걱정 수 (역류 보스 제외: 보스 가라앉음은 일반 규칙을 따르지 않는다) */
+  /** 밤에 거점에 닿은 적 수 (핵 HP 감소) */
   sunkCount: number;
-  layersCleared: number;
-  /** 층 돌파로 실제로 줄어든 그림자 합 */
-  shadowPurified: number;
-  /** 역류 보스 처치로 줄어든 그림자 합 */
-  shadowCalmed: number;
-  backflows: number;
-  bossWins: number;
-  bossLosses: number;
-  /** 낮 영웅이 쓰러져 건너뛴 시간 누적(초) */
-  stallSeconds: number;
-  /** 오펜스 병사 쓰러짐 */
-  abyssDeaths: number;
-  bossFloorsReached: number;
-  bossFloorsCleared: number;
+  /** 낮 병사 쓰러짐 */
+  offenseSoldierDeaths: number;
   wildcardsGained: number;
-  // ── 챕터 진행 (§5.15-6) ──
-  /** 1-turningPoint에 도달한 일차 (그 전 층을 돌파한 날, 0 = 아직) */
-  turningPointReachedDay: number;
-  /** 1-turningPoint를 정화한 일차 (0 = 아직) */
-  turningPointClearedDay: number;
+  // ── 스테이지·시도 (§5.19-6) ──
+  attempts: number;
+  /** 낮 실패: 가는 길 시간 초과 / 가는 길 쓰러짐 / 돌아오는 길 시간 초과 */
+  dayFailTime: number;
+  dayFailFall: number;
+  returnFails: number;
+  /** 밤 실패 (핵 HP 0) */
+  nightFails: number;
+  /** guardian 처치 (핵 획득) */
+  guardiansDown: number;
+  /** 핵 떨어뜨림 / 적이 되가져감 */
+  coreDrops: number;
+  coreReturns: number;
+  /** 핵을 든 시간 합 */
+  carrySeconds: number;
   // ── v0.13 영웅·먹이기·버프 (§5.17) ──
   feeds: number;
   battleMerges: number;
   /** 때 맞춤 머지 ([11]-2) */
   affinityMerges: number;
+  /** 낮 영웅 쓰러짐 (가는 길 + 운반 중) */
   offenseFalls: number;
   defenseFalls: number;
   /** 떡 버프로 회복한 hp 합 */
   buffHeal: number;
   /** 기세 중첩 × 초 (평균 중첩 = momentumStackSeconds / battleSeconds) */
   momentumStackSeconds: number;
-  /** 전투 시간 (낮 오펜스 + 밤 웨이브 진행) */
+  /** 전투 시간 (낮 + 밤 웨이브 진행) */
   battleSeconds: number;
   // ── 병사 ([11]-1·4) ──
   soldiersSpawned: number;
@@ -59,19 +59,17 @@ export const GAME_STATS_KEYS: readonly NumericStatKey[] = [
   'worriesDefeated',
   'totalJoyEarned',
   'sunkCount',
-  'layersCleared',
-  'shadowPurified',
-  'shadowCalmed',
-  'backflows',
-  'bossWins',
-  'bossLosses',
-  'stallSeconds',
-  'abyssDeaths',
-  'bossFloorsReached',
-  'bossFloorsCleared',
+  'offenseSoldierDeaths',
   'wildcardsGained',
-  'turningPointReachedDay',
-  'turningPointClearedDay',
+  'attempts',
+  'dayFailTime',
+  'dayFailFall',
+  'returnFails',
+  'nightFails',
+  'guardiansDown',
+  'coreDrops',
+  'coreReturns',
+  'carrySeconds',
   'feeds',
   'battleMerges',
   'affinityMerges',

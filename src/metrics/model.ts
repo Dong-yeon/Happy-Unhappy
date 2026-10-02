@@ -1,19 +1,21 @@
-// metrics 데이터 형식·순수 로직 (스펙 §5.10-3). Phaser·브라우저 의존 없음 (저장·시간은 recorder.ts가 platform으로).
+// metrics 데이터 형식·순수 로직 (스펙 §5.10-3, §5.19). Phaser·브라우저 의존 없음 (저장·시간은 recorder.ts가 platform으로).
 // metrics는 관찰만 한다: 게임 규칙은 이 값을 읽지 않는다.
+// v4: 일차(day) 대신 시도(attempt) 단위 기록 (D-054).
 
-import type { DayStats } from '../core/day';
+import type { AttemptResult, AttemptStats } from '../core/day';
 import type { FeedRecord } from '../core/game';
 import type { GameStats } from '../core/stats';
 
-export const METRICS_VERSION = 3;
+export const METRICS_VERSION = 4;
 export const MAX_SESSIONS = 500;
 export const MAX_LIVES = 20;
 /** 직렬화 결과 상한 (localStorage 5MB 대비) */
 export const MAX_BYTES = 1.5 * 1024 * 1024;
 
+/** 시도 끝 주관 평가 (§5.10-4): 이번 장 / 다시 하기 */
 export interface DayRating {
   day: 'good' | 'meh' | 'bad' | null;
-  backflow: 'tense' | 'annoyed' | null;
+  retry: 'again' | 'tired' | null;
 }
 
 export interface DropFails {
@@ -22,27 +24,24 @@ export interface DropFails {
   wildcard: number;
 }
 
-export interface DayMetrics {
-  day: number;
-  /** 그날을 끝낸 날짜 (디버그 날짜 오프셋 반영 / 실제) */
-  date: string;
+export interface AttemptMetrics {
+  /** 판 통산 시도 번호 */
+  attempt: number;
+  stage: number;
+  result: AttemptResult | null;
+  /** 시도를 끝낸 날짜 (기기 로컬) */
   realDate: string;
-  eventId: string;
-  dayStats: DayStats;
-  /** 그날 먹이기 기록 (v3, §5.17-2. 구 summons) */
+  record: AttemptStats;
+  /** 그 시도 먹이기 기록 */
   feeds: FeedRecord[];
   dropFails: DropFails;
   dragDistance: number;
-  /** 그날 낮 + 밤의 실제 경과 시간(초, 배속·백그라운드 제외) = dayRealSeconds + nightRealSeconds */
+  /** 낮 + 밤의 실제 경과 시간(초, 배속·백그라운드 제외) */
   realSeconds: number;
-  /** 낮(day 단계 = 오펜스, §5.17-10) 실제 시간 */
   dayRealSeconds: number;
-  /** 밤(night 단계 = 디펜스) 실제 시간 */
   nightRealSeconds: number;
-  /** 그날 ×1이 아닌 배속을 쓴 실제 시간(초) */
+  /** ×1이 아닌 배속을 쓴 실제 시간(초) */
   speedUsed: number;
-  /** 그날 gating 우회 상태로 시작했는지 */
-  bypass: boolean;
   rating: DayRating | null;
 }
 
@@ -52,31 +51,30 @@ export interface LifeMetrics {
   gridSize: { cols: number; rows: number };
   startedAt: string;
   endedAt: string | null;
-  days: DayMetrics[];
-  milestoneChoices: { day: number; eventId: string; choiceId: string }[];
-  midDayRestores: number;
-  gatingBypassUsed: boolean;
-  /** 판의 끝 (§5.15-5): 완성 여부·끝난 일차·스테이지. 진행 중이면 null */
-  chapter: { completed: boolean; day: number; stage: number } | null;
+  attempts: AttemptMetrics[];
+  milestoneChoices: { stage: number; eventId: string; choiceId: string }[];
+  /** 낮·밤 도중에 앱을 닫았다가 다시 연 횟수 (장면 카드부터 다시) */
+  midAttemptRestores: number;
+  /** 판의 끝 (챕터 완성): 시도 수·스테이지. 진행 중이면 null */
+  chapter: { completed: true; attempts: number; stage: number } | null;
   endingAgree: boolean | null;
   stats: GameStats | null;
 }
 
 export interface SessionRecord {
-  date: string;
   realDate: string;
   startedAt: string;
   foregroundSeconds: number;
-  daysCompleted: number;
+  attemptsCompleted: number;
 }
 
 export interface MetricsData {
-  version: 3;
+  version: 4;
   firstSeen: string;
   sessions: SessionRecord[];
   lives: LifeMetrics[];
-  /** confirmDay 때 기록, 하루 끝에 지움. 부팅 시 남아 있으면 판 도중 종료 */
-  inProgress: { lifeId: string; day: number } | null;
+  /** confirmDay 때 기록, 시도 끝에 지움. 부팅 시 남아 있으면 시도 도중 종료 */
+  inProgress: { lifeId: string; attempt: number } | null;
 }
 
 export function emptyMetrics(nowIso: string): MetricsData {
@@ -94,10 +92,9 @@ export function newLife(seed: number, gridSize: { cols: number; rows: number }, 
     gridSize: { ...gridSize },
     startedAt,
     endedAt: null,
-    days: [],
+    attempts: [],
     milestoneChoices: [],
-    midDayRestores: 0,
-    gatingBypassUsed: false,
+    midAttemptRestores: 0,
     chapter: null,
     endingAgree: null,
     stats: null,
@@ -109,7 +106,7 @@ const isObj = (v: unknown): v is Obj => typeof v === 'object' && v !== null && !
 
 /**
  * 원문 → MetricsData. 파싱 실패·version 불일치·구조 불일치면 { ok: false } (호출부가 키 삭제 + console.warn 후 새로 시작).
- * 구조 검사는 최상위·life·day의 뼈대만 본다 (metrics는 관찰 기록이라 게임 저장만큼 엄격하지 않다).
+ * 구조 검사는 최상위·life·attempt의 뼈대만 본다 (metrics는 관찰 기록이라 게임 저장만큼 엄격하지 않다).
  */
 export function parseMetrics(raw: string | null): { ok: true; data: MetricsData } | { ok: false; reason: string } {
   if (raw === null) return { ok: false, reason: '없음' };
@@ -125,12 +122,12 @@ export function parseMetrics(raw: string | null): { ok: true; data: MetricsData 
     return { ok: false, reason: '구조 불일치 (firstSeen·sessions·lives)' };
   }
   for (const [i, l] of (v.lives as unknown[]).entries()) {
-    if (!isObj(l) || typeof l.lifeId !== 'string' || !Array.isArray(l.days) || !Array.isArray(l.milestoneChoices)) {
+    if (!isObj(l) || typeof l.lifeId !== 'string' || !Array.isArray(l.attempts) || !Array.isArray(l.milestoneChoices)) {
       return { ok: false, reason: `구조 불일치 (lives[${i}])` };
     }
-    for (const [j, d] of (l.days as unknown[]).entries()) {
-      if (!isObj(d) || typeof d.day !== 'number' || !isObj(d.dayStats) || !Array.isArray(d.feeds)) {
-        return { ok: false, reason: `구조 불일치 (lives[${i}].days[${j}])` };
+    for (const [j, d] of (l.attempts as unknown[]).entries()) {
+      if (!isObj(d) || typeof d.attempt !== 'number' || !isObj(d.record) || !Array.isArray(d.feeds)) {
+        return { ok: false, reason: `구조 불일치 (lives[${i}].attempts[${j}])` };
       }
     }
   }
@@ -159,14 +156,14 @@ export function enforceLimits(data: MetricsData, maxBytes = MAX_BYTES): string[]
   for (const life of data.lives) {
     if (size <= maxBytes) break;
     let cleared = 0;
-    for (const d of life.days) {
+    for (const d of life.attempts) {
       if (size <= maxBytes) break;
       if (d.feeds.length === 0) continue;
       cleared += d.feeds.length;
       d.feeds = [];
       size = byteLength(JSON.stringify(data));
     }
-    if (cleared) warnings.push(`일생 ${life.lifeId}의 소환 기록 ${cleared}개 비움 (크기 상한 ${maxBytes}B)`);
+    if (cleared) warnings.push(`일생 ${life.lifeId}의 먹이기 기록 ${cleared}개 비움 (크기 상한 ${maxBytes}B)`);
   }
   return warnings;
 }
@@ -187,14 +184,14 @@ export function byteLength(s: string): number {
 }
 
 /**
- * 판 도중 복원 감지 (§5.10-3): 부팅 시 inProgress가 남아 있고, 복원된 저장이 같은 lifeId·day의 dayStart면 midDayRestores += 1.
- * 어느 경우든 inProgress는 지운다. 감지했으면 true.
+ * 시도 도중 복원 감지: 부팅 시 inProgress가 남아 있고, 복원된 저장이 같은 lifeId의 장면 카드(dayStart)이며
+ * 그 시도가 아직 끝나지 않았으면(저장된 시도 수 < inProgress.attempt) midAttemptRestores += 1. 어느 경우든 inProgress는 지운다.
  */
-export function detectMidDayRestore(data: MetricsData, life: LifeMetrics, day: number, phase: string): boolean {
+export function detectMidAttemptRestore(data: MetricsData, life: LifeMetrics, savedAttempt: number, phase: string): boolean {
   const ip = data.inProgress;
   data.inProgress = null;
-  if (ip && ip.lifeId === life.lifeId && ip.day === day && phase === 'dayStart') {
-    life.midDayRestores += 1;
+  if (ip && ip.lifeId === life.lifeId && savedAttempt < ip.attempt && phase === 'dayStart') {
+    life.midAttemptRestores += 1;
     return true;
   }
   return false;
@@ -204,19 +201,19 @@ export function detectMidDayRestore(data: MetricsData, life: LifeMetrics, day: n
 
 export interface MetricsSummary {
   lives: number;
-  daysCompleted: number;
+  attemptsCompleted: number;
   sessionDates: number;
-  /** 밤덱(디펜스)에 먹인 비율 (구 Unhappy 소환 비율) */
+  /** 밤덱(디펜스)에 먹인 비율 */
   defenseFeedRatio: number | null;
   /** 먹인 단계 분포 */
   tierShare: Record<string, number>;
-  /** 배속 사용일 제외 */
-  dayLengthMedian: number | null;
+  /** 배속 사용 시도 제외 */
+  attemptLengthMedian: number | null;
   gridFullRatio: number | null;
   releases: number;
-  backflows: number;
-  bossWins: number;
-  ratings: { good: number; meh: number; bad: number; tense: number; annoyed: number };
+  /** 결과별 시도 수 */
+  results: Record<string, number>;
+  ratings: { good: number; meh: number; bad: number; again: number; tired: number };
 }
 
 export function median(xs: number[]): number | null {
@@ -227,31 +224,32 @@ export function median(xs: number[]): number | null {
 }
 
 export function summarizeMetrics(lives: LifeMetrics[], sessions: SessionRecord[]): MetricsSummary {
-  const days = lives.flatMap((l) => l.days);
-  const feeds = days.flatMap((d) => d.feeds);
+  const atts = lives.flatMap((l) => l.attempts);
+  const feeds = atts.flatMap((d) => d.feeds);
   const down = feeds.filter((s) => s.role === 'defense').length;
   const tierCount: Record<string, number> = {};
   for (const s of feeds) tierCount[s.tier] = (tierCount[s.tier] ?? 0) + 1;
   const tierShare: Record<string, number> = {};
   for (const [t, c] of Object.entries(tierCount)) tierShare[t] = c / feeds.length;
-  const game = days.reduce((s, d) => s + d.dayStats.realSeconds, 0);
-  const full = days.reduce((s, d) => s + d.dayStats.gridFullSeconds, 0);
-  const ratings = { good: 0, meh: 0, bad: 0, tense: 0, annoyed: 0 };
-  for (const d of days) {
+  const game = atts.reduce((s, d) => s + d.record.realSeconds, 0);
+  const full = atts.reduce((s, d) => s + d.record.gridFullSeconds, 0);
+  const results: Record<string, number> = {};
+  for (const d of atts) results[d.result ?? '?'] = (results[d.result ?? '?'] ?? 0) + 1;
+  const ratings = { good: 0, meh: 0, bad: 0, again: 0, tired: 0 };
+  for (const d of atts) {
     if (d.rating?.day) ratings[d.rating.day] += 1;
-    if (d.rating?.backflow) ratings[d.rating.backflow] += 1;
+    if (d.rating?.retry) ratings[d.rating.retry] += 1;
   }
   return {
     lives: lives.length,
-    daysCompleted: days.length,
+    attemptsCompleted: atts.length,
     sessionDates: new Set(sessions.map((s) => s.realDate)).size,
     defenseFeedRatio: feeds.length ? down / feeds.length : null,
     tierShare,
-    dayLengthMedian: median(days.filter((d) => d.speedUsed === 0).map((d) => d.realSeconds)),
+    attemptLengthMedian: median(atts.filter((d) => d.speedUsed === 0).map((d) => d.realSeconds)),
     gridFullRatio: game > 0 ? full / game : null,
-    releases: days.reduce((s, d) => s + d.dayStats.releases, 0),
-    backflows: days.filter((d) => d.dayStats.backflow).length,
-    bossWins: days.filter((d) => d.dayStats.bossWin === 1).length,
+    releases: atts.reduce((s, d) => s + d.record.releases, 0),
+    results,
     ratings,
   };
 }
@@ -264,10 +262,12 @@ export function formatSummary(title: string, s: MetricsSummary): string {
     .map(([t, x]) => `${t}:${pct(x)}`)
     .join(' ');
   const r = s.ratings;
+  const res = s.results;
   return [
-    `[${title}] 일생 ${s.lives} · 날 ${s.daysCompleted} · 세션 날짜 ${s.sessionDates}`,
+    `[${title}] 판 ${s.lives} · 시도 ${s.attemptsCompleted} · 세션 날짜 ${s.sessionDates}`,
     `밤덱 먹이기 ${pct(s.defenseFeedRatio)} · 먹인 단계 ${tiers || '—'}`,
-    `하루 ${s.dayLengthMedian === null ? '—' : `${Math.round(s.dayLengthMedian)}초`} · 가득 참 ${pct(s.gridFullRatio)} · 놓아주기 ${s.releases}`,
-    `역류 ${s.backflows} (처치 ${s.bossWins}) · 평가 ${r.good}/${r.meh}/${r.bad} · 긴장/짜증 ${r.tense}/${r.annoyed}`,
+    `시도 ${s.attemptLengthMedian === null ? '—' : `${Math.round(s.attemptLengthMedian)}초`} · 가득 참 ${pct(s.gridFullRatio)} · 놓아주기 ${s.releases}`,
+    `성공 ${res.success ?? 0} · 낮 실패 ${(res.dayTime ?? 0) + (res.dayFall ?? 0) + (res.returnTime ?? 0)} · 밤 실패 ${res.night ?? 0}`,
+    `평가 ${r.good}/${r.meh}/${r.bad} · 다시/지침 ${r.again}/${r.tired}`,
   ].join('\n');
 }

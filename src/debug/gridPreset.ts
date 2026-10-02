@@ -1,5 +1,5 @@
 // 디버그 전용 그리드 프리셋 오버라이드. M7 디버그 패널에 흡수 예정.
-// 프리셋 전환 시 게임 저장만 초기화하고 gating은 유지한다 (스펙 §5.8-2, DebugPanel).
+// 프리셋 전환 시 게임 저장을 초기화한다 (DebugPanel).
 
 import type { GridSize } from '../core/grid';
 import { readKey, writeKey } from '../platform/storage';

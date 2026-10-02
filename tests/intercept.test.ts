@@ -10,19 +10,19 @@ const GEO = gameGeometry(base.balance.merge.soldierCap + 1).defense;
 const LINE = GEO.lineY;
 const HAPPY = { atk: 0, atkInterval: 1, range: 0 }; // Happy는 끼어들지 않게
 const SPIRIT = { hp: 1000, atk: 1, atkInterval: 1, range: 20 };
-const WORRY = { hp: 1000, speed: 60, atk: 0, atkInterval: 1, joyReward: 0 };
+const WORRY = { type: 'shadow', hp: 1000, speed: 60, atk: 0, atkInterval: 1, joyReward: 0 };
 const IC: InterceptConfig = { range: 80, speed: 60, contact: 8 };
 
-function lane(ic: InterceptConfig | null): Lane<'defense'> {
+function lane(ic: InterceptConfig | null): Lane {
   return new Lane('defense', GEO, HAPPY, ic);
 }
-function step(l: Lane<'defense'>, n: number): LaneEvent[] {
+function step(l: Lane, n: number): LaneEvent[] {
   const out: LaneEvent[] = [];
   for (let i = 0; i < n; i++) l.step(FIXED_DT, out);
   return out;
 }
 /** 걱정을 y에 바로 놓는다 */
-function worryAt(l: Lane<'defense'>, x: number, y: number, stats = WORRY): Worry {
+function worryAt(l: Lane, x: number, y: number, stats = WORRY): Worry {
   const w = l.spawnWorry(stats, x, []);
   w.y = y;
   return w;

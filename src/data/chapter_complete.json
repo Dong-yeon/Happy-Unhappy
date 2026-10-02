@@ -1,7 +1,6 @@
 {
   "title": "해와 달이 된 오누이",
   "doneText": "이야기 한 편이 완성되었다.",
-  "notDoneText": "아직 이야기가 남았어요.",
   "learnedRecipes": [
     { "id": "sun_moon_siblings", "name": "해와 달이 된 오누이", "side": "day" },
     { "id": "purified_tiger", "name": "정화된 호랑이", "side": "night" }

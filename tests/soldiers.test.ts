@@ -4,7 +4,7 @@ import { rawGameData } from '../src/data';
 import type { GameData } from '../src/data/types';
 import { GameState, type CoreEvent } from '../src/core/game';
 import { WILDCARD } from '../src/core/grid';
-import { FIXED_DT, Lane, type LaneEvent } from '../src/core/lane';
+import { FIXED_DT, Lane, type LaneEvent, type UnitHost } from '../src/core/lane';
 import { mulberry32 } from '../src/core/rng';
 import { gameGeometry } from '../src/scenes/layout';
 
@@ -20,7 +20,6 @@ function day(edit: (d: GameData) => void = () => {}): GameState {
   const d = structuredClone(base);
   edit(d);
   const g = new GameState(d, SIZE, mulberry32(1), GEO, 1);
-  g.debugForceEvent('plain');
   g.confirmDay();
   g.grid.cells.fill(null);
   return g;
@@ -35,12 +34,12 @@ function merge(g: GameState, c: string, tier: number, a = 0, b = 1): void {
   expect(g.drop(a, b)).toBe('merge');
   g.grid.cells[b] = null;
 }
-const soldiers = (l: Lane) => l.units.filter((u) => u.role === 'soldier');
+const soldiers = (l: UnitHost) => l.units.filter((u) => u.role === 'soldier');
 const ofType = <T extends CoreEvent['type']>(es: CoreEvent[], t: T) =>
   es.filter((e): e is Extract<CoreEvent, { type: T }> => e.type === t);
 
 describe('출전 ([11]-1)', () => {
-  it('전투 중 머지 → 지금 싸우는 레인에 병사 (낮 = 심연, 밤 = 방어), 결과 조각은 그리드에 남음', () => {
+  it('전투 중 머지 → 지금 싸우는 레인에 병사 (낮 = 핵 찾아 돌아오기, 밤 = 핵 지키기), 결과 조각은 그리드에 남음', () => {
     const g = day();
     put(g, 0, DOG, 1);
     put(g, 1, DOG, 1);
@@ -48,7 +47,7 @@ describe('출전 ([11]-1)', () => {
     expect(g.grid.cells[1]).toMatchObject({ chain: DOG, tier: 2 });
     expect(soldiers(g.abyss)).toHaveLength(1);
     g.debugToNight();
-    expect(soldiers(g.abyss)).toHaveLength(0); // 해질녘에 물러남 (귀환 없음)
+    expect(soldiers(g.abyss)).toHaveLength(0); // 해질녘(핵을 가져옴)에 물러남 (귀환 없음)
     merge(g, ROPE, 1, 2, 3);
     expect(soldiers(g.defense)).toHaveLength(1);
     expect(soldiers(g.defense)[0]).toMatchObject({ chain: ROPE, soldier: 'snare' });
@@ -59,7 +58,6 @@ describe('출전 ([11]-1)', () => {
     const g = new GameState(d, SIZE, mulberry32(1), GEO, 1);
     g.grid.cells.fill(null);
     merge(g, DOG, 1);
-    g.debugForceEvent('plain');
     g.confirmDay();
     expect(soldiers(g.abyss)).toHaveLength(0);
     expect(g.stats.soldiersSpawned).toBe(0);
@@ -95,7 +93,8 @@ describe('출전 ([11]-1)', () => {
 
   it(`수명 soldierLifetime(${B.merge.soldierLifetime}초): 지나면 사라짐 (귀환 없음, 그리드 변화 없음)`, () => {
     const g = day((d) => {
-      d.balance.lane.abyssAdvanceSpeed = 0; // 반격 범위 밖에서 제자리
+      d.balance.lane.abyssAdvanceSpeed = 0; // 반격 범위 밖 오두막에서 제자리
+      d.stages.stages[0].day.enemies = []; // 적 없음 (병사가 맞지 않게)
     });
     merge(g, DOG, 1);
     const cells = JSON.stringify(g.grid.cells);
@@ -141,11 +140,11 @@ describe('때 맞춤 ([11]-2)', () => {
 
 describe('방패병·올가미병 (레인 규칙)', () => {
   const HAPPY = { atk: 0, atkInterval: 1, range: 0 };
-  const WORRY = { hp: 1000, speed: 60, atk: 5, atkInterval: 1, joyReward: 0 };
-  function defense(): Lane<'defense'> {
+  const WORRY = { type: 'shadow', hp: 1000, speed: 60, atk: 5, atkInterval: 1, joyReward: 0 };
+  function defense(): Lane {
     return new Lane('defense', GEO.defense, HAPPY, null);
   }
-  function step(l: Lane<'defense'>, n: number): LaneEvent[] {
+  function step(l: Lane, n: number): LaneEvent[] {
     const out: LaneEvent[] = [];
     for (let i = 0; i < n; i++) l.step(FIXED_DT, out);
     return out;
@@ -180,8 +179,11 @@ describe('방패병·올가미병 (레인 규칙)', () => {
     expect(w.y - y0).toBeCloseTo(WORRY.speed * (1 - lv[1].slow!) * 1, 1);
   });
 
-  it('오펜스: 층 반격은 사거리 안 방패병을 먼저 친다', () => {
-    const g = day((d) => (d.balance.abyss.counterRange = 10000));
+  it('오펜스: guardian 반격은 사거리 안 방패병을 먼저 친다', () => {
+    const g = day((d) => {
+      d.balance.guardian.counterRange = 10000;
+      d.stages.stages[0].day.enemies = [];
+    });
     merge(g, ROPE, 1); // 올가미병 (먼저 오름)
     merge(g, DOG, 1, 2, 3); // 방패병
     const shield = soldiers(g.abyss).find((u) => u.soldier === 'shield')!;

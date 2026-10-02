@@ -8,9 +8,9 @@ export interface CombatStats {
 }
 
 export interface Balance {
-  version: 3;
+  version: 4;
   /** swapHeroes: true면 기본 배정(heroes.json offense/defense)을 맞바꾼다 (영웅 배정 기본값, [11]-3) */
-  start: { joy: number; shadow: number; swapHeroes: boolean };
+  start: { joy: number; swapHeroes: boolean };
   grid: {
     gridCols: number;
     gridRows: number;
@@ -21,53 +21,56 @@ export interface Balance {
     releaseRefund: number;
   };
   lane: {
-    /** 오펜스: 영웅·병사가 층으로 전진하는 속도 */
+    /** 낮(오펜스): 영웅·병사 이동 속도 (가는 길·돌아오는 길, px/초) */
     abyssAdvanceSpeed: number;
-    /** 디펜스 영웅·병사 제한 이동 (§4.3.3, D-026): 방어선에서 나갈 수 있는 최대 거리. 0 = 이동 없음 */
+    /** 디펜스 영웅·병사 제한 이동 (§4.3.3, D-026): 방어선에서 나갈 수 있는 최대 거리. 0 = 이동 없음. 낮 호위(운반자 뒤)도 같은 값 */
     defenseInterceptRange: number;
-    /** 방어 유닛 이동 속도 (px/초) */
+    /** 방어·호위 유닛 이동 속도 (px/초) */
     defenseMoveSpeed: number;
-    /** 유닛이 걱정 바로 아래 몇 px에 서는지 */
+    /** 유닛이 적 바로 앞 몇 px에 서는지 */
     defenseContact: number;
   };
   happy: { atk: number; atkInterval: number; range: number };
-  /** 밤(디펜스) 웨이브 (§5.17-10: 구 낮 웨이브) */
+  /** 밤(디펜스) 웨이브 진행 (구성은 stages.json night, §5.19-3-5) */
   wave: {
-    wavesPerNight: number;
-    countBase: number;
-    countStep: number;
     spawnInterval: number;
     waveGap: number;
     /** 밤 첫 웨이브 전 대기(초) */
-    dayStartDelay: number;
-    /** 낮에 예약된 역류: 그날 밤 첫 웨이브(보스) 전 준비 시간(초) (D-021, §5.17-10) */
-    bossPrepSeconds: number;
-    hpGrowthPerDay: number;
+    nightStartDelay: number;
   };
-  abyss: {
-    layerHpBase: number;
-    layerHpGrowth: number;
+  /** 적 공통: HP = base.hp × hpMult × hpGrowthPerStage^(스테이지-1) (낮·밤 모두) */
+  enemy: { hpGrowthPerStage: number };
+  /** 낮: 핵을 쥔 그림자 (§5.19-2, 구 심연 층 1개). HP는 stages.json */
+  guardian: {
     counterAtk: number;
     counterAtkInterval: number;
-    /** 벽 반격 사거리 (벽 아래 변에서의 y 거리, px) */
+    /** 반격 사거리 (guardian 자리에서의 진행 축 거리, px) */
     counterRange: number;
-    /** 오펜스 병사가 쓰러질 때 그림자 */
-    abyssDeathShadow: number;
-    layerClearShadowReduce: number;
-    /** 보스 층 (§5.13-4): 이 값의 배수 층 */
-    bossFloorEvery: number;
-    bossFloorHpMult: number;
-    bossFloorCounterMult: number;
-    /** 보스 층 돌파 보상 와일드카드 수 */
-    bossFloorWildcards: number;
+    /** 보스 스테이지(1-5·1-10) guardian 반격 배수 */
+    bossCounterMult: number;
+    /** 보스 스테이지 핵을 가져왔을 때 와일드카드 수 */
+    bossWildcards: number;
   };
+  /** 핵 운반 (§5.19-2) */
+  carry: {
+    /** 운반자 이동 속도 배수 */
+    speedMult: number;
+    /** 운반자 공격 간격 배수 */
+    atkIntervalMult: number;
+    /** 추격 무리 등장 간격(초) */
+    chaseInterval: number;
+    /** 영웅이 떨어진 핵을 줍는 거리 (적이 닿는 거리도 같음, px) */
+    pickupRange: number;
+  };
+  /** 밤: 핵 HP (§5.19-3) */
+  core: { hp: number; sinkDamage: number; bossSinkDamage: number };
   /** 영웅 공통 (§5.17-2·4·10) */
   hero: {
     /** 떡 성장 받는 피해 감소의 상한 */
     dmgReduceMax: number;
     /** 동아줄 성장 atkInterval 하한(초) */
     atkIntervalMin: number;
-    /** 디펜스(밤) 영웅 쓰러짐 → 이 초 뒤 일어남 */
+    /** 쓰러짐 → 이 초 뒤 일어남 (밤 영웅, 낮 운반 중 영웅) */
     reviveSeconds: number;
     /** 일어날 때 hp = maxHp × 이 값 */
     reviveHpRatio: number;
@@ -95,45 +98,26 @@ export interface Balance {
     /** 때 맞춤 (낮 sun 체인 / 밤 moon 체인) 병사 능력치·버프 배수 */
     affinityMult: number;
   };
-  /** 낮 = 오펜스 (§5.17-10, 구 night 블록) */
-  offense: {
-    /** 낮 길이(초) */
-    seconds: number;
-    /** 오펜스 영웅이 쓰러져 낮이 끝나면 남은 초 × 이 값만큼 그림자 */
-    stallShadowPerSec: number;
-  };
-  shadow: {
-    shadowMax: number;
-    sinkShadow: number;
-    sinkLayerHp: number;
-    shadowAfterBossWin: number;
-    shadowAfterBossLose: number;
-    /** 마음 날씨 경계: [흐림, 비, 폭우]가 시작되는 그림자 값 (그 미만은 맑음) */
-    weatherThresholds: [number, number, number];
-  };
-  /** 챕터 진행 (§5.15-1, D-039): 1-1 ~ 1-length = 심연 1 ~ length층 */
+  /** 낮 = 오펜스: 해가 지기까지(초). 왕복이라 v0.15에서 늘림 */
+  offense: { seconds: number };
+  /** 챕터 진행 (§5.19-1): 1-1 ~ 1-length 스테이지 */
   chapter: {
     length: number;
-    /** 이 층을 정화하면 다음 dayStart에 갈림길 */
+    /** 이 스테이지를 성공하면 다음 dayStart에 갈림길 */
     turningPoint: number;
-    /** 전환점 층 HP 배수 */
-    turningPointHpMult: number;
-    /** 이 일차 이야기 한 장 뒤에도 1-length를 못 넘었으면 미완성으로 끝 */
-    maxDays: number;
   };
   days: {
-    dailyLimit: number;
-    storeCap: number;
-    /** 하루 시작(이벤트 효과 직후) 기쁨 바닥. 가산이 아니라 max (D-024) */
+    /** 스테이지 시작(장면 카드를 닫을 때) 기쁨 바닥. 가산이 아니라 max (D-024) */
     morningJoyFloor: number;
   };
-  diary: { diarySinkThreshold: number };
 }
 
-/** 시작 영웅 (§5.17-1, heroes.json) */
+/** 영웅 (§5.17-1, §5.19-9, heroes.json): 시작 모험대(삽살·해태) + 챕터 완성 보상 영웅(reward) */
 export interface HeroDef extends CombatStats {
   id: string;
   name: string;
+  /** 챕터 완성 보상 영웅 (예: "ch01" = 1챕터 완성 시 합류, D-057). 없으면 시작 모험대 */
+  reward?: string;
 }
 
 export interface Heroes {
@@ -174,20 +158,68 @@ export interface Chain {
   soldier: { kind: 'shield' | 'snare'; name: string; levels: SoldierLevel[] };
 }
 
+/** 적 공통 능력치 (§5.19-5): 종류별 배수를 곱한다 */
+export interface EnemyBase {
+  hp: number;
+  speed: number;
+  atk: number;
+  atkInterval: number;
+  joyReward: number;
+}
+
+export interface EnemyDef {
+  id: string;
+  name: string;
+  hpMult: number;
+  speedMult: number;
+  atkMult: number;
+}
+
 export interface Monsters {
-  worry: { name: string; hpBase: number; speed: number; atk: number; atkInterval: number; joyReward: number };
-  backflowBoss: {
-    name: string;
-    hp: number;
-    speed: number;
-    atk: number;
-    atkInterval: number;
-    joyReward: number;
-    joyPenalty: number;
-    sinkLayerHp: number;
-    /** 보스 HP = hp × hpGrowthPerDay^(일차-1). M4 무한 웨이브에서는 1일차 취급 */
-    hpGrowthPerDay: number;
+  base: EnemyBase;
+  enemies: EnemyDef[];
+}
+
+/** stages.json 적 묶음 */
+export interface EnemyGroup {
+  type: string;
+  count: number;
+}
+
+/** 1챕터 스테이지 하나 (§5.19-4): 이야기 문구 + 낮(핵 찾아 돌아오기) + 밤(핵 지키기) */
+export interface StageDef {
+  stage: number;
+  title: string;
+  /** dayStart 장면 카드 여는 글 */
+  intro: string;
+  coreName: string;
+  /** 핵 카드 한 줄 (없으면 이름만) */
+  coreText?: string;
+  /** 아침 이야기 한 장 */
+  page: string;
+  /** 실패 뒤 다시 도전할 때 장면 카드 */
+  retryIntro: string;
+  day: {
+    /** 핵을 쥔 그림자 종류 (monsters.enemies id, 표시 이름) */
+    guardian: string;
+    guardianHp: number;
+    /** 보스 스테이지: guardian 반격 × bossCounterMult, 핵을 가져오면 와일드카드 */
+    boss?: boolean;
+    /** 가는 길 무리 */
+    enemies: EnemyGroup[];
+    /** 돌아오는 길 추격 무리 */
+    chase: EnemyGroup[];
   };
+  night: {
+    /** 웨이브마다 적 묶음. 비면 밤 없음 (1-10) */
+    waves: EnemyGroup[][];
+    /** 마지막에 오는 보스 웨이브 (핵 피해 bossSinkDamage) */
+    bossWave?: EnemyGroup[];
+  };
+}
+
+export interface Stages {
+  stages: StageDef[];
 }
 
 export type Flag = 'avoid' | 'face';
@@ -206,7 +238,7 @@ export interface MilestoneChoice {
   flag: Flag;
   joy: number;
   shadow: number;
-  /** 그날 심연 층 HP 감소 비율 (0~1). 0.3 = 30% 감소 */
+  /** 다음 스테이지 첫 시도의 guardian HP 감소 비율 (0~1). 0.3 = 30% 감소 */
   faceLayerHpReduce?: number;
   bonusReturnPiece?: boolean;
 }
@@ -254,33 +286,22 @@ export interface Days {
   quietDays: number;
 }
 
-export interface Diary {
-  /** 낮 결과 문장 (층 돌파 계열은 v0.8에서 night로 이동) */
-  result: { backflow: string[]; manySunk: string[]; default: string[] };
-  /** 밤 문장 (§5.11-6) */
-  night: { layerCleared: string[]; tried: string[]; none: string[] };
-  forgottenDay: string;
-}
-
-/** 챕터 문구 (§5.15-2, chapter.json): 세계·갈림길·층 장면 이름 */
+/** 챕터 문구 (§5.15-2, chapter.json): 세계·갈림길. 스테이지 이름은 stages.json title */
 export interface Chapter {
+  /** 챕터 id (heroes.json reward와 짝: 완성하면 그 보상 영웅이 합류, D-057) */
+  id: string;
   /** 이 챕터의 world 값 (체인·이벤트의 world와 같아야 함) */
   world: string;
-  /** 1-turningPoint 정화 다음 dayStart에 나오는 갈림길 (events.milestones의 id) */
+  /** 1-turningPoint 성공 다음 dayStart에 나오는 갈림길 (events.milestones의 id) */
   crossroad: string;
   /** 1-length 보스 표시 이름 */
   bossName: string;
-  /** 밤 층 장면 이름 (1-1 ~ 1-length) */
-  sceneNames: string[];
-  /** 낮 배경 이름 (현재 층 번호의 것) */
-  dayScenes: string[];
 }
 
 /** 챕터 완성 화면 (§5.15-5, chapter_complete.json). learnedRecipes는 표시만 (조합표에 추가하지 않음, D-043) */
 export interface ChapterComplete {
   title: string;
   doneText: string;
-  notDoneText: string;
   learnedRecipes: { id: string; name: string; side: 'day' | 'night' }[];
 }
 
@@ -314,7 +335,7 @@ export interface GameData {
   monsters: Monsters;
   events: Events;
   days: Days;
-  diary: Diary;
+  stages: Stages;
   chapter: Chapter;
   chapterComplete: ChapterComplete;
   recipes: Recipes;

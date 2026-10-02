@@ -3,41 +3,26 @@
   "reactionDelay": 0.25,
   "reactionJitter": 0.2,
   "mistakeRate": 0.05,
-  "maxGameSeconds": 7200,
+  "maxAttempts": 50,
+  "maxGameSeconds": 20000,
   "feedRatio": 0.5,
-  "m3Goals": {
-    "idleSinkByDay": 1,
-    "dayEndJoyMaxDelta": 0,
-    "gridFullRatioMin": 0,
-    "gridFullRunShareMin": 0.5
-  },
-  "m5Goals": {
-    "prepMorningWinRateMin": 0.5,
-    "balancedBackflowsMax": 2,
-    "earlyDays": 2,
-    "balancedEarlySinkMax": 2,
-    "dayLengthTargetSeconds": [
-      180,
-      300
-    ]
-  },
-  "m89Goals": {
-    "balancedCompleteRate": [
-      0.6,
-      0.85
+  "m810Goals": {
+    "balancedAttempts": [
+      15,
+      20
     ],
-    "balancedCompleteDay": [
-      12,
-      16
+    "firstTry11Min": 0.9,
+    "firstTry19": [
+      0.3,
+      0.5
     ],
-    "balancedMidSunkMin": 5,
-    "balancedEarlySinkMax": 2,
+    "balancedFailStreak": [
+      3,
+      5
+    ],
+    "balancedCompleteMin": 0.95,
+    "idleCompleteMax": 0,
     "oneSidedCompleteMax": 0.3,
-    "lazyGapMin": 0.15,
-    "noFeedCompleteMax": 0.3,
-    "soldierDamageShare": [
-      0.2,
-      0.4
-    ]
+    "noFeedCompleteMax": 0.3
   }
 }
