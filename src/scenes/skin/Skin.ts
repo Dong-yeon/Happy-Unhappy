@@ -1,6 +1,7 @@
 // 스킨 (§5.23-1, §5.16-2): has(key)면 그림, 아니면 각 View가 지금 도형 그대로.
-// 모드: ?skin=0 → off(전부 도형·연출 추가분도 끔 = M8.12 화면) / ?skin=gen → 직접 그린 그림 기호만으로 미리보기 /
+// 모드: ?skin=0 → off(전부 도형 = M8.12 화면) / ?skin=gen → 직접 그린 그림 기호만으로 미리보기 /
 //       기본 auto → 로드된 팩이 하나라도 있으면 그림(팩 → 없으면 직접 그린 임시 그림), 팩이 없으면 도형 그대로.
+//       연출 추가분(fx)도 그림을 쓸 때만 켠다.
 // 픽셀 아트 팩 텍스처만 NEAREST·정수 배율 (전역 pixelArt는 켜지 않는다).
 import Phaser from 'phaser';
 import { GENERATED, PACKS, PACK_ENTRIES, type PackId, textureKey } from './manifest';
@@ -28,9 +29,9 @@ export class Skin {
     return this.mode === 'gen' || (this.mode === 'auto' && this.loadedPacks.size > 0);
   }
 
-  /** 1챕터 연출 추가분(§5.23-2)을 켜는지: ?skin=0이면 끔 (M8.12 화면과 같게) */
+  /** 1챕터 연출 추가분(§5.23-2)을 켜는지: 그림을 쓸 때만 (팩 없음·?skin=0 → M8.12 화면과 같게, §5.23-5) */
   get fx(): boolean {
-    return this.mode !== 'off';
+    return this.active;
   }
 
   has(key: string): boolean {

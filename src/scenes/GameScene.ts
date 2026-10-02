@@ -244,8 +244,7 @@ export class GameScene extends Phaser.Scene {
         this.banner('편성이 바뀌어 처음부터', '#ffb46b');
       } else if (e.type === 'dayBegin' && this.state.stageDef.day.boss && skinOf(this).fx) {
         // 1-5 털장갑 손 / 1-10 성난 호랑이 그림자: 등장 이름 띠 1초 (§5.23-2)
-        const st = this.state.stageDef;
-        this.nameBand(this.state.stage >= this.state.chapterLength ? data.chapter.bossName : enemyName(data, st.day.guardian));
+        this.nameBand(enemyName(data, this.state.stageDef.day.guardian));
       } else if (e.type === 'spawnWorry' && e.boss && skinOf(this).fx && this.bossBandAt !== this.state.attempt) {
         this.bossBandAt = this.state.attempt;
         this.nameBand(enemyName(data, e.enemy));

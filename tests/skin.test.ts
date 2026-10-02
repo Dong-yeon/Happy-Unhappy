@@ -2,7 +2,7 @@
 import { describe, expect, it } from 'vitest';
 import { rawGameData } from '../src/data';
 import { CHAINS, ENEMIES, GENERATED, HEROES, PACKS, PACK_ENTRIES, SKIN_KEYS } from '../src/scenes/skin/manifest';
-import { skinModeFromUrl } from '../src/scenes/skin/Skin';
+import { Skin, skinModeFromUrl } from '../src/scenes/skin/Skin';
 
 describe('스킨 매니페스트', () => {
   it('키가 데이터의 영웅·적·체인·단계를 모두 덮는다', () => {
@@ -33,5 +33,20 @@ describe('스킨 매니페스트', () => {
     expect(skinModeFromUrl('?skin=0')).toBe('off');
     expect(skinModeFromUrl('?debug=1&skin=gen')).toBe('gen');
     expect(skinModeFromUrl('?debug=1')).toBe('auto');
+  });
+
+  it('팩 없음·?skin=0 → 그림·연출 추가분 모두 꺼짐 (M8.12 화면 그대로, §5.23-5)', () => {
+    for (const mode of ['off', 'auto'] as const) {
+      const sk = new Skin(mode);
+      expect(sk.active).toBe(false);
+      expect(sk.fx).toBe(false);
+      expect(sk.has('hero.sapsal')).toBe(false);
+      expect(sk.credits()).toEqual([]);
+    }
+    const withPack = new Skin('auto');
+    withPack.loadedPacks.add('cute_fantasy');
+    expect(withPack.fx).toBe(true);
+    expect(withPack.credits().map((c) => c.author)).toEqual(['Kenmi']);
+    expect(new Skin('gen').fx).toBe(true);
   });
 });

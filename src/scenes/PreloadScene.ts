@@ -47,7 +47,7 @@ export class PreloadScene extends Phaser.Scene {
 
   create(): void {
     const data = this.registry.get('data') as GameData;
-    if (this.skin.mode !== 'off') drawGeneratedTextures(this, data);
+    if (this.skin.active) drawGeneratedTextures(this, data); // 팩 없음·?skin=0이면 그리지 않음 (도형 그대로)
     this.registry.set('skin', this.skin);
     if (this.skin.active) console.info(`[skin] ${this.skin.mode} · 팩 ${[...this.skin.loadedPacks].join(', ') || '없음'} · 팩 그림 ${this.skin.packKeys.size}개`);
     this.scene.start('Game');
