@@ -103,6 +103,7 @@ export const CORE = {
   worryXMargin: 12,
   /** 그림자 벽 두께 (진행 축). 벽 아래 변 = wallY */
   wallH: 16,
+  // wallY = guardian 서 있는 위치 (옛 그림자 벽 이름, D-053 이후 벽 없음)
   wallY: CORE_TOP + 16,
   /** Happy의 옆 축 위치 (v0.7 창문 x) */
   happyX: CORE_PORTAL_HAPPY_X,

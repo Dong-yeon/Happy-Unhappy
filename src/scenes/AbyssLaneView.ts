@@ -15,8 +15,6 @@ import { COLOR, text } from './ui';
 
 const GRANT_MS = 450; // 지급 조각: 레인 → 그리드 칸
 const HIT_MS = 100;
-const BOSS_WALL = 0x3a1626;
-const BOSS_EDGE = 0xd0607a;
 const CORE_COLOR = 0xffe08a;
 const CORE_CARD_MS = 3200;
 const BAR_W = 140;
@@ -27,9 +25,8 @@ export class AbyssLaneView {
   private readonly units = new Map<number, UnitView>();
   private readonly enemies = new Map<number, EnemyView>();
   private readonly chainColor = new Map<string, number>();
-  private readonly wallLabel: Phaser.GameObjects.Text;
-  private readonly wallBar: Phaser.GameObjects.Rectangle;
-  private readonly wallRect: Phaser.GameObjects.Rectangle;
+  /** 상단 라벨 "◆ 이름 hp/max" (처치 뒤 "이야기 씨앗을 찾았다") */
+  private readonly guardianLabel: Phaser.GameObjects.Text;
   private readonly core: Phaser.GameObjects.Container;
   private readonly carryFrame: Phaser.GameObjects.Container;
   private readonly carryFill: Phaser.GameObjects.Rectangle;
@@ -39,11 +36,12 @@ export class AbyssLaneView {
   private tintStage = 0;
   private book!: Phaser.GameObjects.Container;
   private corePulse: Phaser.Tweens.Tween | null = null;
-  private bossShown: boolean | null = null;
   /** guardian 몬스터 (벽 앞에 서 있음, 표시만 — 벽·HP 막대는 그대로) */
   private readonly guardianLayer: Phaser.GameObjects.Container;
   private guardianView: EnemyView | null = null;
   private guardianKey = '';
+  /** guardian 몸 반 높이 (표시 배율 반영) */
+  private guardianHalf = ENEMY_BASE_SIZE / 2;
   /** 병사 층 / 영웅 층 (영웅이 위: 병사 단계 배지가 영웅을 가리지 않게) */
   private readonly soldierLayer: Phaser.GameObjects.Container;
   private readonly heroLayer: Phaser.GameObjects.Container;
@@ -61,11 +59,8 @@ export class AbyssLaneView {
       ? scene.add.tileSprite(g.x, g.y, g.w, g.h, skinOf(scene).frame('bg.day').texture, skinOf(scene).frame('bg.day').frame).setOrigin(0).setTileScale(skinOf(scene).tileScale('bg.day'))
       : scene.add.rectangle(g.x, g.y, g.w, g.h, COLOR.defense).setOrigin(0);
     this.ground = bg;
-    // guardian: 진행 축 끝(오른쪽) 세로 띠 + 남은 HP 막대(세로) + 이름 hp/max
-    const wallX = progressX(CORE.wallY);
-    this.wallRect = scene.add.rectangle(wallX, g.y, g.x + g.w - wallX, g.h, COLOR.wall).setOrigin(0);
-    this.wallBar = scene.add.rectangle(wallX + 2, g.y + g.h, 3, g.h, COLOR.unhappy).setOrigin(0, 1);
-    this.wallLabel = text(scene, wallX - 4, g.y + 4, '', { fontSize: '9px', color: '#8796c2' }).setOrigin(1, 0);
+    // guardian: 레인 오른쪽 끝에 서 있는 몬스터 + 머리 위 HP 막대 + 상단 라벨 (옛 그림자 벽 그림은 없음, D-053)
+    this.guardianLabel = text(scene, g.x + g.w - 6, g.y + 4, '', { fontSize: '9px', color: '#8796c2' }).setOrigin(1, 0);
     // 본거지 이야기책 (출발·도착·밤에 지키는 곳, D-056): 왼쪽 끝 펼친 책
     const hutX = progressX(CORE.lineY);
     const hutY = g.y + g.h / 2;
@@ -92,8 +87,18 @@ export class AbyssLaneView {
     this.soldierLayer = scene.add.container(0, 0);
     this.heroLayer = scene.add.container(0, 0);
     this.root = scene.add
-      .container(0, 0, [bg, this.wallRect, this.wallBar, this.wallLabel, this.guardianLayer, book, hutLabel, label, this.soldierLayer, this.heroLayer, this.carryFrame, this.core, this.downLabel])
+      .container(0, 0, [bg, this.guardianLabel, this.guardianLayer, book, hutLabel, label, this.soldierLayer, this.heroLayer, this.carryFrame, this.core, this.downLabel])
       .setDepth(1);
+  }
+
+  /** guardian 서는 곳 x: wallY(guardian 자리)에서 몸 반만큼 안쪽 */
+  private guardianX(): number {
+    return progressX(CORE.wallY) - this.guardianHalf - 6;
+  }
+
+  /** guardian 발밑 (이야기 씨앗 자리) */
+  private guardianFeet(): { x: number; y: number } {
+    return { x: this.guardianX(), y: GUARDIAN_Y + this.guardianHalf + 4 };
   }
 
   setShown(shown: boolean): void {
@@ -126,7 +131,10 @@ export class AbyssLaneView {
         }
         case 'coreFound':
           this.showCoreCard(e.stage);
-          if (skinOf(this.scene).fx) this.sparkle(progressX(CORE.wallY) + 10, REGION.ground.y + REGION.ground.h / 2);
+          if (skinOf(this.scene).fx) {
+            const f = this.guardianFeet();
+            this.sparkle(f.x, f.y);
+          }
           break;
         case 'heroEnter':
           // 이야기책에서 팀이 뛰어나옴 (§5.23-2): 책에서 작은 빛 + 영웅이 톡 튀어나옴
@@ -166,23 +174,17 @@ export class AbyssLaneView {
     const gd = day ? ex.guardian : { type: sd.guardian, hp: sd.guardianHp, maxHp: sd.guardianHp, boss: sd.boss ?? false };
     const boss = gd.boss;
     const name = enemyName(this.data, gd.type);
-    const label = gd.hp > 0 ? `${boss ? '◆ ' : '▓ '}${name}  ${Math.ceil(gd.hp)}/${Math.ceil(gd.maxHp)}` : '이야기 씨앗을 찾았다';
-    if (this.wallLabel.text !== label) this.wallLabel.setText(label).setColor(boss ? '#ff9e9e' : '#8796c2');
-    if (boss !== this.bossShown) {
-      this.bossShown = boss;
-      this.wallRect.setFillStyle(boss ? BOSS_WALL : COLOR.wall).setStrokeStyle(boss ? 3 : 0, BOSS_EDGE);
-      this.wallBar.setFillStyle(boss ? BOSS_EDGE : COLOR.unhappy);
-    }
-    this.wallBar.height = REGION.ground.h * Math.max(0, Math.min(1, gd.hp / gd.maxHp));
-    this.wallRect.setAlpha(gd.hp > 0 ? 1 : 0.35);
-    // guardian 몬스터: 벽 앞에 크게 (일반 ×1.5 · 털장갑 손 ×2 · 성난 호랑이 그림자 ×2.5)
+    const label = gd.hp > 0 ? `◆ ${name}  ${Math.ceil(gd.hp)}/${Math.ceil(gd.maxHp)}` : '이야기 씨앗을 찾았다';
+    if (this.guardianLabel.text !== label) this.guardianLabel.setText(label).setColor(boss ? '#ff9e9e' : gd.hp > 0 ? '#cfd6ea' : '#ffe08a');
+    // guardian 몬스터: 크게 (일반 ×1.5 · 털장갑 손 ×2 · 성난 호랑이 그림자 ×2.5)
     const gKey = `${s.stage}:${gd.type}:${gd.boss}`;
     if (gKey !== this.guardianKey) {
       this.guardianKey = gKey;
       this.guardianView?.container.destroy();
       const k = bossScale(gd.type);
       this.guardianView = makeEnemyView(this.scene, gd.type, gd.boss, k);
-      this.guardianView.container.setPosition(progressX(CORE.wallY) - (ENEMY_BASE_SIZE * k) / 2 - 6, GUARDIAN_Y);
+      this.guardianHalf = (ENEMY_BASE_SIZE * k) / 2;
+      this.guardianView.container.setPosition(this.guardianX(), GUARDIAN_Y);
       this.guardianLayer.add(this.guardianView.container);
     }
     const gv = this.guardianView!;
@@ -221,17 +223,23 @@ export class AbyssLaneView {
 
     // 핵 위치
     const c = ex.core;
-    const g = REGION.ground;
     let cp: { x: number; y: number } | null = null;
     if (s.phase !== 'day') cp = null;
-    else if (c.at === 'guardian') cp = { x: progressX(CORE.wallY) + 10, y: g.y + g.h / 2 };
+    // 이야기 씨앗: guardian 발밑 → (처치되면 그 자리에 남음) → 운반자 머리 위 → 떨어지면 땅 위
+    else if (c.at === 'guardian') cp = this.guardianFeet();
     else if (c.at === 'carried') {
       const u = ex.carrier;
       if (u) {
         const p = toScreen('abyss', u.x, u.y);
-        cp = { x: p.x, y: p.y - 20 };
+        // 운반자 머리 위 (그림 영웅은 커서 몸 높이만큼 더 위로)
+        const body = this.units.get(u.id)?.body;
+        const half = body instanceof Phaser.GameObjects.Image ? body.displayHeight / 2 : 0;
+        cp = { x: p.x, y: p.y - Math.max(20, half + 8) };
       }
-    } else if (c.at === 'dropped') cp = { x: progressX(c.y), y: g.y + g.h / 2 };
+    } else if (c.at === 'dropped') {
+      const f = this.guardianFeet();
+      cp = { x: Math.min(progressX(c.y), f.x), y: f.y };
+    }
     this.core.setVisible(cp !== null);
     if (cp) this.core.setPosition(cp.x, cp.y);
     // 운반 중 씨앗이 운반자 머리 위에서 빛남 (§5.23-2)
