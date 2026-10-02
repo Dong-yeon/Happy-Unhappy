@@ -51,9 +51,9 @@ export class SkillButtonsView {
       const track = scene.add.circle(0, 0, SKILL_BTN_R + RING_W / 2, 0x000000, 0).setStrokeStyle(RING_W, 0x1b1d24, 0.9);
       const ring = scene.add.graphics();
       const disc = scene.add.circle(0, 0, SKILL_BTN_R, 0xffffff).setInteractive({ useHandCursor: true });
-      const initial = text(scene, 0, -5, '', { fontSize: '14px', color: '#1b1d24', fontStyle: 'bold' }).setOrigin(0.5);
-      // 체인 이름은 원 안 아래쪽 (버튼 아래 물에 글씨가 걸치지 않게, §5.21-6)
-      const chain = text(scene, 0, 10, '', { fontSize: '8px', color: '#1b1d24' }).setOrigin(0.5);
+      const initial = text(scene, 0, 0, '', { fontSize: '14px', color: '#1b1d24', fontStyle: 'bold' }).setOrigin(0.5);
+      // 체인 이름은 초상 아래로 (초상 그림을 가리지 않게). 물 위에서도 읽히게 어두운 바탕
+      const chain = text(scene, 0, SKILL_BTN_R + RING_W + 1, '', { fontSize: '8px', color: '#e8e8e8', backgroundColor: '#1b1d24cc', padding: { x: 3, y: 1 } }).setOrigin(0.5, 0);
       const container = scene.add.container(0, 0, [shadow, glow, track, ring, disc, initial, chain]).setDepth(DEPTH);
       const orb: Orb = { container, disc, initial, chain, ring, glow, heroId: null, portrait: null, drawn: '' };
       disc.on('pointerup', () => {
@@ -103,7 +103,7 @@ export class SkillButtonsView {
         o.portrait = null;
         const skin = skinOf(this.scene);
         if (skin.has(`hero.${id}`)) {
-          o.portrait = skin.image(this.scene, `hero.${id}`, 0, -2, SKILL_BTN_R * 2 - 4);
+          o.portrait = skin.image(this.scene, `hero.${id}`, 0, 0, SKILL_BTN_R * 2 - 4);
           o.container.addAt(o.portrait, o.container.getIndex(o.disc) + 1);
           o.initial.setText('');
         }

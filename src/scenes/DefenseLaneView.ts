@@ -24,6 +24,9 @@ const HIT_BY_WORRY = 0xd28cff;
 /** 홈으로 돌아가는 중 */
 const RETURNING_ALPHA = 0.85;
 
+/** 팀 표시 x (씨앗 HP 막대·글 오른쪽) */
+const TEAM_LABEL_X = 8 + 18 + CORE_BAR_W + 62;
+
 /** 방어선 빛 (이야기책 빛이 닿는 띠) */
 const GUARD_GLOW = 0xfff1c4;
 const GUARD_DANGER = 0xff5a5a;
@@ -58,6 +61,8 @@ export class DefenseLaneView {
   private readonly spawnLabel: Phaser.GameObjects.Text;
   private readonly coreFill: Phaser.GameObjects.Rectangle;
   private readonly coreText: Phaser.GameObjects.Text;
+  /** 마지막으로 위 줄 배치를 맞춘 팀 표시 글 */
+  private laidOut = '';
   /** 방어선 빛 테두리 (붉게 깜빡임용, fx 꺼짐이면 null = 세로선 그대로) */
   private readonly guardEdge: Phaser.GameObjects.Graphics | null = null;
   private readonly guardDanger: Phaser.GameObjects.Graphics | null = null;
@@ -92,7 +97,8 @@ export class DefenseLaneView {
       this.guardDanger = scene.add.graphics().lineStyle(2, GUARD_DANGER, 0.9).strokePoints(edge).setVisible(false);
     }
     this.spawnLabel = text(scene, g.x + g.w - 6, g.y + 4, '← 씨앗을 노리는 무리', { fontSize: '10px', color: '#c9b98a' }).setOrigin(1, 0);
-    this.teamLabel = text(scene, g.x + 8, g.y + 20, '', { fontSize: '10px', color: '#cfd6ea' });
+    // 팀 표시는 씨앗 HP 줄 오른쪽 (레인 왼쪽 위 = 맨 윗자리 유닛·쓰러짐 연출과 겹치던 자리라 옮김)
+    this.teamLabel = text(scene, TEAM_LABEL_X, g.y + 10, '', { fontSize: '9px', color: '#cfd6ea' }).setOrigin(0, 0.5);
     const laneLabel = text(scene, g.x + g.w * 0.38, g.y + g.h - 4, '밤 · 이야기 씨앗 지키기', { fontSize: '9px', color: '#8f835f' }).setOrigin(0.5, 1);
     const home = HOME.defense;
     // 본거지 이야기책 (핵을 품고 있음, D-056)
@@ -227,7 +233,14 @@ export class DefenseLaneView {
     if (this.teamLabel.text !== tl) this.teamLabel.setText(tl);
     const q = s.nightQueued;
     const sl = `← 씨앗을 노리는 무리${q > 0 ? ` (+${q} 대기)` : ''}`;
-    if (this.spawnLabel.text !== sl) this.spawnLabel.setText(sl);
+    if (this.spawnLabel.text !== sl || this.teamLabel.text !== this.laidOut) {
+      this.spawnLabel.setText(sl);
+      this.laidOut = this.teamLabel.text;
+      // 팀 표시와 무리 표시가 한 줄에서 닿으면 무리 표시를 한 줄 아래로
+      const g = REGION.ground;
+      const clash = this.teamLabel.text !== '' && this.teamLabel.x + this.teamLabel.width + 6 > this.spawnLabel.x - this.spawnLabel.width;
+      this.spawnLabel.setY(clash ? g.y + 18 : g.y + 4);
+    }
   }
 
   private flash(x: number, y: number, color: number): void {
