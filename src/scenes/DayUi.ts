@@ -76,7 +76,7 @@ class Modal {
     // 스킨 패널 그림 (§5.23-1 ui.panel, 팩이 있을 때만): 패널 위에 깔고 색은 tint로
     const skin = skinOf(scene);
     if (skin.has('ui.panel')) {
-      const img = skin.image(scene, 'ui.panel', VIEW_W / 2, top + height / 2).setDisplaySize(PANEL_W, height).setTint(color).setDepth(OVERLAY_DEPTH + 1);
+      const img = skin.panel(scene, 'ui.panel', VIEW_W / 2, top + height / 2, PANEL_W, height).setTint(color).setDepth(OVERLAY_DEPTH + 1);
       this.objects.push(img);
     }
   }

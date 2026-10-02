@@ -51,7 +51,7 @@ export class AbyssLaneView {
     // 낮 땅 띠 (밝은 고갯길, 도형 단계는 배경색만)
     // 땅: 스킨이면 바탕 무늬 + 장면 tint (§5.23-2), 아니면 단색
     const bg = skinOf(scene).has('bg.day')
-      ? scene.add.tileSprite(g.x, g.y, g.w, g.h, skinOf(scene).frame('bg.day').texture).setOrigin(0).setTileScale(1 / 2)
+      ? scene.add.tileSprite(g.x, g.y, g.w, g.h, skinOf(scene).frame('bg.day').texture, skinOf(scene).frame('bg.day').frame).setOrigin(0).setTileScale(skinOf(scene).tileScale('bg.day'))
       : scene.add.rectangle(g.x, g.y, g.w, g.h, COLOR.defense).setOrigin(0);
     this.ground = bg;
     // guardian: 진행 축 끝(오른쪽) 세로 띠 + 남은 HP 막대(세로) + 이름 hp/max

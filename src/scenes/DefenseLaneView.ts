@@ -45,8 +45,10 @@ export class DefenseLaneView {
     // 땅: 스킨이면 밤 마당 무늬 + 남색 tint (§5.23-2), 아니면 단색
     const sk = skinOf(scene);
     const bg = sk.has('bg.night')
-      ? scene.add.tileSprite(g.x, g.y, g.w, g.h, sk.frame('bg.night').texture).setOrigin(0).setTileScale(1 / 2).setTint(NIGHT_TINT)
+      ? scene.add.tileSprite(g.x, g.y, g.w, g.h, sk.frame('bg.night').texture, sk.frame('bg.night').frame).setOrigin(0).setTileScale(sk.tileScale('bg.night')).setTint(NIGHT_TINT)
       : scene.add.rectangle(g.x, g.y, g.w, g.h, COLOR.abyss).setOrigin(0);
+    // 팩 타일(풀빛)은 곱하기 tint만으로는 남색이 안 돼서 밤빛 덮개를 한 겹 더 (생성 그림은 무채색이라 tint로 충분)
+    const nightVeil = scene.add.rectangle(g.x, g.y, g.w, g.h, COLOR.abyss, sk.has('bg.night') && sk.frame('bg.night').packed ? 0.7 : 0).setOrigin(0);
     const lineX = progressX(CORE.lineY);
     const line = scene.add.line(0, 0, lineX, g.y + 6, lineX, g.y + g.h - 6, COLOR.line).setOrigin(0).setLineWidth(1);
     this.spawnLabel = text(scene, g.x + g.w - 6, g.y + 4, '← 씨앗을 노리는 무리', { fontSize: '10px', color: '#c9b98a' }).setOrigin(1, 0);
@@ -69,7 +71,7 @@ export class DefenseLaneView {
       .setOrigin(0, 0.5)
       .setVisible(false);
     this.root = scene.add
-      .container(0, 0, [bg, line, this.spawnLabel, this.teamLabel, laneLabel, bookGlow, happy, coreGem, coreFrame, this.coreFill, this.coreText, this.downLabel])
+      .container(0, 0, [bg, nightVeil, line, this.spawnLabel, this.teamLabel, laneLabel, bookGlow, happy, coreGem, coreFrame, this.coreFill, this.coreText, this.downLabel])
       .setDepth(1)
       .setVisible(false);
   }

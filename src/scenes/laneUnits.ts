@@ -35,11 +35,18 @@ export type Body = Phaser.GameObjects.Shape | Phaser.GameObjects.Image;
 export function flashBody(scene: Phaser.Scene, body: Body, color: number, ms: number): void {
   if (body instanceof Phaser.GameObjects.Image) {
     body.setTintFill(0xffffff);
-    scene.time.delayedCall(ms, () => body.active && body.clearTint());
+    // 원래 tint(체인 색·적 색)가 있으면 그 색으로 되돌린다
+    const base = body.getData('tint') as number | undefined;
+    scene.time.delayedCall(ms, () => body.active && (base === undefined ? body.clearTint() : body.setTint(base)));
     return;
   }
   body.setFillStyle(0xffffff);
   scene.time.delayedCall(ms, () => body.active && body.setFillStyle(color));
+}
+
+/** 그림에 색 입히기 (타격 깜빡임 뒤 되돌릴 색으로도 기억) */
+function tintBody(img: Phaser.GameObjects.Image, color: number): void {
+  img.setTint(color).setData('tint', color);
 }
 
 /** 영웅 초상 색: 낮덱 = 해, 밤덱 = 달 (편성 카드 등 역할 표시용) */
@@ -81,6 +88,7 @@ export function makeUnitView(scene: Phaser.Scene, data: GameData, u: Unit, role:
   const body: Body = pic
     ? skin.image(scene, `soldier.${u.chain}`, 0, 0, SOLDIER + 3)
     : scene.add.rectangle(0, 0, SOLDIER, SOLDIER, color).setStrokeStyle(1, u.soldier === 'shield' ? 0xf5f2e8 : 0x1b1d24);
+  if (pic && skin.tintByView(`soldier.${u.chain}`)) tintBody(body as Phaser.GameObjects.Image, color); // 팩 동물 + 체인 색
   // 단 숫자는 그림 위에도 작게 남긴다 (§5.16-2)
   const label = text(scene, pic ? 5 : 0, pic ? -5 : 0, String(u.tier), { fontSize: '7px', color: pic ? '#ffffff' : '#1b1d24', fontStyle: 'bold', ...(pic ? { stroke: '#1b1d24', strokeThickness: 2 } : {}) }).setOrigin(0.5);
   const bg = scene.add.rectangle(-S_HP_W / 2, SOLDIER / 2 + 2, S_HP_W, 2, 0x1b1d24).setOrigin(0, 0.5);
@@ -131,7 +139,8 @@ export function makeEnemyView(scene: Phaser.Scene, type: string, boss: boolean):
   const key = `enemy.${type}`;
   const pic = skin.has(key);
   const body: Body = pic ? skin.image(scene, key, 0, 0, r * 2 + 4) : scene.add.circle(0, 0, r, look.color).setStrokeStyle(boss ? 2 : 1, boss ? 0xff9e9e : 0x3b2d4a);
-  if (pic && boss) (body as Phaser.GameObjects.Image).setTint(0xffc0c0); // 보스 웨이브 적: 붉은 기
+  if (pic && skin.tintByView(key)) tintBody(body as Phaser.GameObjects.Image, look.color); // 팩 그림 + 적 색
+  if (pic && boss) tintBody(body as Phaser.GameObjects.Image, 0xffc0c0); // 보스 웨이브 적: 붉은 기
   const face = text(scene, 0, 0, pic ? '' : look.face, { fontSize: r >= 11 ? '11px' : '9px', color: '#2a1f35', fontStyle: 'bold' }).setOrigin(0.5);
   const bg = scene.add.rectangle(-ENEMY_HP_W / 2, -r - 4, ENEMY_HP_W, 3, 0x1b1d24).setOrigin(0, 0.5);
   const bar = scene.add.rectangle(-ENEMY_HP_W / 2, -r - 4, ENEMY_HP_W, 3, 0x7ed67e).setOrigin(0, 0.5);

@@ -61,7 +61,7 @@ export class Button {
   enabled = true;
   private active = false;
   /** 스킨 버튼 그림 (§5.23-1 ui.button, 팩이 있을 때만) */
-  private readonly skinImg: Phaser.GameObjects.Image | null = null;
+  private readonly skinImg: Phaser.GameObjects.NineSlice | Phaser.GameObjects.Image | null = null;
 
   constructor(
     scene: Phaser.Scene,
@@ -78,7 +78,8 @@ export class Button {
     this.container = scene.add.container(x, y, [this.rect, this.label]);
     const skin = skinOf(scene);
     if (skin.has('ui.button')) {
-      this.skinImg = skin.image(scene, 'ui.button', 0, 0).setDisplaySize(w, h);
+      // 팩 버튼(밝은 나무색)에 지금 버튼 색을 tint로 → 흰 글씨가 그대로 읽힌다
+      this.skinImg = skin.panel(scene, 'ui.button', 0, 0, w, h).setTint(COLOR.button);
       this.container.addAt(this.skinImg, 1);
       this.rect.setFillStyle(0x000000, 0.01).setStrokeStyle(0);
     }
@@ -105,7 +106,7 @@ export class Button {
     this.enabled = enabled;
     this.label.setColor(enabled ? '#ffffff' : '#8a8f9e');
     if (this.skinImg) {
-      this.skinImg.setTint(this.active ? 0xc8d4ff : enabled ? 0xffffff : 0x8a8f9e);
+      this.skinImg.setTint(this.active ? COLOR.buttonOn : enabled ? COLOR.button : COLOR.buttonOff);
       return this;
     }
     this.rect.setFillStyle(this.active ? COLOR.buttonOn : enabled ? COLOR.button : COLOR.buttonOff);

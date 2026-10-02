@@ -5,7 +5,7 @@ import Phaser from 'phaser';
 import type { GameData } from '../data/types';
 import { drawGeneratedTextures } from './skin/generated';
 import { PACKS, PACK_ENTRIES } from './skin/manifest';
-import { Skin, skinModeFromUrl } from './skin/Skin';
+import { PACK_FRAME, Skin, skinModeFromUrl } from './skin/Skin';
 import { VIEW_H, VIEW_W } from './layout';
 import { setupCamera } from './ui';
 
@@ -23,25 +23,28 @@ export class PreloadScene extends Phaser.Scene {
     const bar = this.add.rectangle(VIEW_W / 2 - 80, VIEW_H / 2, 0, 4, 0x9fb4e0).setOrigin(0, 0.5);
     this.add.rectangle(VIEW_W / 2, VIEW_H / 2, 160, 6).setStrokeStyle(1, 0x566081);
     this.load.on('progress', (v: number) => (bar.width = 160 * v));
-    const failed = new Set<string>();
-    this.load.on('loaderror', (file: Phaser.Loader.File) => {
-      failed.add(file.key);
-      console.warn(`[skin] 로드 실패 (도형으로): ${file.key} ← ${String(file.src)}`);
-    });
+    // 로드 실패(파일 없음·경로 오타): 그 키만 빠지고(도형/직접 그림으로) 게임은 계속. 경고는 끝나고 한 번에 1회.
+    // (Vite 개발 서버는 없는 파일에 index.html을 200으로 돌려줘 loaderror가 안 날 수 있다 → 텍스처가 안 생긴 키를 실패로 본다)
+    const failed = new Map<string, string>();
     for (const [key, e] of Object.entries(PACK_ENTRIES)) {
       if (!e) continue;
-      const url = `${PACKS[e.pack].dir}/${e.file}`;
-      if (e.frameW && e.frameH) this.load.spritesheet(`pack:${key}`, url, { frameWidth: e.frameW, frameHeight: e.frameH });
-      else this.load.image(`pack:${key}`, url);
+      this.load.image(`pack:${key}`, `${PACKS[e.pack].dir}/${e.file}`);
     }
     this.load.once('complete', () => {
       for (const [key, e] of Object.entries(PACK_ENTRIES)) {
-        if (!e || failed.has(`pack:${key}`) || !this.textures.exists(`pack:${key}`)) continue;
+        if (!e) continue;
+        if (!this.textures.exists(`pack:${key}`)) {
+          failed.set(key, `${PACKS[e.pack].dir}/${e.file}`);
+          continue;
+        }
+        const tex = this.textures.get(`pack:${key}`);
         // 픽셀 아트: 이 텍스처만 NEAREST
-        this.textures.get(`pack:${key}`).setFilter(Phaser.Textures.FilterMode.NEAREST);
+        tex.setFilter(Phaser.Textures.FilterMode.NEAREST);
+        if (e.rect) tex.add(PACK_FRAME, 0, ...e.rect);
         this.skin.packKeys.add(key);
         this.skin.loadedPacks.add(e.pack);
       }
+      if (failed.size) console.warn(`[skin] 팩 그림 ${failed.size}개 로드 실패 → 그 키만 도형/직접 그림으로: ${[...failed].map(([k, src]) => `${k} ← ${src}`).join(', ')}`);
     });
   }
 

@@ -6,6 +6,10 @@
 import Phaser from 'phaser';
 import { GENERATED, PACKS, PACK_ENTRIES, type PackId, textureKey } from './manifest';
 import { genSize } from './generated';
+import { RENDER_SCALE } from '../layout';
+
+/** rect가 있는 팩 그림에 붙이는 프레임 이름 (PreloadScene이 추가) */
+export const PACK_FRAME = 'pic';
 
 export type SkinMode = 'off' | 'auto' | 'gen';
 
@@ -44,14 +48,14 @@ export class Skin {
   frame(key: string): { texture: string; frame?: string | number; packed: boolean } {
     if (this.mode !== 'gen' && this.packKeys.has(key)) {
       const e = PACK_ENTRIES[key]!;
-      return { texture: `pack:${key}`, frame: e.frame, packed: true };
+      return { texture: `pack:${key}`, frame: e.rect ? PACK_FRAME : undefined, packed: true };
     }
     return { texture: textureKey(key), packed: false };
   }
 
   /**
    * 그림 하나 (가운데 기준). size = 논리 px 높이(없으면 생성 그림 기본 크기).
-   * 팩 그림은 정수 배율로 맞추고, 생성 그림은 RENDER_SCALE로 그려 둔 것을 논리 크기로 줄인다.
+   * 팩 그림은 정수 배율(요청 크기 ÷ 그림 높이 내림, 최소 1)로 맞추고, 생성 그림은 RENDER_SCALE로 그려 둔 것을 논리 크기로 줄인다.
    */
   image(scene: Phaser.Scene, key: string, x: number, y: number, size?: number): Phaser.GameObjects.Image {
     const f = this.frame(key);
@@ -59,15 +63,34 @@ export class Skin {
     if (f.packed) {
       const e = PACK_ENTRIES[key]!;
       const h = img.frame.realHeight;
-      const k = size ? Math.max(1, Math.round(size / h)) : (e.scale ?? 1);
-      img.setScale(k);
-      if (e.tint !== undefined) img.setTint(e.tint);
+      img.setScale(e.scale ?? (size ? Math.max(1, Math.floor(size / h)) : 1));
     } else {
       const g = genSize(key);
       const h = size ?? g.h;
       img.setDisplaySize((g.w * h) / g.h, h);
     }
     return img;
+  }
+
+  /** 이 키의 팩 그림이 화면 쪽 색(체인 색·적 색)을 tint로 받는지 */
+  tintByView(key: string): boolean {
+    return this.mode !== 'gen' && this.packKeys.has(key) && PACK_ENTRIES[key]!.tintByView === true;
+  }
+
+  /**
+   * 버튼·패널 바탕 (w×h). 팩 그림에 slice가 있으면 9칸 늘이기(모서리는 1배 그대로 = 정수 배율), 아니면 늘린 그림.
+   */
+  panel(scene: Phaser.Scene, key: string, x: number, y: number, w: number, h: number): Phaser.GameObjects.NineSlice | Phaser.GameObjects.Image {
+    const f = this.frame(key);
+    const e = f.packed ? PACK_ENTRIES[key]! : undefined;
+    if (e?.slice) return scene.add.nineslice(x, y, f.texture, f.frame, w, h, e.slice, e.slice, e.slice, e.slice);
+    return this.image(scene, key, x, y).setDisplaySize(w, h);
+  }
+
+  /** 바탕 무늬(tileSprite) 배율: 팩 타일 = 정수 배율, 생성 그림 = RENDER_SCALE로 그린 것을 논리 크기로 */
+  tileScale(key: string): number {
+    const f = this.frame(key);
+    return f.packed ? (PACK_ENTRIES[key]!.scale ?? 1) : 1 / RENDER_SCALE;
   }
 
   /** 크레딧: 로드된 팩만 (§5.16-6) */
