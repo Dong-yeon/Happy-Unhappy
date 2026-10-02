@@ -1,0 +1,7 @@
+# 줄바꿈: 저장소·작업 폴더 모두 LF (Windows core.autocrlf=true여도 CRLF로 풀지 않음)
+* text=auto eol=lf
+
+*.png binary
+*.jpg binary
+*.wav binary
+*.ico binary
