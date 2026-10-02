@@ -1,6 +1,7 @@
 // 리포트: 시드 N개 결과 → 요약 통계, 콘솔 표, 비교 (스펙 §8.1, §5.19-6).
 // M8.10: 시도 상한 안 완성률, 총 시도 수, 같은 스테이지 연속 실패 최대값, 스테이지별 시도·첫 시도 성공률·실패 사유,
-//        핵 떨어뜨림·운반 시간·돌아오는 길 실패, 핵 남은 HP 분포. + M8.9 영웅·먹이기·병사 지표.
+//        핵 떨어뜨림·운반 시간·돌아오는 길 실패, 핵 남은 HP 분포.
+// M8.11 (§5.20-10): 팀 교대 수(낮/밤), 스킬 발동 수(영웅별), 5단계 생성·특별 버프, 인연 켜진 비율, 최종 레벨(영웅별), 체인별 생성 비율.
 import { ATTEMPT_RESULTS, type AttemptResult } from '../src/core/day';
 import type { OverrideValue } from './overrides';
 import type { RunResult } from './runner';
@@ -37,12 +38,12 @@ export interface PolicyReport {
     grid: string;
     /** 시도 상한 */
     maxAttempts: number;
-    /** 이 리포트를 만든 먹이기 배분 r (낮덱 몫, balanced·lazy가 쓴다) */
-    feedRatio: number;
+    /** 보유 영웅: start(삽살·해태) / all(디버그 6명) */
+    roster: string;
     /** --set으로 덮어쓴 값 (전체 경로 → 값). 없으면 JSON 그대로 */
     overrides?: Record<string, OverrideValue>;
   };
-  sim: Omit<SimConfig, 'm810Goals'>;
+  sim: Omit<SimConfig, 'm810Goals' | 'm811Goals'>;
   summary: Record<string, Summary>;
   /** 시도 상한 안 완성률 */
   completedRate: number;
@@ -55,8 +56,14 @@ export interface PolicyReport {
   resultShare: Record<AttemptResult, number>;
   /** 성공한 밤의 핵 남은 HP 분포 (전 시드 합) */
   coreHp: Summary & { buckets: number[] };
-  /** 먹인 단계 분포 (전 시드 합산 비율) */
-  feedTierShare: Record<string, number>;
+  /** 체인별 생성 비율 (전 시드 합) */
+  chainShare: Record<string, number>;
+  /** 영웅별 스킬 발동 (판당 평균) · 최종 레벨 (중앙값) */
+  skillsPerRun: Record<string, number>;
+  levelMedian: Record<string, number>;
+  /** 인연이 하나 이상 켜진 판 비율, 인연별 켜진 판 비율 */
+  bondOnRate: number;
+  bondRates: Record<string, number>;
   /** 병사 출전 체인·단별 (전 시드 합) */
   soldiersByKind: Record<string, number>;
   runs: RunResult[];
@@ -104,12 +111,19 @@ export const METRICS: { key: string; label: string; get: (r: RunResult) => numbe
   { key: 'defenseLength', label: '밤 길이(초)', get: (r) => median(r.defenseLengths) },
   { key: 'kills', label: '처치 수', get: (r) => r.kills },
   { key: 'sunk', label: '거점 도달 (밤)', get: (r) => r.sunk },
-  { key: 'finalJoy', label: '최종 기쁨', get: (r) => r.finalJoy },
-  { key: 'gridFullRatio', label: '그리드 가득 참 비율', get: (r) => r.gridFullRatio },
-  // §5.17-7
-  { key: 'feeds', label: '먹이기 수', get: (r) => r.feeds },
-  { key: 'offensePoints', label: '낮덱 점수', get: (r) => sumPts(r.heroPoints.offense) },
-  { key: 'defensePoints', label: '밤덱 점수', get: (r) => sumPts(r.heroPoints.defense) },
+  // §5.20-13 조각이 생기는 길
+  { key: 'gridFullRatio', label: '그리드 가득 참 비율 (전투 시간)', get: (r) => r.gridFullRatio },
+  { key: 'piecesDiscarded', label: '버려진 조각 수', get: (r) => r.piecesDiscarded },
+  { key: 'piecesAuto', label: '저절로 생긴 조각', get: (r) => r.piecesAuto },
+  { key: 'piecesDropped', label: '처치 드롭 조각', get: (r) => r.piecesDropped },
+  // §5.20-10
+  { key: 'teamSwapsDay', label: '팀 교대 (낮)', get: (r) => r.teamSwapsDay },
+  { key: 'teamSwapsNight', label: '팀 교대 (밤)', get: (r) => r.teamSwapsNight },
+  { key: 'skills', label: '스킬 발동', get: (r) => sumPts(r.skillCasts) },
+  { key: 'tier5Made', label: '5단계 생성', get: (r) => r.tier5Made },
+  { key: 'specials', label: '특별 버프 발동', get: (r) => r.specials },
+  { key: 'skillShare', label: '피해 중 스킬 비중', get: (r) => (totalDamage(r) + r.damageSkill > 0 ? r.damageSkill / (totalDamage(r) + r.damageSkill) : null) },
+  { key: 'levelAvg', label: '최종 레벨 평균', get: (r) => { const v = Object.values(r.levels); return v.length ? v.reduce((a, b) => a + b, 0) / v.length : null; } },
   { key: 'merges', label: '머지 수', get: (r) => r.merges },
   { key: 'battleMergeRatio', label: '전투 중 머지 비율', get: (r) => (r.merges ? r.battleMerges / r.merges : null) },
   { key: 'momentumAvg', label: '기세 평균 중첩', get: (r) => r.momentumAvg },
@@ -153,18 +167,28 @@ export function buildReport(policy: string, runs: RunResult[], options: PolicyRe
   const summary: Record<string, Summary> = {};
   for (const m of METRICS) summary[m.key] = summarize(runs.map(m.get));
 
-  const tierCount: Record<string, number> = {};
+  const chainCount: Record<string, number> = {};
   let total = 0;
   const soldiersByKind: Record<string, number> = {};
+  const skillSum: Record<string, number> = {};
+  const levels: Record<string, number[]> = {};
+  const bondCount: Record<string, number> = {};
   for (const r of runs) {
-    for (const [t, c] of Object.entries(r.feedTiers)) {
-      tierCount[t] = (tierCount[t] ?? 0) + c;
+    for (const [t, c] of Object.entries(r.chainSpawns)) {
+      chainCount[t] = (chainCount[t] ?? 0) + c;
       total += c;
     }
     for (const [k, c] of Object.entries(r.soldiersByKind)) soldiersByKind[k] = (soldiersByKind[k] ?? 0) + c;
+    for (const [k, c] of Object.entries(r.skillCasts)) skillSum[k] = (skillSum[k] ?? 0) + c;
+    for (const [k, l] of Object.entries(r.levels)) (levels[k] ??= []).push(l);
+    for (const b of new Set(r.bonds)) bondCount[b] = (bondCount[b] ?? 0) + 1;
   }
-  const feedTierShare: Record<string, number> = {};
-  for (const [t, c] of Object.entries(tierCount)) feedTierShare[t] = total === 0 ? 0 : c / total;
+  const n = Math.max(1, runs.length);
+  const chainShare: Record<string, number> = {};
+  for (const [t, c] of Object.entries(chainCount)) chainShare[t] = total === 0 ? 0 : c / total;
+  const skillsPerRun = Object.fromEntries(Object.entries(skillSum).map(([k, v]) => [k, v / n]));
+  const levelMedian = Object.fromEntries(Object.entries(levels).map(([k, v]) => [k, median(v) ?? NaN]));
+  const bondRates = Object.fromEntries(Object.entries(bondCount).map(([k, v]) => [k, v / n]));
 
   const resTotals = ATTEMPT_RESULTS.map((res) => runs.reduce((s, r) => s + r.results[res], 0));
   const resAll = resTotals.reduce((a, b) => a + b, 0);
@@ -173,7 +197,7 @@ export function buildReport(policy: string, runs: RunResult[], options: PolicyRe
   for (const v of hp) buckets[HP_BUCKETS.filter((b) => v > b).length] += 1;
   const done = runs.filter((r) => r.completed);
 
-  const { m810Goals: _goals, ...sim } = cfg;
+  const { m810Goals: _g10, m811Goals: _g11, ...sim } = cfg;
   return {
     version: 3,
     policy,
@@ -187,7 +211,11 @@ export function buildReport(policy: string, runs: RunResult[], options: PolicyRe
     stages: stageRows(runs),
     resultShare: Object.fromEntries(ATTEMPT_RESULTS.map((res, k) => [res, resAll ? resTotals[k] / resAll : 0])) as Record<AttemptResult, number>,
     coreHp: { ...summarize(hp), buckets },
-    feedTierShare,
+    chainShare,
+    skillsPerRun,
+    levelMedian,
+    bondOnRate: runs.filter((r) => r.bonds.length > 0).length / n,
+    bondRates,
     soldiersByKind,
     runs,
   };
@@ -233,7 +261,7 @@ export function overridesLine(r: PolicyReport): string {
 
 /** 정책 이름 + r (balanced·lazy) */
 export function policyLabel(r: PolicyReport): string {
-  return r.policy === 'balanced' || r.policy === 'lazy' ? `${r.policy}(${r.options.feedRatio})` : r.policy;
+  return r.options.roster === 'all' ? `${r.policy}[all]` : r.policy;
 }
 
 const RESULT_LABEL: Record<AttemptResult, string> = {
@@ -249,7 +277,7 @@ export function formatReport(r: PolicyReport): string {
   const ov = overridesLine(r);
   const lines = [
     ...(ov ? [ov] : []),
-    `■ ${policyLabel(r)}  (시드 ${o.seeds}, 그리드 ${o.grid}, 시도 상한 ${o.maxAttempts})`,
+    `■ ${policyLabel(r)}  (시드 ${o.seeds}, 그리드 ${o.grid}, 시도 상한 ${o.maxAttempts}, 영웅 ${o.roster})`,
     table(
       ['지표', '평균', '중앙값', 'p10', 'p90', 'n'],
       METRICS.map((m) => {
@@ -260,16 +288,11 @@ export function formatReport(r: PolicyReport): string {
     `완성률 (시도 ${o.maxAttempts} 안) ${pctOf(r.completedRate)} · 완성한 판 총 시도 p10 ${fmt(r.completeAttempts.p10, 1)} / p50 ${fmt(r.completeAttempts.median, 1)} / p90 ${fmt(r.completeAttempts.p90, 1)} (n=${r.completeAttempts.n})`,
     `시도 결과 비율: ${ATTEMPT_RESULTS.map((k) => `${RESULT_LABEL[k]} ${pctOf(r.resultShare[k])}`).join(' · ')}`,
     `핵 남은 HP (성공한 밤 ${r.coreHp.n}번): p10 ${fmt(r.coreHp.p10, 0)} / p50 ${fmt(r.coreHp.median, 0)} / p90 ${fmt(r.coreHp.p90, 0)} · 구간 0~25 ${r.coreHp.buckets[0]} / 25~50 ${r.coreHp.buckets[1]} / 50~75 ${r.coreHp.buckets[2]} / 75~100 ${r.coreHp.buckets[3]}`,
-    `먹인 단계 분포: ${tierLine(r.feedTierShare)}`,
+    `체인별 생성 비율: ${Object.entries(r.chainShare).map(([k, v]) => `${k} ${pctOf(v)}`).join(' · ') || '—'}`,
     formatStages(r),
     formatHeroes(r),
   ];
   return lines.join('\n');
-}
-
-function tierLine(share: Record<string, number>): string {
-  const keys = Object.keys(share).sort((a, b) => Number(a) - Number(b));
-  return keys.length ? keys.map((t) => `${t}단계 ${pctOf(share[t])}`).join(' / ') : '—';
 }
 
 /** 스테이지별: 도달·시도 수·첫 시도 성공률·실패 사유 비율 */
@@ -287,26 +310,23 @@ export function formatStages(r: PolicyReport): string {
   return `스테이지별 (시도한 판 기준)\n${table(['스테이지', '도달', '시도 평균', '첫 시도 성공', '가는 길 시간', '가는 길 쓰러짐', '돌아오는 길', '밤 실패'], rows)}`;
 }
 
-/** 영웅 둘의 최종 점수 (판당 평균, 체인별) + 병사 체인·단별 */
+/** 편성·인연·영웅별 레벨·스킬 + 병사 체인·단별 */
 export function formatHeroes(r: PolicyReport): string {
   const n = Math.max(1, r.runs.length);
-  const pts = (role: 'offense' | 'defense') => {
-    const sum: Record<string, number> = {};
-    for (const x of r.runs) for (const [k, v] of Object.entries(x.heroPoints[role])) sum[k] = (sum[k] ?? 0) + v;
-    const keys = Object.keys(sum).sort();
-    return keys.length ? keys.map((k) => `${k} ${fmt(sum[k] / n, 1)}`).join(' · ') : '없음';
-  };
-  const id = (role: 'offense' | 'defense') => r.runs[0]?.heroIds[role] ?? '?';
+  const f = r.runs[0]?.formation;
+  const team = (t: string[][]) => t.map((x) => `[${x.join('·')}]`).join(' ');
   const kinds = Object.keys(r.soldiersByKind).sort();
   return [
-    `영웅 최종 점수 (판당 평균) — 낮덱 ${id('offense')}: ${pts('offense')} / 밤덱 ${id('defense')}: ${pts('defense')}`,
+    `편성 (첫 시드): 공격대 ${f ? team(f.offense) : '—'} / 수비대 ${f ? team(f.defense) : '—'} · 인연 켜진 판 ${pctOf(r.bondOnRate)} (${Object.entries(r.bondRates).map(([k, v]) => `${k} ${pctOf(v)}`).join(' · ') || '없음'})`,
+    `영웅 최종 레벨 (중앙값): ${Object.entries(r.levelMedian).map(([k, v]) => `${k} ${fmt(v, 1)}`).join(' · ')}`,
+    `스킬 발동 (판당 평균): ${Object.entries(r.skillsPerRun).map(([k, v]) => `${k} ${fmt(v, 1)}`).join(' · ') || '없음'}`,
     `병사 출전 (판당 평균, 체인:단): ${kinds.length ? kinds.map((k) => `${k}단 ${fmt(r.soldiersByKind[k] / n, 2)}`).join(' · ') : '없음'}`,
   ].join('\n');
 }
 
 /** 정책 간 비교 표 (중앙값 중심) */
 export function formatComparison(reports: PolicyReport[]): string {
-  const keys = ['attempts', 'maxFailStreak', 'stage', 'dayFails', 'returnTime', 'nightFails', 'coreDrops', 'carryTime', 'coreHpLeft', 'offensePoints', 'defensePoints', 'soldierShare', 'offenseFalls', 'defenseFalls'];
+  const keys = ['attempts', 'maxFailStreak', 'stage', 'dayFails', 'returnTime', 'nightFails', 'coreDrops', 'carryTime', 'coreHpLeft', 'teamSwapsDay', 'teamSwapsNight', 'skills', 'tier5Made', 'specials', 'levelAvg', 'soldierShare', 'gridFullRatio', 'piecesDiscarded'];
   const header = ['정책', '완성%', '완성 시도 p50', ...keys.map((k) => METRICS.find((m) => m.key === k)!.label.trim())];
   const rows = reports.map((r) => [
     policyLabel(r),
@@ -430,6 +450,44 @@ export function checkM810Goals(reports: PolicyReport[], goals: SimConfig['m810Go
       label: '--saveRoundTrip: 끈 실행과 결과 완전 일치',
       pass: ok,
       detail: roundTrip.map((x) => `${x.policy} ${x.matched}/${x.total}${x.mismatchSeeds.length ? ` (어긋남: ${x.mismatchSeeds.join(',')})` : ''}`).join(' · '),
+    });
+  }
+  return out;
+}
+
+/** §5.20-10 M8.11 목표 (판정 출력만, 튜닝은 M8.12 뒤): noMerge < balanced 절반, lazy < balanced, roster all 인연 켬 < 끔 (완성 시도 수) */
+export function checkM811Goals(reports: PolicyReport[], goals: SimConfig['m811Goals']): GoalCheck[] {
+  const out: GoalCheck[] = [];
+  for (const roster of ['start', 'all']) {
+    const by = (name: string) => reports.find((r) => r.policy === name && r.options.roster === roster);
+    const b = by('balanced');
+    const nm = by('noMerge');
+    const lz = by('lazy');
+    if (b && nm) {
+      out.push({
+        id: `noMerge ${roster}`,
+        label: `[${roster}] noMerge 완성률 < balanced의 ${pctOf(goals.noMergeVsBalanced)} (머지가 중요)`,
+        pass: nm.completedRate < b.completedRate * goals.noMergeVsBalanced || (b.completedRate === 0 ? null : false),
+        detail: `noMerge ${pctOf(nm.completedRate)} vs balanced ${pctOf(b.completedRate)}`,
+      });
+    }
+    if (b && lz) {
+      out.push({
+        id: `lazy ${roster}`,
+        label: `[${roster}] lazy 완성률 < balanced (전투 중 머지가 의미 있다)`,
+        pass: lz.completedRate < b.completedRate,
+        detail: `lazy ${pctOf(lz.completedRate)} (완성 시도 p50 ${fmt(lz.completeAttempts.median, 1)}) vs balanced ${pctOf(b.completedRate)} (${fmt(b.completeAttempts.median, 1)})`,
+      });
+    }
+  }
+  const on = reports.find((r) => r.policy === 'bondOn' && r.options.roster === 'all');
+  const off = reports.find((r) => r.policy === 'bondOff' && r.options.roster === 'all');
+  if (on && off) {
+    out.push({
+      id: 'bond all',
+      label: '[all] 인연 켠 편성(bondOn)이 끈 편성(bondOff)보다 완성 시도 수 적음',
+      pass: on.completeAttempts.n && off.completeAttempts.n ? on.completeAttempts.median < off.completeAttempts.median : on.completedRate > off.completedRate,
+      detail: `bondOn 완성 ${pctOf(on.completedRate)}·시도 p50 ${fmt(on.completeAttempts.median, 1)} (인연 ${Object.keys(on.bondRates).join(',') || '없음'}) vs bondOff ${pctOf(off.completedRate)}·${fmt(off.completeAttempts.median, 1)} (인연 ${Object.keys(off.bondRates).join(',') || '없음'})`,
     });
   }
   return out;

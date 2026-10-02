@@ -1,18 +1,17 @@
-// 화면 레이아웃 좌표 (논리 해상도 360×640, 스펙 v0.8 §5.11-2, v0.13 §5.17-9).
+// 화면 레이아웃 좌표 (논리 해상도 360×640, 스펙 §5.20-13 화면 배치 표, 목업 layout-proposal.html v2).
 // 화면 좌표는 이 파일에만 둔다 (balance.json에 넣지 않음).
 //
-//  0 ┌ HUD ─────────────────────────┐
-// 36 ├ 하늘 띠: 해/달 궤적 ───────────┤
-//136 ├ 땅 띠: 가로 레인 하나 ─────────┤  우리 편 왼쪽, 적 오른쪽. 낮 = 심연 레인(오펜스), 밤 = 방어 레인(디펜스)
-//376 ├ 영웅 슬롯 [☀ 낮덱] [☾ 밤덱] ──┤  조각을 끌어다 놓으면 먹이기
-//424 ├ 머지 그리드 (4행) ─────────────┤
-//584 ├ 하단 바 ──────────────────────┤
-//640 └──────────────────────────────┘
+//  0 ┌ HUD: 스테이지명·시도 / [자동] [편성] [책] ┐
+// 40 ├ 해·달 띠: 진행도만 ───────────────────────┤
+// 64 ├ 전장: 가로 레인 하나 ──────────────────────┤  우리 편(이야기책) 왼쪽, 적·guardian 오른쪽. 낮 = 핵 찾아 돌아오기, 밤 = 핵 지키기
+//300 ├ 머지 판: 칸 테두리 없음, 원형 조각 5×4 ────┤  위쪽 경계에 떠 있는 원형 스킬 버튼 3개 (지금 팀)
+//578 ├ 놓아주기 칸 (넓게) ───────────────────────┤
+//640 └───────────────────────────────────────────┘
 //
 // core 좌표는 바꾸지 않는다 (v0.7까지의 세로 레인 좌표 그대로: 진행 축 y + 표시용 옆 축 x).
 // 화면은 toScreen()으로 변환: 진행 축 → screenX (core y가 큰 쪽 = 거점 = 화면 왼쪽), 옆 축 → screenY.
 
-import type { GameGeometry, Role } from '../core/game';
+import type { GameGeometry } from '../core/game';
 import type { AbyssGeometry, LaneGeometry } from '../core/lane';
 
 export const VIEW_W = 360;
@@ -27,32 +26,34 @@ export interface Rect {
   h: number;
 }
 
-const HUD_H = 36;
-const SKY_BOTTOM = 136;
-const GROUND_BOTTOM = 376;
+const HUD_H = 40;
+const SKY_BOTTOM = 64;
+const GROUND_BOTTOM = 300;
+const BOARD_BOTTOM = 578;
 
 export const REGION = {
   hud: { x: 0, y: 0, w: VIEW_W, h: HUD_H },
-  /** 하늘 띠: 해(낮)·달(밤)이 왼쪽에서 떠서 오른쪽으로 진다 */
+  /** 해·달 띠: 해(낮 남은 시간)·달(밤 웨이브 진행) 진행도만 */
   sky: { x: 0, y: HUD_H, w: VIEW_W, h: SKY_BOTTOM - HUD_H },
-  /** 땅 띠: 레인 하나 (낮 = 심연 오펜스, 밤 = 방어 디펜스) */
+  /** 전장: 레인 하나 (낮 = 핵 찾아 돌아오기, 밤 = 핵 지키기) */
   ground: { x: 0, y: SKY_BOTTOM, w: VIEW_W, h: GROUND_BOTTOM - SKY_BOTTOM },
-  portalBase: { x: 0, y: GROUND_BOTTOM, w: VIEW_W, h: 48 },
-  grid: { x: 0, y: 424, w: VIEW_W, h: 160 },
-  bottomBar: { x: 0, y: 584, w: VIEW_W, h: 56 },
-  /** 디버그 패널이 펼쳐지는 자리 (하늘·땅 왼쪽 절반) */
+  /** 머지 판 (칸 테두리 없음, 배경 톤으로만 구분) */
+  board: { x: 0, y: GROUND_BOTTOM, w: VIEW_W, h: BOARD_BOTTOM - GROUND_BOTTOM },
+  /** 하단: 놓아주기 칸 */
+  bottomBar: { x: 0, y: BOARD_BOTTOM, w: VIEW_W, h: VIEW_H - BOARD_BOTTOM },
+  /** 디버그 패널이 펼쳐지는 자리 (해·달 띠·전장 왼쪽 절반) */
   debugPanel: { x: 0, y: HUD_H, w: 176, h: GROUND_BOTTOM - HUD_H },
 } as const satisfies Record<string, Rect>;
 
-// ── 영웅 슬롯 (§5.17-2·9): 구 포탈 받침 자리에 두 칸. 왼쪽 ☀ 낮덱(오펜스) / 오른쪽 ☾ 밤덱(디펜스). 드롭 판정 = 슬롯 사각형 ──
-const SLOT_GAP = 12;
-const SLOT_W = (VIEW_W - 16 - SLOT_GAP) / 2;
-export const HERO_SLOT: Record<Role, Rect> = {
-  offense: { x: 8, y: REGION.portalBase.y + 4, w: SLOT_W, h: REGION.portalBase.h - 8 },
-  defense: { x: 8 + SLOT_W + SLOT_GAP, y: REGION.portalBase.y + 4, w: SLOT_W, h: REGION.portalBase.h - 8 },
-};
-/** 판정은 표시보다 이만큼 넓게 (위·아래만, 두 칸 사이는 겹치지 않게) */
-export const HERO_SLOT_PAD = 6;
+// ── 원형 스킬 버튼 (§5.20-13): 전장과 머지 판 경계에 떠 있는 지금 팀 영웅 초상 3개 (오른쪽 정렬). 둘레 = 스킬 게이지 ──
+export const SKILL_BTN_R = 23;
+const SKILL_BTN_GAP = 8;
+/** i번째(0 = 앞) 버튼 중심. 팀 인원 n */
+export function skillButtonCenter(i: number, n: number): { x: number; y: number } {
+  const right = VIEW_W - 10 - SKILL_BTN_R;
+  const step = SKILL_BTN_R * 2 + SKILL_BTN_GAP;
+  return { x: right - (n - 1 - i) * step, y: REGION.board.y - 11 };
+}
 
 // ── core 좌표 (v0.7 세로 레인 그대로. 바꾸면 core·시뮬 결과가 달라진다) ──
 // 레인 슬롯 수는 영웅 1 + soldierCap (gameGeometry 인자)
@@ -168,52 +169,64 @@ export const HOME: Record<LaneKind, { x: number; y: number }> = {
   abyss: toScreen('abyss', CORE.unhappyX, CORE.homeY),
 };
 
-// ── 하늘 띠: 해/달 궤적 ──
-/** p ∈ [0, 1] (뜸 → 짐) → 하늘 띠 안의 호 위 점 */
+// ── 해·달 띠 (§5.20-13): 얇은 띠 위 진행도 ──
+/** p ∈ [0, 1] (뜸 → 짐) → 해·달 띠 가운데 줄 위 점 */
 export function skyArc(p: number): { x: number; y: number } {
   const t = Math.max(0, Math.min(1, p));
   const r = REGION.sky;
-  const margin = 18;
-  return {
-    x: r.x + margin + t * (r.w - margin * 2),
-    y: r.y + r.h - 14 - Math.sin(Math.PI * t) * (r.h - 34),
-  };
+  const margin = 14;
+  return { x: r.x + margin + t * (r.w - margin * 2), y: r.y + r.h / 2 };
 }
 
-// ── 그리드 ──
-export const CELL_W = 52;
-export const CELL_H = 40;
+// ── 머지 판 (§5.20-13): 칸 테두리 없이 자리(빈 자리 = 작은 점) + 원형 조각 ──
+/** 자리 간격 (가로·세로, 목업 56+10 / 52+6). 열이 많으면 판 폭에 맞춰 줄인다 */
+const SLOT_PITCH_X = 64;
+const SLOT_PITCH_Y = 58;
+/** 판 위쪽 여백: 경계에 떠 있는 스킬 버튼·체인 글씨 자리 */
+const BOARD_TOP_PAD = 34;
+const BOARD_SIDE_PAD = 8;
+/** 원형 조각 최대 반지름 / 드롭 판정 원 반지름 (자리 중심 기준) */
+export const TOKEN_R = 24;
+export const DROP_R = 26;
 
 export interface GridLayout {
   x: number;
   y: number;
   width: number;
   height: number;
+  /** 자리 간격 */
   cellW: number;
   cellH: number;
+  /** 이 판의 원형 조각 반지름 */
+  tokenR: number;
 }
 
-/** 그리드 영역 안에서 가로·세로 가운데 정렬 */
+/** 머지 판 안에서 가로 가운데, 위쪽은 스킬 버튼 아래부터 */
 export function gridLayout(cols: number, rows: number): GridLayout {
-  const width = cols * CELL_W;
-  const height = rows * CELL_H;
+  const b = REGION.board;
+  const cellW = Math.min(SLOT_PITCH_X, (b.w - BOARD_SIDE_PAD * 2) / cols);
+  const cellH = Math.min(SLOT_PITCH_Y, (b.h - BOARD_TOP_PAD - 4) / rows);
+  const width = cols * cellW;
+  const height = rows * cellH;
   return {
-    x: REGION.grid.x + Math.round((REGION.grid.w - width) / 2),
-    y: REGION.grid.y + Math.round((REGION.grid.h - height) / 2),
+    x: b.x + Math.round((b.w - width) / 2),
+    y: b.y + BOARD_TOP_PAD,
     width,
     height,
-    cellW: CELL_W,
-    cellH: CELL_H,
+    cellW,
+    cellH,
+    tokenR: Math.min(TOKEN_R, cellW / 2 - 4, cellH / 2 - 3),
   };
 }
 
-/** 좌표 → 그리드 칸 인덱스. 칸 밖이면 null */
+/** 좌표 → 자리 인덱스: 가장 가까운 자리 중심에서 DROP_R 안이면 그 자리, 아니면 null */
 export function cellAt(cols: number, rows: number, x: number, y: number): number | null {
   const l = gridLayout(cols, rows);
   const col = Math.floor((x - l.x) / l.cellW);
   const row = Math.floor((y - l.y) / l.cellH);
   if (col < 0 || col >= cols || row < 0 || row >= rows) return null;
-  return row * cols + col;
+  const c = cellCenter(cols, rows, row * cols + col);
+  return Math.hypot(x - c.x, y - c.y) <= DROP_R ? row * cols + col : null;
 }
 
 /** 칸 중심 좌표 */
@@ -227,18 +240,18 @@ export function cellCenter(cols: number, rows: number, index: number): { x: numb
 /** 드래그 시작 임계값 (논리 px). 미만 이동은 탭 */
 export const DRAG_THRESHOLD = 6;
 
-/** 그리드가 영역 안에 들어가는지 (폰에서 칸 최소 40×40) */
+/** 판이 영역 안에 들어가는지 (폰에서 원형 조각 지름 최소 40) */
 export function gridFits(cols: number, rows: number): boolean {
-  return cols * CELL_W <= REGION.grid.w && rows * CELL_H <= REGION.grid.h && CELL_W >= 40 && CELL_H >= 40;
+  return gridLayout(cols, rows).tokenR * 2 >= 40;
 }
 
 export function inRect(r: Rect, x: number, y: number): boolean {
   return x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h;
 }
 
-// ── 놓아주기 영역 (v0.3.2, D-019): 하단 바의 [놓아주기] 자리 ──
+// ── 놓아주기 영역 (D-019, §5.20-13): 하단 전체 폭의 넓은 칸 ──
 /** 표시 사각형 */
-export const RELEASE_ZONE: Rect = { x: 122, y: REGION.bottomBar.y + 11, w: 76, h: 34 };
+export const RELEASE_ZONE: Rect = { x: 20, y: REGION.bottomBar.y + 9, w: VIEW_W - 40, h: REGION.bottomBar.h - 18 };
 /** 판정은 표시보다 상하좌우 이만큼 넓게 */
 export const RELEASE_ZONE_PAD = 6;
 export const RELEASE_HIT: Rect = {
@@ -248,19 +261,12 @@ export const RELEASE_HIT: Rect = {
   h: RELEASE_ZONE.h + RELEASE_ZONE_PAD * 2,
 };
 
-export type DropTarget = { kind: 'cell'; index: number } | { kind: 'release' } | { kind: 'feed'; role: Role } | { kind: 'none' };
+export type DropTarget = { kind: 'cell'; index: number } | { kind: 'release' } | { kind: 'none' };
 
-/**
- * 드롭 위치 → 대상 (스펙 §4.1.1, §5.17-9). 우선순위: 그리드 칸 → 놓아주기 영역 → 영웅 슬롯 사각형(위·아래 HERO_SLOT_PAD 여유) → 무효.
- * (구 포탈 판정 원·땅 띠 소환은 없다)
- */
+/** 드롭 위치 → 대상 (스펙 §4.1.1). 우선순위: 자리(중심 원, §5.20-13) → 놓아주기 영역 → 무효 (먹이기 슬롯은 §5.20에서 삭제) */
 export function dropTarget(size: { cols: number; rows: number }, x: number, y: number): DropTarget {
   const index = cellAt(size.cols, size.rows, x, y);
   if (index !== null) return { kind: 'cell', index };
   if (inRect(RELEASE_HIT, x, y)) return { kind: 'release' };
-  for (const role of ['offense', 'defense'] as const) {
-    const r = HERO_SLOT[role];
-    if (inRect({ x: r.x, y: r.y - HERO_SLOT_PAD, w: r.w, h: r.h + HERO_SLOT_PAD * 2 }, x, y)) return { kind: 'feed', role };
-  }
   return { kind: 'none' };
 }

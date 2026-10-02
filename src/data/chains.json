@@ -1,19 +1,115 @@
 [
   {
+    "archetypeId": "bone",
+    "world": "tale_sun_moon",
+    "spawnWeight": 1,
+    "color": "#E6D3A3",
+    "tierNames": [
+      "뼈 조각",
+      "뼈다귀",
+      "큰 뼈다귀",
+      "뼈다귀 꾸러미",
+      "황금 뼈다귀"
+    ],
+    "side": "sun",
+    "buff": "momentum",
+    "soldier": {
+      "kind": "charger",
+      "name": "돌격병",
+      "levels": [
+        {
+          "hp": 25,
+          "atk": 6,
+          "atkInterval": 0.6,
+          "range": 16
+        },
+        {
+          "hp": 50,
+          "atk": 12,
+          "atkInterval": 0.6,
+          "range": 16
+        },
+        {
+          "hp": 90,
+          "atk": 22,
+          "atkInterval": 0.6,
+          "range": 16
+        },
+        {
+          "hp": 160,
+          "atk": 36,
+          "atkInterval": 0.6,
+          "range": 16
+        }
+      ]
+    }
+  },
+  {
+    "archetypeId": "bell",
+    "world": "tale_sun_moon",
+    "spawnWeight": 1,
+    "color": "#B9A6E0",
+    "tierNames": [
+      "작은 방울",
+      "방울",
+      "방울 한 쌍",
+      "풍경",
+      "수호 방울"
+    ],
+    "side": "moon",
+    "buff": "heal",
+    "soldier": {
+      "kind": "bell",
+      "name": "방울병",
+      "levels": [
+        {
+          "hp": 40,
+          "atk": 4,
+          "atkInterval": 1.2,
+          "range": 24,
+          "slow": 1,
+          "slowSeconds": 0.5
+        },
+        {
+          "hp": 80,
+          "atk": 8,
+          "atkInterval": 1.2,
+          "range": 24,
+          "slow": 1,
+          "slowSeconds": 0.7
+        },
+        {
+          "hp": 150,
+          "atk": 14,
+          "atkInterval": 1.2,
+          "range": 24,
+          "slow": 1,
+          "slowSeconds": 0.9
+        },
+        {
+          "hp": 260,
+          "atk": 22,
+          "atkInterval": 1.2,
+          "range": 24,
+          "slow": 1,
+          "slowSeconds": 1.2
+        }
+      ]
+    }
+  },
+  {
     "archetypeId": "companion_animal",
     "world": "tale_sun_moon",
     "spawnWeight": 1,
     "color": "#E8A15A",
     "tierNames": [
       "떡 한 조각",
+      "떡 한 접시",
       "떡 광주리",
-      "떡 할미"
+      "떡 시루",
+      "잔치 떡"
     ],
     "side": "sun",
-    "growth": {
-      "maxHp": 6,
-      "dmgReduce": 0.005
-    },
     "buff": "heal",
     "soldier": {
       "kind": "shield",
@@ -23,13 +119,25 @@
           "hp": 60,
           "atk": 4,
           "atkInterval": 1.2,
-          "range": 40
+          "range": 16
         },
         {
           "hp": 140,
           "atk": 8,
           "atkInterval": 1.2,
-          "range": 40
+          "range": 16
+        },
+        {
+          "hp": 300,
+          "atk": 14,
+          "atkInterval": 1.2,
+          "range": 16
+        },
+        {
+          "hp": 600,
+          "atk": 24,
+          "atkInterval": 1.2,
+          "range": 16
         }
       ]
     }
@@ -42,13 +150,11 @@
     "tierNames": [
       "지푸라기",
       "새끼줄",
+      "굵은 밧줄",
+      "동아줄",
       "하늘 동아줄"
     ],
     "side": "moon",
-    "growth": {
-      "atk": 0.8,
-      "atkIntervalPct": 0.006
-    },
     "buff": "momentum",
     "soldier": {
       "kind": "snare",
@@ -58,7 +164,7 @@
           "hp": 30,
           "atk": 8,
           "atkInterval": 1.0,
-          "range": 40,
+          "range": 24,
           "slow": 0.4,
           "slowSeconds": 1.5
         },
@@ -66,9 +172,25 @@
           "hp": 60,
           "atk": 16,
           "atkInterval": 1.0,
-          "range": 40,
+          "range": 24,
           "slow": 0.4,
           "slowSeconds": 2
+        },
+        {
+          "hp": 110,
+          "atk": 30,
+          "atkInterval": 1.0,
+          "range": 24,
+          "slow": 0.4,
+          "slowSeconds": 2.5
+        },
+        {
+          "hp": 200,
+          "atk": 50,
+          "atkInterval": 1.0,
+          "range": 24,
+          "slow": 0.4,
+          "slowSeconds": 3
         }
       ]
     }

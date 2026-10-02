@@ -1,4 +1,4 @@
-// 사람 플레이 metrics 분석 (스펙 §5.10-6, §5.19). 내보낸 hau_metrics_v4 JSON → 시도·스테이지·먹이기·주관 평가 표.
+// 사람 플레이 metrics 분석 (스펙 §5.10-6, §5.19). 내보낸 hau_metrics_v5 JSON → 시도·스테이지·편성·조각·주관 평가 표.
 // 순수 함수만 (CLI는 sim/metrics.ts). --bot: 같은 지표를 봇 리포트(balanced)와 나란히.
 import { ATTEMPT_RESULTS } from '../src/core/day';
 import type { AttemptMetrics, LifeMetrics, MetricsData } from '../src/metrics/model';
@@ -112,13 +112,20 @@ export function analyze(data: MetricsData): Section[] {
     ],
   });
 
-  // 먹이기
-  const feeds = atts.flatMap((d) => d.feeds);
-  const tiers = [...new Set(feeds.map((f) => f.tier))].sort((a, b) => a - b);
+  // 편성·조각 (§5.20-2·13)
+  const teams = atts.map((d) => d.formation.offense.length + d.formation.defense.length);
   out.push({
-    title: '먹이기',
-    header: ['먹이기', '밤덱 비율', ...tiers.map((t) => `${t}단계`)],
-    rows: [[String(feeds.length), pct(feeds.filter((f) => f.role === 'defense').length, feeds.length), ...tiers.map((t) => pct(feeds.filter((f) => f.tier === t).length, feeds.length))]],
+    title: '편성 · 조각',
+    header: ['시도', '팀 수 (중앙값)', '조각 (중앙값)', '버려진 조각 합', '그리드 가득 시간 (중앙값, 초)'],
+    rows: [
+      [
+        String(atts.length),
+        fmt(median(teams)),
+        fmt(median(atts.map((d) => d.record.spawns))),
+        String(atts.reduce((n, d) => n + (d.record.discarded ?? 0), 0)),
+        fmt(median(atts.map((d) => d.record.gridFullSeconds))),
+      ],
+    ],
   });
 
   // 주관 평가
@@ -133,13 +140,12 @@ export function analyze(data: MetricsData): Section[] {
   // 판별
   out.push({
     title: '판별',
-    header: ['판', '끝낸 시도', '끝', '연속 실패 최대', '갈림길', '납득'],
+    header: ['판', '끝낸 시도', '끝', '연속 실패 최대', '납득'],
     rows: data.lives.map((l) => [
       shortId(l),
       String(l.attempts.length),
       l.chapter ? `완성 (시도 ${l.chapter.attempts})` : `진행 중 1-${Math.max(0, ...l.attempts.map((a) => a.stage))}`,
       String(lifeFailStreak(l)),
-      l.milestoneChoices.map((c) => c.choiceId).join(',') || '—',
       l.endingAgree === null ? '—' : l.endingAgree ? '응' : '아니',
     ]),
   });

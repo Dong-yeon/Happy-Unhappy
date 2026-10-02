@@ -1,4 +1,4 @@
-// 하늘 띠 (§5.11-2, §5.19): 낮(핵 찾아 돌아오기)에는 해가 왼쪽에서 떠서 오른쪽으로 지며 남은 시간을, 밤(핵 지키기)에는 달이 같은 궤적으로 웨이브 진행도를 보여준다.
+// 해·달 띠 (§5.20-13, 높이 24): 낮(핵 찾아 돌아오기)에는 해가 왼쪽에서 오른쪽으로 가며 남은 시간을, 밤(핵 지키기)에는 달이 웨이브 진행도를 보여준다.
 // 낮 → 밤 전환 연출 1.5초: 하늘색 보간(따뜻 → 남색), 해가 지고 달이 뜸. HUD에 별도 진행 막대는 두지 않는다.
 import Phaser from 'phaser';
 import type { GameState } from '../core/game';
@@ -11,8 +11,8 @@ const DUSK_SKY = 0xc98a6a;
 const NIGHT_SKY = 0x1b2340;
 const SUN = 0xffd36b;
 const MOON = 0xe6e9f5;
-/** 해·달이 지평선 아래로 내려가 숨는 거리 */
-const SET_DROP = 40;
+/** 해·달이 띠 아래로 내려가 숨는 거리 */
+const SET_DROP = 14;
 
 export type SkyMode = 'day' | 'night';
 
@@ -51,11 +51,11 @@ export class SkyView {
     this.sky = scene.add.rectangle(r.x, r.y, r.w, r.h, DAY_SKY).setOrigin(0).setDepth(0);
     // 지평선
     scene.add.rectangle(r.x, r.y + r.h - 1, r.w, 1, 0x000000, 0.25).setOrigin(0).setDepth(0);
-    this.sun = scene.add.circle(0, 0, 11, SUN).setStrokeStyle(2, 0xfff1c4).setDepth(1);
-    const moonBody = scene.add.circle(0, 0, 9, MOON);
-    const moonShade = scene.add.circle(4, -2, 8, NIGHT_SKY); // 초승달 모양
+    this.sun = scene.add.circle(0, 0, 8, SUN).setStrokeStyle(2, 0xfff1c4).setDepth(1);
+    const moonBody = scene.add.circle(0, 0, 7, MOON);
+    const moonShade = scene.add.circle(3, -2, 6, NIGHT_SKY); // 초승달 모양
     this.moon = scene.add.container(0, 0, [moonBody, moonShade]).setDepth(1).setVisible(false);
-    this.label = text(scene, r.x + 6, r.y + 4, '', { fontSize: '9px', color: '#ffffff' }).setDepth(1).setAlpha(0.8);
+    this.label = text(scene, r.x + r.w - 6, r.y + r.h / 2, '', { fontSize: '10px', color: '#ffffff' }).setOrigin(1, 0.5).setDepth(2).setAlpha(0.9);
     this.setMode('day');
   }
 

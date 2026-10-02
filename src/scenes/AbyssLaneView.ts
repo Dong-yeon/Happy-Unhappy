@@ -7,7 +7,7 @@ import Phaser from 'phaser';
 import { enemyName, type CoreEvent, type GameState, type Grant } from '../core/game';
 import { isWildcard } from '../core/grid';
 import type { GameData } from '../data/types';
-import { CORE, HERO_SLOT, REGION, cellCenter, progressX, toScreen } from './layout';
+import { CORE, REGION, cellCenter, progressX, toScreen } from './layout';
 import { flashUnit, makeEnemyView, storyBook, makeUnitView, syncEnemyView, syncUnitView, type EnemyView, type UnitView } from './laneUnits';
 import { COLOR, text } from './ui';
 
@@ -54,21 +54,20 @@ export class AbyssLaneView {
     const hutY = g.y + g.h / 2;
     const book = storyBook(scene, hutX - 10, hutY);
     const hutLabel = text(scene, hutX - 10, hutY + 10, '이야기책', { fontSize: '8px', color: '#5d6a91' }).setOrigin(0.5, 0);
-    const label = text(scene, g.x + g.w / 2, g.y + g.h - 4, '낮 · 핵 찾아 돌아오기 →', { fontSize: '9px', color: '#5d6a91' }).setOrigin(0.5, 1);
+    const label = text(scene, g.x + g.w * 0.38, g.y + g.h - 4, '낮 · 핵 찾아 돌아오기 →', { fontSize: '9px', color: '#5d6a91' }).setOrigin(0.5, 1);
     // 핵 (작은 빛나는 마름모)
     const gem = scene.add.rectangle(0, 0, 8, 8, CORE_COLOR).setAngle(45).setStrokeStyle(1, 0xffffff);
     const glow = scene.add.circle(0, 0, 8, CORE_COLOR, 0.25);
     this.core = scene.add.container(0, 0, [glow, gem]).setDepth(3);
     // 운반 진행 막대 "핵 → 이야기책"
     const fx = g.x + g.w / 2 - BAR_W / 2;
-    const frame = scene.add.rectangle(fx, g.y + 8, BAR_W, 6, 0x1b1d24).setOrigin(0, 0.5).setStrokeStyle(1, 0x5d6a91);
-    this.carryFill = scene.add.rectangle(fx, g.y + 8, 0, 6, CORE_COLOR).setOrigin(0, 0.5);
-    const cap = text(scene, fx - 4, g.y + 8, '이야기책 ←', { fontSize: '8px', color: '#ffe08a' }).setOrigin(1, 0.5);
-    const cap2 = text(scene, fx + BAR_W + 4, g.y + 8, '◆ 핵', { fontSize: '8px', color: '#ffe08a' }).setOrigin(0, 0.5);
+    const barY = g.y + 24;
+    const frame = scene.add.rectangle(fx, barY, BAR_W, 6, 0x1b1d24).setOrigin(0, 0.5).setStrokeStyle(1, 0x5d6a91);
+    this.carryFill = scene.add.rectangle(fx, barY, 0, 6, CORE_COLOR).setOrigin(0, 0.5);
+    const cap = text(scene, fx - 4, barY, '이야기책 ←', { fontSize: '8px', color: '#ffe08a' }).setOrigin(1, 0.5);
+    const cap2 = text(scene, fx + BAR_W + 4, barY, '◆ 핵', { fontSize: '8px', color: '#ffe08a' }).setOrigin(0, 0.5);
     this.carryFrame = scene.add.container(0, 0, [frame, this.carryFill, cap, cap2]).setVisible(false);
-    this.downLabel = text(scene, 0, 0, '', { fontSize: '9px', color: '#ff9e9e', backgroundColor: '#1b1d24', padding: { x: 3, y: 1 } })
-      .setOrigin(0.5, 1)
-      .setVisible(false);
+    this.downLabel = text(scene, g.x + 8, g.y + 6, '', { fontSize: '10px', color: '#cfd6ea' }).setVisible(false);
     this.root = scene.add
       .container(0, 0, [bg, this.wallRect, this.wallBar, this.wallLabel, book, hutLabel, label, this.carryFrame, this.core, this.downLabel])
       .setDepth(1);
@@ -105,7 +104,6 @@ export class AbyssLaneView {
         }
         case 'coreFound':
           this.showCoreCard(e.stage);
-          for (const g of e.bonus) this.grantFlow(g);
           break;
         case 'bossReward':
           for (const g of e.rewards) this.grantFlow(g);
@@ -191,13 +189,15 @@ export class AbyssLaneView {
       const y = c.at === 'carried' ? (ex.carrier?.y ?? ex.geo.wallY) : c.y;
       this.carryFill.width = BAR_W * Math.max(0, Math.min(1, (y - ex.geo.wallY) / ex.length));
     }
-    // 운반 중 쓰러짐 카운트다운 (쓰러진 자리 위)
-    const down = s.offenseDown;
-    this.downLabel.setVisible(down > 0);
-    if (down > 0) {
-      const at = c.at === 'dropped' ? progressX(c.y) : g.x + g.w / 2;
-      this.downLabel.setPosition(Math.max(70, Math.min(g.w - 70, at)), g.y + g.h / 2 - 16).setText(`쓰러짐 · ${Math.ceil(down)}초 뒤 일어남`);
-    }
+    // 팀 표시 (전장 왼쪽 위, §5.20-13): "1팀 출격 · 2팀 대기 · 쓰러짐 n" (낮 쓰러짐은 그 낮 동안 안 일어남, §5.20-3)
+    const teams = s.teams('offense').length;
+    const alive = s.teamUnits('offense').length;
+    const size = s.activeTeamIds('offense').length;
+    const at = s.activeTeam.offense;
+    const tl =
+      s.phase === 'day' ? `${at + 1}팀 출격${at + 1 < teams ? ` · ${at + 2}팀 대기` : ''}${alive < size ? ` · 쓰러짐 ${size - alive}` : ''}` : '';
+    this.downLabel.setVisible(tl !== '');
+    if (this.downLabel.text !== tl) this.downLabel.setText(tl);
   }
 
   /** 핵 카드: 핵 이름 + 한 줄 (stages.json coreName·coreText), 시간은 계속 흐름 */
@@ -250,8 +250,8 @@ export class AbyssLaneView {
     const from = toScreen('abyss', g.x, g.y);
     const light = this.scene.add.rectangle(from.x, from.y, 12, 12, fill).setStrokeStyle(1, 0xffffff).setDepth(40);
     const { cols, rows } = this.state.grid;
-    const slot = HERO_SLOT.offense;
-    const dest = g.placedAt !== null ? cellCenter(cols, rows, g.placedAt) : { x: slot.x + slot.w / 2, y: slot.y + slot.h / 2 };
+    const board = REGION.board;
+    const dest = g.placedAt !== null ? cellCenter(cols, rows, g.placedAt) : { x: board.x + board.w / 2, y: board.y + board.h / 2 };
     this.scene.tweens.add({
       targets: light,
       x: dest.x,

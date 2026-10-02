@@ -1,4 +1,5 @@
-// 저장 v4 (§5.19-7): 경계(장면 카드·이야기 한 장·실패 직후·챕터 완성)만, 일차·gating 필드 없음, 핵 상태·시도 수·펼친 장
+// 저장 v5 (§5.19-7, §5.20-11·13): 경계(장면 카드·이야기 한 장·실패 직후·챕터 완성)만, 일차·gating·먹이기·갈림길·기쁨 필드 없음,
+// 핵 상태·시도 수·펼친 장·플레이 문장·영웅 성장·편성·스킬 자동
 import { describe, expect, it } from 'vitest';
 import { rawGameData } from '../src/data';
 import type { GameData } from '../src/data/types';
@@ -14,7 +15,7 @@ import type { SimConfig } from '../sim/types';
 
 const data = structuredClone(rawGameData) as unknown as GameData;
 const SIZE = { cols: 5, rows: 4 };
-const GEO = gameGeometry(data.balance.merge.soldierCap + 1);
+const GEO = gameGeometry(data.balance.merge.soldierCap + data.balance.team.teamSize);
 
 function fresh(seed = 7): GameState {
   return new GameState(data, SIZE, mulberry32(seed), GEO, seed);
@@ -24,7 +25,7 @@ function restore(save: SaveGame): GameState {
 }
 /** 한 스테이지를 디버그로 성공시킨다 (낮 → 밤 → 이야기 한 장) */
 function clearStage(g: GameState): void {
-  g.confirmDay(g.choices[0]?.id);
+  g.confirmDay();
   g.debugToNight();
   g.debugEndNight();
 }
@@ -63,16 +64,16 @@ describe('serializeGame / fromSave round-trip (경계)', () => {
     expect(JSON.stringify(serializeGame(back))).toBe(JSON.stringify(s));
   });
 
-  it('챕터 완성 (completed true), 갈림길 대기 플래그', () => {
+  it('챕터 완성 (completed true), 1-5 뒤 갈림길 없음 (D-063)', () => {
     const g = fresh();
     for (let k = 0; k < 5; k++) {
       clearStage(g);
       g.nextStage();
     }
-    expect(g.pendingCrossroad).toBe(true);
+    expect(g.phase).toBe('dayStart');
     const s = serializeGame(g);
-    expect(s.pendingCrossroad).toBe(true);
-    expect(restore(s).choices.length).toBeGreaterThan(0);
+    expect('pendingCrossroad' in s).toBe(false);
+    expect(JSON.stringify(serializeGame(restore(s)))).toBe(JSON.stringify(s));
     g.debugCompleteChapter();
     const c = serializeGame(g);
     expect(c).toMatchObject({ phase: 'chapterComplete', completed: true });
@@ -87,18 +88,35 @@ describe('serializeGame / fromSave round-trip (경계)', () => {
     expect(() => serializeGame(g)).toThrow(/경계/);
   });
 
-  it('복원 뒤 진행이 원본과 같다 (rng 상태 포함)', () => {
+  it('복원 뒤 진행이 원본과 같다 (rng 상태 포함, 저절로 조각·처치 드롭)', () => {
     const g = fresh(11);
     const s = serializeGame(g);
     const b = restore(s);
     for (const x of [g, b]) {
-      x.debugAddJoy(100);
       x.confirmDay();
-      for (let k = 0; k < 600; k++) x.tick(FIXED_DT);
-      x.spawn();
+      for (let k = 0; k < 900; k++) x.tick(FIXED_DT);
     }
+    expect(g.grid.cells.some((c) => c !== null)).toBe(true);
     expect(b.grid.cells).toEqual(g.grid.cells);
     expect(b.abyss.enemies.map((e) => [e.x, e.y, e.hp])).toEqual(g.abyss.enemies.map((e) => [e.x, e.y, e.hp]));
+  });
+
+  it('영웅 성장·편성·스킬 자동·플레이 문장이 저장된다 (§5.20-11·13)', () => {
+    const g = fresh();
+    g.debugGrantAllHeroes();
+    g.tick(0);
+    expect(g.setFormation({ offense: [['sapsal', 'nui']], defense: [['haetae'], ['orabi']] }).ok).toBe(true);
+    g.setAutoSkill(false);
+    clearStage(g);
+    const s = serializeGame(g);
+    expect(s.autoSkill).toBe(false);
+    expect(s.formation).toEqual({ offense: [['sapsal', 'nui']], defense: [['haetae'], ['orabi']] });
+    expect(s.roster.map((r) => r.id)).toEqual(['sapsal', 'haetae', 'nui', 'orabi']);
+    expect(s.pageNotes['1']?.length).toBeGreaterThan(0);
+    const back = restore(s);
+    expect(back.autoSkill).toBe(false);
+    expect(back.roster.find((r) => r.id === 'sapsal')!.exp).toBeCloseTo(g.roster.find((r) => r.id === 'sapsal')!.exp, 9);
+    expect(JSON.stringify(serializeGame(back))).toBe(JSON.stringify(s));
   });
 });
 
@@ -114,12 +132,34 @@ describe('parseSave (초기화 규칙)', () => {
     expect(parseSave(raw((o) => (o.game = null)), data, SIZE).ok).toBe(true);
   });
 
-  it('키 없음 / JSON 파싱 실패 / version 불일치 (v3 = 옛 저장)', () => {
+  it('키 없음 / JSON 파싱 실패 / version 불일치 (v4 = 옛 저장)', () => {
     expect(parseSave(null, data, SIZE)).toEqual({ ok: false, reason: '저장 없음' });
     expect(parseSave('{', data, SIZE).ok).toBe(false);
-    const r = parseSave(raw((o) => (o.version = 3)), data, SIZE);
+    const r = parseSave(raw((o) => (o.version = 4)), data, SIZE);
     expect(r.ok).toBe(false);
-    expect(SAVE_VERSION).toBe(4);
+    expect(SAVE_VERSION).toBe(5);
+  });
+
+  it('먹이기·갈림길·기쁨 필드가 남아 있으면 오류, autoSkill 필수 (§5.20-13)', () => {
+    for (const mut of [
+      (o: Record<string, any>) => (o.game.joy = 60),
+      (o: Record<string, any>) => (o.game.spawnedAttempt = 0),
+      (o: Record<string, any>) => (o.game.feedLog = []),
+      (o: Record<string, any>) => (o.game.heroes = {}),
+      (o: Record<string, any>) => (o.game.pendingCrossroad = false),
+      (o: Record<string, any>) => (o.game.flags = []),
+    ]) {
+      const r = parseSave(raw(mut), data, SIZE);
+      expect(r.ok, JSON.stringify(r)).toBe(false);
+      if (!r.ok) expect(r.reason).toMatch(/알 수 없는 키/);
+    }
+    expect(parseSave(raw((o) => delete o.game.autoSkill), data, SIZE).ok).toBe(false);
+    expect(parseSave(raw((o) => (o.game.autoSkill = 'yes')), data, SIZE).ok).toBe(false);
+  });
+
+  it('편성 검증 (보유하지 않은 영웅·중복은 오류)', () => {
+    expect(parseSave(raw((o) => (o.game.formation.offense = [['nui']])), data, SIZE).ok).toBe(false);
+    expect(parseSave(raw((o) => (o.game.formation.defense = [['sapsal']])), data, SIZE).ok).toBe(false);
   });
 
   it('일차(day)·gating 필드가 남아 있으면 오류 (D-054)', () => {
@@ -156,7 +196,7 @@ describe('parseSave (초기화 규칙)', () => {
 
 describe('결정성: 끊김 없이 한 판 vs 매 경계 round-trip (§5.19-7)', () => {
   const cfg = simJson as SimConfig;
-  for (const name of ['balanced', 'nightOnly', 'lazy']) {
+  for (const name of ['balanced', 'nightHeavy', 'lazy']) {
     it(name, () => {
       for (const seed of [1, 2]) {
         const opt = { seed, grid: SIZE, maxAttempts: 12 };

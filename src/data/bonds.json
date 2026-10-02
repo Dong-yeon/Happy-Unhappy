@@ -1,0 +1,51 @@
+{
+  "bonds": [
+    {
+      "id": "adventurers",
+      "name": "모험대",
+      "kind": "sameTeam",
+      "heroes": [
+        "sapsal",
+        "haetae"
+      ],
+      "effect": {
+        "dmgReduce": 0.1
+      }
+    },
+    {
+      "id": "siblings",
+      "name": "오누이",
+      "kind": "sameTeam",
+      "heroes": [
+        "nui",
+        "orabi"
+      ],
+      "effect": {
+        "firstFallReviveHp": 0.5
+      }
+    },
+    {
+      "id": "sun_moon",
+      "name": "해와 달",
+      "kind": "split",
+      "offense": "nui",
+      "defense": "orabi",
+      "effect": {
+        "gaugeMult": 1.25
+      }
+    },
+    {
+      "id": "role_mix",
+      "name": "고른 팀",
+      "kind": "roleMix",
+      "roles": [
+        "tank",
+        "attack",
+        "support"
+      ],
+      "effect": {
+        "atkPct": 0.1
+      }
+    }
+  ]
+}

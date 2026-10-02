@@ -1,6 +1,6 @@
 // ?debug=1 디버그 패널. M7에서 정식 디버그 패널로 흡수.
 // 기본은 접힘: 포탈 받침 왼쪽 빈 자리의 [DBG] 토글만 보인다. 펼치면 방어 레인 위에 겹쳐 뜬다 (심연 레인은 가리지 않음).
-// 탭: 기본(그리드·기쁨·조각) / 웨이브(정지·다음·배속) / 낮밤(guardian·쓰러짐·즉시 성공·실패) / 스테이지(이동·갈림길·완성·이야기책)
+// 탭: 기본(그리드·조각) / 웨이브(정지·다음·배속) / 낮밤(guardian·쓰러짐·즉시 성공·실패) / 스테이지(이동·갈림길·완성·이야기책)
 //     / 저장(초기화·JSON 복사) / metrics(내보내기·요약·초기화)
 import Phaser from 'phaser';
 import type { GameState } from '../core/game';
@@ -16,7 +16,6 @@ import { Button, text } from '../scenes/ui';
 import { copyOrShow, exportFileName } from './exportModal';
 import { saveGridOverride } from './gridPreset';
 
-const DEBUG_JOY = 100;
 const SPEEDS = [1, 3, 10] as const;
 // 모달(DayUi, depth 60~72) 위: 장면 카드·결과 화면에서도 쓸 수 있게
 const PANEL_DEPTH = 100;
@@ -87,7 +86,7 @@ export function createDebugPanel(
   /** metrics 탭을 열 때 요약을 바로 갱신 (아래 metrics 블록이 설정) */
   let onMetricsShow = () => {};
 
-  // ── 기본: 그리드 프리셋·기쁨·조각 지급 ──
+  // ── 기본: 그리드 프리셋·조각 지급 (기쁨은 §5.20-13에서 삭제) ──
   {
     let y = y0;
     label('기본', y - 16, '그리드 (전환: 게임 저장만 초기화)');
@@ -101,11 +100,6 @@ export function createDebugPanel(
         controls.reboot();
       }, '10px').setActive(active);
     });
-    y += 26;
-    btn('기본', scene, x0 + 40, y, 80, 20, `기쁨 +${DEBUG_JOY}`, () => {
-      state.debugAddJoy(DEBUG_JOY);
-      controls.onChange();
-    }, '10px');
     y += 26;
     const { chains } = data;
     const maxTier = data.balance.grid.maxTier;
@@ -210,8 +204,8 @@ export function createDebugPanel(
       controls.onChange();
     }, '10px');
     y += 26;
-    btn('스테이지', scene, x0 + 40, y, 80, 20, '갈림길 열기', () => {
-      state.debugOpenCrossroad();
+    btn('스테이지', scene, x0 + 40, y, 80, 20, '스킬 발동', () => {
+      state.debugCastSkills();
       controls.onChange();
     }, '10px');
     // chapterComplete 이벤트 → 씬이 저장
@@ -221,9 +215,20 @@ export function createDebugPanel(
     }, '10px');
     y += 26;
     btn('스테이지', scene, x0 + 40, y, 80, 20, '이야기책', () => controls.openDiary(), '10px');
-    // 보상 영웅(누이·오라비) 합류 (덱 화면 M8.11 테스트용, D-057)
-    btn('스테이지', scene, x0 + 124, y, 80, 20, '보상 영웅 지급', () => {
-      state.debugGrantRewardHeroes();
+    // 영웅 지급 (§5.20-1): 삽살·해태·누이·오라비 / 테스트 영웅 2명 (팀 2개 이상·인연 시험용)
+    btn('스테이지', scene, x0 + 124, y, 80, 20, '영웅 전부 지급', () => {
+      state.debugGrantAllHeroes();
+      controls.onChange();
+    }, '9px');
+    y += 26;
+    btn('스테이지', scene, x0 + 40, y, 80, 20, '테스트 영웅 2명', () => {
+      state.debugGrantTestHeroes();
+      controls.onChange();
+    }, '9px');
+    btn('스테이지', scene, x0 + 124, y, 80, 20, '5단계 조각 2', () => {
+      const chain = state.spawnChains[0];
+      state.debugGrant(chain, data.balance.grid.maxTier - 1);
+      state.debugGrant(chain, data.balance.grid.maxTier - 1);
       controls.onChange();
     }, '9px');
     y += 26;
@@ -233,9 +238,8 @@ export function createDebugPanel(
       loop: true,
       callback: () => {
         const tries = state.attempts[state.stage - 1];
-        const flags = [state.pendingCrossroad ? '갈림길 대기' : '', state.retry ? `재도전(${state.retry})` : ''].filter(Boolean).join(' · ');
-        const joined = state.joinedHeroes.length ? ` · 합류 ${state.joinedHeroes.join(',')}` : '';
-        now.setText(`1-${state.stage} · 이 스테이지 ${tries}번 · 통산 ${state.attempt}번 · 먹이기 ${state.stats.feeds}회${flags ? ` · ${flags}` : ''}${joined}`);
+        const flags = state.retry ? ` · 재도전(${state.retry})` : '';
+        now.setText(`1-${state.stage} · 이 스테이지 ${tries}번 · 통산 ${state.attempt}번 · 영웅 ${state.owned.length}명${flags}`);
       },
     });
   }
@@ -312,9 +316,9 @@ export function createDebugPanel(
     .setDepth(PANEL_DEPTH)
     .setInteractive(); // 패널 뒤로 입력이 새지 않게
 
-  // 접기/펼치기 토글: 하늘 띠 왼쪽 아래 (v0.13: 포탈 받침 자리는 영웅 슬롯)
+  // 접기/펼치기 토글: 전장 왼쪽 아래 (§5.20-13: 해·달 띠는 얇아짐)
   let open = false;
-  const base = REGION.sky;
+  const base = REGION.ground;
   const toggle = new Button(scene, base.x + 30, base.y + base.h - 14, 48, 20, '', () => {
     open = !open;
     apply();

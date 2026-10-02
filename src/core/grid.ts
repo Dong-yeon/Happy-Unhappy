@@ -135,25 +135,7 @@ export function applyDrop(grid: Grid, from: number, to: number | null): DropKind
   return kind;
 }
 
-// ── 조각 생성 ──
-
-export interface SpawnConfig {
-  spawnCostBase: number;
-  spawnCostStep: number;
-}
-
-export function spawnCost(cfg: SpawnConfig, spawnedToday: number): number {
-  return cfg.spawnCostBase + cfg.spawnCostStep * spawnedToday;
-}
-
-/** 생성 불가 사유. 둘 다 해당하면 'full' (기쁨을 모아도 해결되지 않으므로) */
-export type SpawnBlock = 'full' | 'noJoy';
-
-export function spawnBlock(grid: Grid, joy: number, cost: number): SpawnBlock | null {
-  if (isFull(grid)) return 'full';
-  if (joy < cost) return 'noJoy';
-  return null;
-}
+// ── 조각 생성 (저절로·처치 드롭, §5.20-13) ──
 
 export interface ChainWeight {
   id: ChainId;
@@ -172,17 +154,11 @@ export function pickEmpty(rng: Rng, grid: Grid): number | null {
 
 // ── 놓아주기 ──
 
-/** 놓아주기 환급액. 와일드카드는 놓아줄 수 없으므로 null (드래그 중 미리보기에도 사용) */
-export function releaseValue(piece: Piece, releaseRefund: number): number | null {
-  return isWildcard(piece) ? null : releaseRefund * piece.tier;
-}
-
-/** 조각 제거 후 환급액을 돌려준다. 빈 칸·와일드카드는 무시하고 null */
-export function releaseAt(grid: Grid, index: number, releaseRefund: number): { piece: Piece; refund: number } | null {
+/** 놓아주기 (§5.20-13): 조각 제거 (환급 없음 — 기쁨 삭제). 빈 칸·와일드카드는 무시하고 null */
+export function releaseAt(grid: Grid, index: number): Piece | null {
   if (!isValidIndex(grid, index)) return null;
   const p = grid.cells[index];
-  const refund = p ? releaseValue(p, releaseRefund) : null;
-  if (!p || refund === null) return null;
+  if (!p || isWildcard(p)) return null;
   grid.cells[index] = null;
-  return { piece: p, refund };
+  return p;
 }

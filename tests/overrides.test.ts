@@ -45,9 +45,9 @@ describe('applyOverrides', () => {
   });
 
   it('배열 원소·배열 값도 바꿀 수 있다', () => {
-    const out = applyOverrides(data, [parseSet('chains.1.growth.atk=1.5'), parseSet('feed.tierScore=[2,4,8]'), parseSet('stages.stages.0.day.guardianHp=99')]);
-    expect(out.chains[1].growth.atk).toBe(1.5);
-    expect(out.balance.feed.tierScore).toEqual([2, 4, 8]);
+    const out = applyOverrides(data, [parseSet('chains.1.soldier.levels.0.hp=99'), parseSet('skill.tierPoints=[0,2,6,14]'), parseSet('stages.stages.0.day.guardianHp=99')]);
+    expect(out.chains[1].soldier.levels[0].hp).toBe(99);
+    expect(out.balance.skill.tierPoints).toEqual([0, 2, 6, 14]);
     expect(out.stages.stages[0].day.guardianHp).toBe(99);
   });
 
@@ -62,7 +62,7 @@ describe('applyOverrides', () => {
 
   it('적용 후 데이터 검증을 다시 한다', () => {
     expect(() => applyOverrides(data, [parseSet('core.hp=0')])).toThrow(/검증 실패[\s\S]*core\.hp/);
-    expect(() => applyOverrides(data, [parseSet('feed.tierScore=[1,3]')])).toThrow(/maxTier/);
+    expect(() => applyOverrides(data, [parseSet('spawn.bossDropTier=9')])).toThrow(/maxTier/);
   });
 
   it('리포트 기록은 전체 경로', () => {

@@ -1,41 +1,42 @@
-// 한 판(1챕터)의 core 상태: 스테이지 진행, 기쁨, 누적 게임 시간, 조각 id, 그리드, 두 레인, 밤 웨이브, 핵, 이야기책.
+// 한 판(1챕터)의 core 상태: 스테이지 진행, 누적 게임 시간, 조각 id, 그리드, 두 레인, 밤 웨이브, 핵, 영웅·편성, 이야기책.
 // Phaser 의존 없음. scene은 이 객체의 메서드를 호출하고 결과를 표시만 한다.
 // 시간은 고정 틱(FIXED_DT)으로만, 그리고 낮(오펜스)·밤(디펜스)에만 흐른다.
 //
-// v0.15 (§5.19, D-053·D-054·D-055):
-//   스테이지 1-n = 장면 카드 → 낮(핵 찾아 돌아오기) → 해질녘 → 밤(핵 지키기) → 아침 이야기 한 장 → 다음 스테이지
-//   낮 실패(시간 초과·가는 길 쓰러짐) → 밤 없이 같은 스테이지 낮부터 / 밤 실패(핵 HP 0) → 같은 스테이지 낮부터. 횟수 제한 없음
-//   실패해도 영웅 강화·그리드 조각·기쁨은 남는다. 일차·gating·그림자·역류 없음. 밤 구성은 stages.json 고정 (낮 결과와 무관)
-//   영웅은 판 내내 모험대 두 명(삽살·해태, D-057)을 낮덱/밤덱에 하나씩. 머지 조각은 영웅에게 먹이는 강화 재료.
-//   전투 중 머지 → 지금 싸우는 쪽 영웅 버프(떡 회복 / 동아줄 기세) + 그 레인에 병사 자동 출전 (때 맞춤이면 × affinityMult).
+// v0.15 (§5.19, D-053~D-057): 스테이지 = 장면 카드 → 낮(핵 찾아 돌아오기) → 해질녘 → 밤(핵 지키기) → 이야기 한 장 → 다음 스테이지.
+//   실패하면 같은 스테이지를 낮부터 (횟수 제한 없음), 실패해도 영웅 성장·그리드는 남는다.
+// v0.16 (§5.20, D-058~D-063):
+//   편성 = 낮 공격대·밤 수비대 각 1~5팀 × 최대 3인. 레인에는 한 번에 한 팀 (팀 릴레이: 낮 = 전멸하면 다음 팀이 같은 핵 이어받기,
+//   밤 = 웨이브 구간 교대·전멸하면 다음 팀). 편성이 전투 중에 바뀌면 단계 시작 스냅샷으로 되돌려 다시.
+//   그리드에는 지금 레인 팀 영웅들의 체인만 나온다. 머지 5단계, 자기 체인 머지 = 스킬 게이지, 5단계 = 즉시 발동 + 특별 버프.
+//   인연 4종(bonds.json), 경험치 → 레벨(임시). 먹이기·영웅 슬롯·배정 팝업·1-5 갈림길 삭제.
+//   전투 중 머지 → 지금 싸우는 팀 버프(회복 / 기세) + 병사 자동 출전 (때 맞춤이면 × affinityMult).
+// §5.20-13 (D-064): 기쁨·[조각 생성] 삭제 → 조각은 전투 중 spawn.autoInterval마다 저절로 + 처치 시 killDropChance로 드롭
+//   (밤 보스·guardian은 bossDropTier단계 bossDropCount개 확정). 그리드가 가득이면 버림. 적은 × swarm.countMult 떼(한 마리 hp × hpMult),
+//   레인 동시 적 최대 laneMaxEnemies (넘으면 대기열). 스킬은 autoSkill(기본)이면 게이지가 차는 즉시, 끄면 castReady(영웅)로 발동.
 
-import type { ChainGrowth, CombatStats, EnemyGroup, GameData, HeroDef, StageDef } from '../data/types';
-import { crossroadById, emptyAttemptStats, type AttemptResult, type AttemptStats, type CrossroadCard, type DayPhase, type FailReason } from './day';
+import type { CombatStats, EnemyGroup, GameData, HeroDef, SkillDef, StageDef } from '../data/types';
+import { emptyAttemptStats, type AttemptResult, type AttemptStats, type DayPhase, type FailReason } from './day';
 import { Expedition, type EnemyStats, type ExpeditionEvent } from './expedition';
 import {
   WILDCARD,
   WILDCARD_TIER,
   applyDrop,
   createGrid,
+  isFull,
   pickChain,
   pickEmpty,
   releaseAt,
-  releaseValue,
-  spawnBlock,
-  spawnCost,
   type ChainId,
   type DropKind,
   type Grid,
   type GridSize,
   type Piece,
-  type SpawnBlock,
-  isWildcard,
-  toCell,
 } from './grid';
 import {
   FIXED_DT,
   Lane,
   TICK_RATE,
+  stun,
   type AbyssGeometry,
   type LaneEvent,
   type LaneGeometry,
@@ -45,17 +46,28 @@ import {
   type UnitRole,
   type WorryStats,
 } from './lane';
+import {
+  activeBonds,
+  addExp,
+  cloneFormation,
+  emptyProgress,
+  fillTemplate,
+  formationError,
+  sameFormation,
+  statsAtLevel,
+  teamsOf,
+  type ActiveBond,
+  type Formation,
+  type HeroProgress,
+} from './roster';
 import type { SeededRng } from './rng';
 import type { SaveGame } from './save';
 import { emptyGameStats, type GameStats } from './stats';
 import { NightWaves, interleave } from './wave';
 
-/** 덱: 낮 = 오펜스, 밤 = 디펜스 (§5.17-10) */
+/** 덱: 낮 = 공격대(오펜스), 밤 = 수비대(디펜스) */
 export type Role = 'offense' | 'defense';
 export const ROLES: readonly Role[] = ['offense', 'defense'];
-
-/** 먹이기 불가 사유: 빈 칸 / 와일드카드 / 지금 단계에서는 못 먹임 */
-export type FeedBlock = 'empty' | 'wildcard' | 'closed';
 
 /** 두 레인의 좌표 (scene의 layout.ts에서 만든다) */
 export interface GameGeometry {
@@ -63,33 +75,7 @@ export interface GameGeometry {
   abyss: AbyssGeometry;
 }
 
-/** 영웅 한 명의 판 상태 (덱 자리마다) */
-export interface HeroState {
-  /** heroes.json id */
-  id: string;
-  /** 체인별 먹인 점수 누계 (§5.17-2) */
-  points: Record<string, number>;
-  /** 기세 (§5.17-3): 중첩 수·atk 보너스 합·남은 초 */
-  momentum: { stacks: number; bonus: number; timer: number };
-}
-
-/** 먹이기 기록 (metrics) */
-export interface FeedRecord {
-  t: number;
-  /** 판 통산 시도 번호 */
-  attempt: number;
-  stage: number;
-  role: Role;
-  hero: string;
-  chain: string;
-  tier: number;
-  points: number;
-  cell: { col: number; row: number };
-  /** 조각 보유 시간 = t - bornAt */
-  heldFor: number;
-}
-
-/** 지급 조각 (갈림길 보너스·보스 와일드카드): 빈 칸에, 없으면 사라짐 (귀환 큐 없음, §5.17-5) */
+/** 지급 조각 (보스 와일드카드): 빈 칸에, 없으면 사라짐 */
 export interface Grant {
   /** 연출 시작점 (낮 레인 core 좌표) */
   x: number;
@@ -102,42 +88,65 @@ export interface Grant {
 /** 핵 상태 (저장·표시, §5.19-7): 없음 / 낮에 운반 중(진행 축 위치) / 이야기책에 놓임(밤) */
 export type CoreState = { state: 'none' } | { state: 'carrying'; y: number } | { state: 'hut' };
 
+/** 단계 시작 스냅샷 (§5.20-2): 편성이 전투 중에 바뀌면 이것으로 되돌려 그 단계를 다시 */
+interface PhaseSnapshot {
+  grid: (Piece | null)[];
+  roster: HeroProgress[];
+  rngState: number;
+  stats: GameStats;
+  attemptStats: AttemptStats;
+  nextPieceId: number;
+}
+
 export type CoreEvent =
   | LaneEvent
   | ExpeditionEvent
   /** 장면 카드 (스테이지 시작·실패 뒤 재도전) */
-  | { type: 'stageStart'; stage: number; retry: FailReason | null; crossroad: boolean }
+  | { type: 'stageStart'; stage: number; retry: FailReason | null }
   /** 장면 카드를 닫고 낮 시작 */
   | { type: 'dayBegin'; stage: number; attempt: number }
-  | { type: 'freePiece'; grant: Grant }
-  /** 영웅이 레인에 섬 (단계 시작·쓰러진 뒤 일어남) */
-  | { type: 'heroEnter'; role: Role; unitId: number; revive: boolean }
-  /** 영웅 쓰러짐 → reviveSeconds 뒤 일어남 (밤 영웅, 낮 운반 중 영웅) */
-  | { type: 'heroDown'; role: Role; unitId: number; seconds: number }
-  /** guardian을 쓰러뜨려 핵을 찾음 (핵 카드). bonus = 갈림길 face 보너스 조각 */
-  | { type: 'coreFound'; stage: number; bonus: Grant[] }
-  /** 먹이기 */
-  | { type: 'feed'; role: Role; cell: number; chain: string; tier: number; points: number }
+  /** 영웅이 레인에 섬 (팀 출발·일어남) */
+  | { type: 'heroEnter'; role: Role; unitId: number; heroId: string; revive: boolean }
+  /** 영웅 쓰러짐: 밤이면 reviveSeconds 뒤 일어남, 낮이면 그 낮 동안 안 일어남 (seconds 0) */
+  | { type: 'heroDown'; role: Role; unitId: number; heroId: string; seconds: number }
+  /** 팀 교대 (§5.20-3): 다음 팀이 이야기책에서 출발. reason = 전멸 / 밤 구간 교대 / 다음 핵 */
+  | { type: 'teamSwap'; role: Role; team: number; reason: 'wipe' | 'segment' | 'core' }
+  /** guardian을 쓰러뜨려 핵을 찾음 (핵 카드) */
+  | { type: 'coreFound'; stage: number }
   /** 전투 중 머지 버프 */
   | { type: 'buff'; role: Role; kind: 'heal' | 'momentum'; amount: number; stacks: number; affinity: boolean; cell: number }
   /** 전투 중 머지 병사 출전 (capped: 상한이라 병사 없음) */
   | { type: 'soldier'; role: Role; unitId: number | null; chain: string; level: number; affinity: boolean; cell: number; capped: boolean }
+  /** 스킬 게이지 변화 (자기 체인 머지) */
+  | { type: 'gauge'; heroId: string; gauge: number; max: number }
+  /** 스킬 발동 */
+  | { type: 'skill'; role: Role; heroId: string; unitId: number; kind: SkillDef['kind']; name: string }
+  /** 5단계 특별 버프 (§5.18-9): 한낮 / 보름달 */
+  | { type: 'special'; role: Role; kind: 'noon' | 'fullMoon'; affinity: boolean; cell: number }
+  /** 레벨 업 */
+  | { type: 'levelUp'; heroId: string; level: number }
+  /** 편성이 전투 중에 바뀌어 지금 단계를 처음부터 */
+  | { type: 'formationRestart'; phase: 'day' | 'night' }
   /** 해질녘: 핵을 이야기책에 가져옴 → 밤 시작 */
   | { type: 'dusk'; stage: number }
   /** 밤: 적이 거점에 닿아 핵 HP 감소 */
   | { type: 'coreHit'; hp: number; damage: number; boss: boolean }
+  /** 조각이 생김 (§5.20-13): 저절로 / 처치 드롭 / 보스·guardian 확정. index null = 그리드 가득이라 버림. from = 처치 지점 (레인 core 좌표) */
+  | { type: 'piece'; source: 'auto' | 'drop' | 'boss'; index: number | null; piece: Piece; from: { role: Role; x: number; y: number } | null }
+  /** 스킬 자동/수동 전환 */
+  | { type: 'autoSkill'; on: boolean }
   /** 보스 스테이지 핵을 가져옴 → 와일드카드 */
   | { type: 'bossReward'; rewards: Grant[] }
   /** 시도 실패 → 같은 스테이지 장면 카드 */
   | { type: 'attemptFail'; stage: number; reason: FailReason; record: AttemptStats }
   /** 스테이지 성공 → 아침 이야기 한 장 (1-length면 바로 챕터 완성) */
-  | { type: 'stageClear'; stage: number; record: AttemptStats }
+  | { type: 'stageClear'; stage: number; record: AttemptStats; notes: string[] }
   | { type: 'chapterComplete'; completed: true }
-  /** 보상 영웅 합류 (챕터 완성·디버그, D-057) */
+  /** 영웅 합류 (챕터 완성 보상·디버그, D-057) */
   | { type: 'heroesJoined'; ids: string[] };
 
-export type ConfirmResult = { ok: true } | { ok: false; reason: 'notDayStart' | 'needChoice' | 'badChoice' };
-export type FeedResult = { ok: true; points: number } | { ok: false; reason: FeedBlock };
+export type ConfirmResult = { ok: true } | { ok: false; reason: 'notDayStart' };
+export type FormationResult = { ok: true; restarted: boolean } | { ok: false; reason: string };
 
 export type { GameStats } from './stats';
 
@@ -146,19 +155,24 @@ export function sideOf(role: Role): Side {
   return role === 'offense' ? 'unhappy' : 'happy';
 }
 
-/** 적 능력치 (§5.19-5): base × 종류 배수, HP는 × hpGrowthPerStage^(스테이지-1) */
-export function enemyStats(data: GameData, type: string, stage: number): EnemyStats {
+/** 적 능력치 (§5.19-5): base × 종류 배수, HP는 × hpGrowthPerStage^(스테이지-1). 떼(보스가 아님)면 × swarm.hpMult (§5.20-13) */
+export function enemyStats(data: GameData, type: string, stage: number, swarm = true): EnemyStats {
   const d = data.monsters.enemies.find((e) => e.id === type);
   if (!d) throw new Error(`알 수 없는 적: ${type}`);
   const b = data.monsters.base;
   return {
     type,
-    hp: b.hp * d.hpMult * Math.pow(data.balance.enemy.hpGrowthPerStage, stage - 1),
+    hp: b.hp * d.hpMult * Math.pow(data.balance.enemy.hpGrowthPerStage, stage - 1) * (swarm ? data.balance.swarm.hpMult : 1),
     speed: b.speed * d.speedMult,
     atk: b.atk * d.atkMult,
     atkInterval: b.atkInterval,
-    joyReward: b.joyReward,
   };
+}
+
+/** 적 묶음 × swarm.countMult (반올림, 묶음마다 최소 1) */
+export function swarmGroups(data: GameData, groups: readonly EnemyGroup[]): EnemyGroup[] {
+  const m = data.balance.swarm.countMult;
+  return groups.map((g) => ({ ...g, count: Math.max(1, Math.round(g.count * m)) }));
 }
 
 export function enemyName(data: GameData, type: string): string {
@@ -168,14 +182,25 @@ export function enemyName(data: GameData, type: string): string {
 /** 부동소수 누적 오차로 틱이 하나 빠지지 않도록 */
 const TICK_EPS = 1e-9;
 
+/** 스킬·특별 버프 대상이 되는 적 (두 레인 공용 모양) */
+interface Foe {
+  hp: number;
+  y: number;
+  slowTimer: number;
+  slowMult: number;
+}
+
 export class GameState {
   /** 누적 게임 시간(초, 배속 반영). Piece.bornAt 기준 */
   playTime = 0;
-  joy: number;
   nextPieceId = 1;
-  /** 이번 시도 생성 횟수 (생성 비용). 장면 카드를 닫을 때 0 */
-  spawnedAttempt = 0;
   readonly grid: Grid;
+  /** 스킬 자동 발동 (§5.20-13, 기본 true). false면 게이지가 찬 영웅을 castReady로 발동 */
+  autoSkill = true;
+  /** 저절로 조각까지 남은 초 (단계 시작마다 autoInterval) */
+  autoTimer = 0;
+  /** 밤: 동시 적 상한을 넘어 아직 레인에 못 나온 적 */
+  private readonly nightQueue: WorryStats[] = [];
   /** 지급할 칸이 없어 사라진 조각 수 */
   lostReturns = 0;
   /** 처리한 고정 틱 수. playTime = tickCount / TICK_RATE */
@@ -186,27 +211,43 @@ export class GameState {
   readonly abyss: Expedition;
   readonly wave: NightWaves;
   readonly stats: GameStats = emptyGameStats();
-  readonly feedLog: FeedRecord[] = [];
   /** 낮(오펜스) 남은 시간(초) */
   offenseTimer = 0;
-  /** 밤 영웅 쓰러짐: 일어나기까지 남은 초 (0 = 서 있음) */
-  defenseDown = 0;
-  /** 낮 운반 중 쓰러짐: 일어나기까지 남은 초 · 쓰러진 자리 */
-  offenseDown = 0;
-  private offenseFallY = 0;
   /** 밤 핵 HP (§5.19-3) */
   coreHp: number;
 
-  // ── 영웅 (§5.17-1, [11]-3) ──
-  readonly heroes: Record<Role, HeroState>;
-  /** 판 시작(1-1 첫 장면 카드) 배정을 마쳤는지. 첫 카드를 닫으면 true (판 중 변경은 M8.11) */
-  assignmentDone = false;
-  /** 합류한 보상 영웅 id (챕터 완성, D-057). 덱 화면(M8.11) 전까지는 명단에만 있다 */
-  readonly joinedHeroes: string[] = [];
-  /** 레인 위 영웅 유닛 id (그 단계에만) */
-  private heroUnit: Record<Role, number | null> = { offense: null, defense: null };
+  // ── 영웅·편성 (§5.20-1·2) ──
+  /** 보유 영웅 (얻은 순서) */
+  readonly roster: HeroProgress[] = [];
+  formation: Formation;
+  /** 판 시작 편성 화면을 지났는지 (첫 장면 카드를 닫으면 true) */
+  formationSeen = false;
+  /** 지금 레인에 있는 팀 번호 (팀 목록 = 빈 팀을 뺀 teamsOf) */
+  readonly activeTeam: Record<Role, number> = { offense: 0, defense: 0 };
+  /** 낮에 쓰러져 그 낮 동안 안 일어나는 영웅 */
+  private readonly fallen = new Set<string>();
+  /** 밤에 쓰러진 영웅: 일어나기까지 남은 초 */
+  readonly reviveTimers = new Map<string, number>();
+  /** 레인 위 영웅 유닛: 영웅 id → 유닛 id */
+  private readonly heroUnits = new Map<string, number>();
   /** 레인 유닛 id → 역할 (피해 비중 집계). 단계가 바뀔 때 비운다 */
   private unitRoles = new Map<number, UnitRole>();
+  /** 오누이 인연: 이번 단계에 이미 쓴 팀 ("offense:0") */
+  private readonly siblingsUsed = new Set<string>();
+  /** 기세 (팀 단위, §5.17-3) */
+  readonly momentum: Record<Role, { stacks: number; bonus: number; timer: number }> = {
+    offense: { stacks: 0, bonus: 0, timer: 0 },
+    defense: { stacks: 0, bonus: 0, timer: 0 },
+  };
+  /** 한낮 특별 버프: 남은 초·atk 배수 */
+  readonly noon: Record<Role, { timer: number; pct: number }> = { offense: { timer: 0, pct: 0 }, defense: { timer: 0, pct: 0 } };
+  /** 이번 단계 경험치 (단계가 끝날 때 성공 ×1, 실패 ×failMult로 들어간다) */
+  private phaseExp = new Map<string, number>();
+  /** 이번 밤 싸운 영웅 (밤 성공 경험치) */
+  private readonly foughtNight = new Set<string>();
+  /** 이번 낮 끝낸 핵 수 */
+  coresDone = 0;
+  private snapshot: PhaseSnapshot | null = null;
 
   // ── 스테이지 (§5.19-1) ──
   /** 지금 스테이지 (1-n의 n). 성공해야만 +1 */
@@ -226,21 +267,16 @@ export class GameState {
   readonly attemptLog: AttemptStats[] = [];
   /** 이야기책: 펼친 장 (스테이지 번호, 성공 순서) */
   readonly pages: number[] = [];
-  /** 갈림길 선택 flag ("avoid" | "face") */
-  readonly flags: string[] = [];
-  /** 1-turningPoint 성공 → 다음 장면 카드 = 갈림길 */
-  pendingCrossroad = false;
-  /** 갈림길 face: 이번 시도 guardian HP 감소 비율 (첫 시도만) · guardian 처치 때 조각 +1 */
-  private faceReduce = 0;
-  private faceBonus = false;
-  /** 판의 끝 (chapterComplete): 완성 true. 그 전에는 null (D-054: 미완성 끝 없음) */
+  /** 이야기책: 장마다 덧붙인 플레이 문장 (§5.20-8). key = 스테이지 번호 */
+  readonly pageNotes: Record<number, string[]> = {};
+  /** 판의 끝 (chapterComplete): 완성 true. 그 전에는 null */
   completed: true | null = null;
 
   /** 저장(save.ts)이 읽고 쓴다 */
   nextUnitId = 1;
   /** 아직 틱으로 처리하지 않은 시간 */
   private acc = 0;
-  /** 틱 밖(먹이기·단계 전환 등)에서 생긴 이벤트. 다음 tick()의 반환값에 앞서 포함된다 */
+  /** 틱 밖(머지·단계 전환 등)에서 생긴 이벤트. 다음 tick()의 반환값에 앞서 포함된다 */
   private pending: CoreEvent[] = [];
 
   constructor(
@@ -252,25 +288,25 @@ export class GameState {
     readonly seed = 0,
   ) {
     const b = data.balance;
-    this.joy = b.start.joy;
     this.coreHp = b.core.hp;
     this.grid = createGrid(size, b.grid.maxTier);
-    const need = b.merge.soldierCap + 1;
+    const need = b.merge.soldierCap + b.team.teamSize;
     for (const [name, g] of [
       ['방어선', geometry.defense],
       ['낮 레인', geometry.abyss],
     ] as const) {
-      if (g.slotXs.length < need) throw new Error(`${name} 슬롯 수(${g.slotXs.length}) < 영웅 1 + soldierCap(${need})`);
+      if (g.slotXs.length < need) throw new Error(`${name} 슬롯 수(${g.slotXs.length}) < 팀 ${b.team.teamSize} + soldierCap(${b.merge.soldierCap})`);
     }
     const intercept = { range: b.lane.defenseInterceptRange, speed: b.lane.defenseMoveSpeed, contact: b.lane.defenseContact };
     this.defense = new Lane('defense', geometry.defense, b.happy, intercept);
-    this.abyss = new Expedition(geometry.abyss, { advanceSpeed: b.lane.abyssAdvanceSpeed, carry: b.carry, escort: intercept });
+    this.abyss = new Expedition(geometry.abyss, { advanceSpeed: b.lane.abyssAdvanceSpeed, carry: b.carry, escort: intercept, maxEnemies: b.swarm.laneMaxEnemies });
     this.wave = new NightWaves(b.wave);
     const h = data.heroes;
     const [off, def] = b.start.swapHeroes ? [h.defense, h.offense] : [h.offense, h.defense];
-    this.heroes = { offense: emptyHero(off), defense: emptyHero(def) };
+    for (const hero of h.heroes) if (hero.reward === undefined) this.roster.push(emptyProgress(hero.id));
+    this.formation = { offense: [[off]], defense: [[def]] };
     this.attempts = new Array<number>(b.chapter.length).fill(0);
-    this.attemptStats = emptyAttemptStats(1, 1, this.joy, b.grid.maxTier);
+    this.attemptStats = emptyAttemptStats(1, 1, b.grid.maxTier);
   }
 
   /** 시간은 낮·밤에만 흐른다 */
@@ -291,19 +327,6 @@ export class GameState {
     return this.data.stages.stages[this.stage - 1];
   }
 
-  /** 지금 장면 카드가 갈림길이면 그 카드 */
-  get crossroad(): CrossroadCard | null {
-    if (this.phase !== 'dayStart' || !this.pendingCrossroad) return null;
-    const c = crossroadById(this.data, this.data.chapter.crossroad);
-    if (!c) throw new Error(`갈림길 이벤트 없음: ${this.data.chapter.crossroad}`);
-    return c;
-  }
-
-  /** 갈림길 선택지 (없으면 빈 배열) */
-  get choices(): { id: string; label: string }[] {
-    return this.crossroad?.event.choices.map((c) => ({ id: c.id, label: c.label })) ?? [];
-  }
-
   /** 핵 상태 (§5.19-7) */
   get coreState(): CoreState {
     if (this.phase === 'night') return { state: 'hut' };
@@ -315,7 +338,7 @@ export class GameState {
     return { state: 'none' };
   }
 
-  /** 지금 싸우는 쪽 (낮 = 오펜스, 밤 = 디펜스). 전투 밖이면 null */
+  /** 지금 싸우는 쪽 (낮 = 공격대, 밤 = 수비대). 전투 밖이면 null */
   get fightingRole(): Role | null {
     if (this.phase === 'day' && this.offenseTimer > TICK_EPS) return 'offense';
     if (this.phase === 'night') return 'defense';
@@ -333,88 +356,208 @@ export class GameState {
 
   // ── 영웅 ──
 
-  heroDef(role: Role): HeroDef {
-    const id = this.heroes[role].id;
+  heroDef(id: string): HeroDef {
     const h = this.data.heroes.heroes.find((x) => x.id === id);
     if (!h) throw new Error(`알 수 없는 영웅: ${id}`);
     return h;
   }
 
-  /**
-   * 영웅 능력치 (기세 제외, §5.17-2): 점수 1당 체인 성장.
-   * maxHp = hp + Σ maxHp·점수 / atk = atk + Σ atk·점수 / atkInterval = max(하한, base × (1 − Σ atkIntervalPct·점수))
-   * 받는 피해 = 1 − min(상한, Σ dmgReduce·점수)
-   */
-  heroStats(role: Role): CombatStats & { dmgMult: number } {
-    const base = this.heroDef(role);
-    const pts = this.heroes[role].points;
-    const sum = (k: keyof ChainGrowth) => this.data.chains.reduce((s, c) => s + (c.growth[k] ?? 0) * (pts[c.archetypeId] ?? 0), 0);
-    const h = this.data.balance.hero;
-    return {
-      hp: base.hp + sum('maxHp'),
-      atk: base.atk + sum('atk'),
-      atkInterval: Math.max(h.atkIntervalMin, base.atkInterval * (1 - sum('atkIntervalPct'))),
-      range: base.range,
-      dmgMult: 1 - Math.min(h.dmgReduceMax, sum('dmgReduce')),
-    };
+  progressOf(id: string): HeroProgress {
+    const p = this.roster.find((x) => x.id === id);
+    if (!p) throw new Error(`보유하지 않은 영웅: ${id}`);
+    return p;
   }
 
-  /** 레인 위 영웅 유닛 (없으면 null: 단계 밖·쓰러짐) */
-  heroUnitOf(role: Role): Unit | null {
-    const id = this.heroUnit[role];
-    return id === null ? null : (this.laneOf(role).units.find((u) => u.id === id) ?? null);
+  get owned(): string[] {
+    return this.roster.map((p) => p.id);
   }
 
-  /** 판 시작(1-1 첫 장면 카드) 영웅 배정: 낮덱(오펜스)에 offenseId, 밤덱에 다른 한 명 ([11]-3). 그 밖에는 false */
-  assignHeroes(offenseId: string): boolean {
-    if (this.assignmentDone || this.phase !== 'dayStart') return false;
-    const pair = [this.heroes.offense.id, this.heroes.defense.id];
-    if (!pair.includes(offenseId)) return false;
-    if (this.heroes.offense.id !== offenseId) {
-      const t = this.heroes.offense;
-      this.heroes.offense = this.heroes.defense;
-      this.heroes.defense = t;
+  /** 팀 목록 (빈 팀 제외) */
+  teams(role: Role): string[][] {
+    return teamsOf(this.formation, role);
+  }
+
+  /** 지금 그 덱에서 레인에 나가 있는(나갈) 팀 */
+  activeTeamIds(role: Role): string[] {
+    return this.teams(role)[this.activeTeam[role]] ?? [];
+  }
+
+  /** 레인 팀 기준 역할: 낮 → 공격대, 밤 → 수비대, 전투 밖 → 다음에 나갈 공격대 (§5.20-4) */
+  get laneRole(): Role {
+    return this.phase === 'night' ? 'defense' : 'offense';
+  }
+
+  /** 켜진 인연 (§5.20-6) */
+  get bonds(): ActiveBond[] {
+    return activeBonds(this.data, this.formation);
+  }
+
+  /** 이 영웅에게 걸린 인연 효과 (지금 편성 기준) */
+  private bondEffect(id: string): { dmgReduce: number; gaugeMult: number; atkPct: number } {
+    const out = { dmgReduce: 0, gaugeMult: 1, atkPct: 0 };
+    for (const b of this.bonds) {
+      if (!b.heroes.includes(id)) continue;
+      const e = b.bond.effect;
+      out.dmgReduce += e.dmgReduce ?? 0;
+      out.gaugeMult *= e.gaugeMult ?? 1;
+      out.atkPct += e.atkPct ?? 0;
     }
-    return true;
+    return out;
   }
 
-  /** 영웅을 레인에 (단계 시작: hp 가득 / 일어남: hp × reviveHpRatio, 낮이면 쓰러진 자리에서) */
-  private enterHero(role: Role, out: CoreEvent[], hpRatio = 1, revive = false, y?: number): void {
-    const s = this.heroStats(role);
+  /** 영웅 능력치 (레벨 + 인연, 기세·한낮 제외) */
+  heroStats(id: string): CombatStats & { dmgMult: number } {
+    const p = this.progressOf(id);
+    const s = statsAtLevel(this.heroDef(id), p.level, this.data.balance.exp);
+    const bond = this.bondEffect(id);
+    return { ...s, atk: s.atk * (1 + bond.atkPct), dmgMult: 1 - Math.min(0.95, bond.dmgReduce) };
+  }
+
+  /** 레인 위 영웅 유닛 (없으면 null) */
+  heroUnit(id: string): Unit | null {
+    const uid = this.heroUnits.get(id);
+    if (uid === undefined) return null;
+    for (const lane of [this.abyss, this.defense] as UnitHost[]) {
+      const u = lane.units.find((x) => x.id === uid);
+      if (u) return u;
+    }
+    return null;
+  }
+
+  /** 레인 위 그 덱 팀 영웅 유닛들 (팀 순서, 살아 있는 것만) */
+  teamUnits(role: Role): Unit[] {
+    return this.activeTeamIds(role)
+      .map((id) => this.heroUnit(id))
+      .filter((u): u is Unit => u !== null && u.hp > 0);
+  }
+
+  /** 레인 위 그 덱 맨 앞 영웅 (표시·테스트용) */
+  heroUnitOf(role: Role): Unit | null {
+    return this.teamUnits(role)[0] ?? null;
+  }
+
+  /** 영웅을 레인에 (팀 출발: hp 가득 / 일어남: hp × 비율) */
+  private enterHero(role: Role, id: string, out: CoreEvent[], opts: { hpRatio?: number; revive?: boolean; y?: number } = {}): void {
+    const s = this.heroStats(id);
+    const def = this.heroDef(id);
     const lane = this.laneOf(role);
-    const u = lane.addUnit(this.nextUnitId++, sideOf(role), this.heroes[role].id, 0, s, {
+    const u = lane.addUnit(this.nextUnitId++, sideOf(role), id, 0, s, {
       role: 'hero',
       dmgMult: s.dmgMult,
-      hp: s.hp * hpRatio,
-      ...(y !== undefined ? { y } : {}),
-    })!;
-    this.heroUnit[role] = u.id;
+      hp: s.hp * (opts.hpRatio ?? 1),
+      attackType: def.attackType,
+      ...(opts.y !== undefined ? { y: opts.y } : {}),
+    });
+    if (!u) return;
+    this.heroUnits.set(id, u.id);
     this.unitRoles.set(u.id, 'hero');
+    if (role === 'defense') this.foughtNight.add(id);
     this.applyMomentum(role);
-    out.push({ type: 'heroEnter', role, unitId: u.id, revive });
+    out.push({ type: 'heroEnter', role, unitId: u.id, heroId: id, revive: opts.revive ?? false });
   }
 
-  /** 기세 반영: 영웅 유닛 atk = 기본 atk × (1 + 보너스) */
+  /** 팀 출발: 낮은 이야기책에서 앞·가운데·뒤 순서로(쓰러진 영웅 제외), 밤은 거점 앞 */
+  private enterTeam(role: Role, out: CoreEvent[]): void {
+    const ids = this.activeTeamIds(role).filter((id) => !(role === 'offense' && this.fallen.has(id)));
+    const sp = this.data.balance.team.spacing;
+    ids.forEach((id, i) => {
+      this.enterHero(role, id, out, role === 'offense' ? { y: this.abyss.teamStartY(i, ids.length, sp) } : {});
+    });
+  }
+
+  /** 레인 위 영웅 유닛을 모두 내린다 (교대) */
+  private removeTeamUnits(role: Role): void {
+    const lane = this.laneOf(role);
+    const ids = new Set(this.heroUnits.values());
+    for (let i = lane.units.length - 1; i >= 0; i--) if (lane.units[i].role === 'hero' && ids.has(lane.units[i].id)) lane.units.splice(i, 1);
+    this.heroUnits.clear();
+  }
+
+  /** 기세 반영: 팀 영웅 atk = 기본 atk × (1 + 보너스) */
   private applyMomentum(role: Role): void {
-    const u = this.heroUnitOf(role);
-    if (u) u.atk = this.heroStats(role).atk * (1 + this.heroes[role].momentum.bonus);
+    for (const id of this.activeTeamIds(role)) {
+      const u = this.heroUnit(id);
+      if (u) u.atk = this.heroStats(id).atk * (1 + this.momentum[role].bonus);
+    }
   }
 
   private resetMomentum(role: Role): void {
-    this.heroes[role].momentum = { stacks: 0, bonus: 0, timer: 0 };
+    this.momentum[role] = { stacks: 0, bonus: 0, timer: 0 };
+    this.noon[role] = { timer: 0, pct: 0 };
   }
 
-  /** 기세 시간 감소 (전투 중, 지금 싸우는 쪽만). 다 되면 모든 중첩이 함께 사라진다 */
-  private tickMomentum(role: Role): void {
-    const m = this.heroes[role].momentum;
+  /** 기세·한낮 시간 감소 (전투 중, 지금 싸우는 쪽만) */
+  private tickBuffs(role: Role): void {
+    const m = this.momentum[role];
     this.stats.momentumStackSeconds += m.stacks * FIXED_DT;
-    if (m.stacks === 0) return;
-    m.timer -= FIXED_DT;
-    if (m.timer <= TICK_EPS) {
-      this.resetMomentum(role);
-      this.applyMomentum(role);
+    if (m.stacks > 0) {
+      m.timer -= FIXED_DT;
+      if (m.timer <= TICK_EPS) {
+        this.momentum[role] = { stacks: 0, bonus: 0, timer: 0 };
+        this.applyMomentum(role);
+      }
     }
+    const n = this.noon[role];
+    if (n.timer > 0) {
+      n.timer = Math.max(0, n.timer - FIXED_DT);
+      if (n.timer <= TICK_EPS) n.pct = 0;
+    }
+    this.laneOf(role).atkMult = 1 + (n.timer > 0 ? n.pct : 0);
   }
+
+  // ── 편성 (§5.20-2) ──
+
+  /** 편성 검사 (문제가 없으면 null) */
+  formationError(f: Formation): string | null {
+    return formationError(f, this.owned, this.data.balance.team);
+  }
+
+  /**
+   * 편성 확정. 바뀌었고 전투 중이면 지금 단계를 단계 시작 스냅샷으로 되돌려 다시 (D-049).
+   * 전투 밖(장면 카드·이야기 한 장)에서 바꾸면 재시작 없음.
+   */
+  setFormation(f: Formation): FormationResult {
+    const err = this.formationError(f);
+    if (err) return { ok: false, reason: err };
+    this.formationSeen = true;
+    if (sameFormation(f, this.formation)) return { ok: true, restarted: false };
+    // 빈 팀은 정리 (팀 순서는 유지)
+    this.formation = { offense: teamsOf(f, 'offense').map((t) => [...t]), defense: teamsOf(f, 'defense').map((t) => [...t]) };
+    if (this.phase === 'day' || this.phase === 'night') {
+      this.restartPhase(this.pending);
+      return { ok: true, restarted: true };
+    }
+    return { ok: true, restarted: false };
+  }
+
+  private takeSnapshot(): void {
+    this.snapshot = {
+      grid: structuredClone(this.grid.cells),
+      roster: structuredClone(this.roster),
+      rngState: this.rng.getState(),
+      stats: structuredClone(this.stats),
+      attemptStats: structuredClone(this.attemptStats),
+      nextPieceId: this.nextPieceId,
+    };
+  }
+
+  /** 단계 시작 스냅샷으로 되돌리고 그 단계를 처음부터 */
+  private restartPhase(out: CoreEvent[]): void {
+    const s = this.snapshot;
+    if (!s) return;
+    const phase = this.phase as 'day' | 'night';
+    this.grid.cells.splice(0, this.grid.cells.length, ...structuredClone(s.grid));
+    this.roster.splice(0, this.roster.length, ...structuredClone(s.roster));
+    this.rng.setState(s.rngState);
+    Object.assign(this.stats, structuredClone(s.stats));
+    this.attemptStats = structuredClone(s.attemptStats);
+    this.nextPieceId = s.nextPieceId;
+    out.push({ type: 'formationRestart', phase });
+    if (phase === 'day') this.startDay(out);
+    else this.startNight(out);
+  }
+
+  // ── 시간 ──
 
   /**
    * dt: 배속이 반영된 경과 시간(초). 고정 틱 단위로 나눠 처리하고 그동안 생긴 이벤트를 돌려준다.
@@ -435,13 +578,7 @@ export class GameState {
     return out;
   }
 
-  /**
-   * 고정 틱 하나. 낮과 밤은 동시에 돌지 않는다.
-   * 낮: 1. 낮 레인 step (§5.19-2) → 2. 처치·쓰러짐·핵 이벤트 → 3. 병사 수명 → 4. 기세 → 5. 낮 시간 감소 → 6. 운반 중 쓰러진 영웅 일어남
-   *     → 도착이면 낮 성공(해질녘 / 1-length면 챕터 완성), 가는 길 쓰러짐·시간 초과면 실패
-   * 밤: 1. 웨이브 → 2. 방어 step → 3. 거점에 닿은 적 → 핵 HP − → 4. 영웅 일어남 → 5. 병사 수명 → 6. 기세
-   *     → 핵 HP 0이면 실패, 마지막 웨이브가 끝나면 새벽(스테이지 성공)
-   */
+  /** 고정 틱 하나. 낮과 밤은 동시에 돌지 않는다 */
   private step(out: CoreEvent[]): void {
     this.tickCount += 1;
     this.playTime = this.tickCount / TICK_RATE;
@@ -449,11 +586,52 @@ export class GameState {
     if (this.phase === 'day') this.attemptStats.offenseSeconds += FIXED_DT;
     else this.attemptStats.defenseSeconds += FIXED_DT;
     if (this.inBattle) this.stats.battleSeconds += FIXED_DT;
-    // metrics: 이 틱에 그리드에 빈칸이 없음 (관찰만)
-    if (this.grid.cells.every((c) => c !== null)) this.attemptStats.gridFullSeconds += FIXED_DT;
+    if (isFull(this.grid)) {
+      this.attemptStats.gridFullSeconds += FIXED_DT;
+      if (this.inBattle) this.stats.gridFullSeconds += FIXED_DT;
+    }
 
     if (this.phase === 'day') this.stepOffense(out);
     else this.stepDefense(out);
+    if (!this.timeFlows) return; // 단계가 끝남
+
+    // 저절로 조각 (§5.20-13): 전투 중 autoInterval마다 1단계 1개
+    if (this.inBattle) {
+      this.autoTimer -= FIXED_DT;
+      if (this.autoTimer <= TICK_EPS) {
+        this.autoTimer += this.data.balance.spawn.autoInterval;
+        this.makePiece('auto', 1, null, out);
+      }
+    }
+    // 자동 모드: 게이지가 찬 레인 영웅은 바로 발동 (수동 → 자동 전환·찬 채로 다시 나온 영웅)
+    if (this.autoSkill) {
+      const role = this.fightingRole;
+      if (role) for (const id of this.activeTeamIds(role)) if (this.skillReady(id)) this.fireSkill(role, id, out);
+    }
+  }
+
+  /**
+   * 조각 하나를 그리드 빈 칸(rng)에. 체인 = 레인 팀 체인 중 균등 (§5.20-4). 가득이면 버림.
+   * source: auto = 저절로 / drop = 처치 드롭 / boss = 보스·guardian 확정
+   */
+  private makePiece(source: 'auto' | 'drop' | 'boss', tier: number, from: { role: Role; x: number; y: number } | null, out: CoreEvent[]): void {
+    const chain = pickChain(
+      this.rng,
+      this.spawnChains.map((id) => ({ id, weight: 1 })),
+    );
+    const piece = this.newPiece(chain, tier);
+    const index = pickEmpty(this.rng, this.grid);
+    if (index === null) {
+      this.stats.piecesDiscarded += 1;
+      this.attemptStats.discarded += 1;
+    } else {
+      this.grid.cells[index] = piece;
+      this.attemptStats.spawns += 1;
+      this.stats.chainSpawns[chain] = (this.stats.chainSpawns[chain] ?? 0) + 1;
+      if (source === 'auto') this.stats.piecesAuto += 1;
+      else this.stats.piecesDropped += 1;
+    }
+    out.push({ type: 'piece', source, index, piece, from });
   }
 
   /** 우리 편이 준 피해 집계 (영웅 / 병사 / 거점) */
@@ -474,60 +652,91 @@ export class GameState {
     else this.stats.damageHero += dmg;
   }
 
-  /** 처치: 기쁨 + */
-  private defeated(joy: number): void {
-    this.joy += joy;
-    this.stats.worriesDefeated += 1;
-    this.stats.totalJoyEarned += joy;
-    this.attemptStats.defeated += 1;
+  /** 이번 단계 경험치: 지금 레인 팀원에게 균등 */
+  private giveExp(role: Role, amount: number): void {
+    const ids = this.activeTeamIds(role);
+    if (!ids.length || amount <= 0) return;
+    for (const id of ids) this.phaseExp.set(id, (this.phaseExp.get(id) ?? 0) + amount / ids.length);
   }
 
-  /** 낮: 핵 찾아 돌아오기 */
+  /** 단계가 끝남: 이번 단계 경험치를 넣는다 (실패면 × failMult) */
+  private commitExp(success: boolean, out: CoreEvent[]): void {
+    const cfg = this.data.balance.exp;
+    for (const [id, x] of this.phaseExp) {
+      const p = this.roster.find((r) => r.id === id);
+      if (!p) continue;
+      if (addExp(p, x * (success ? 1 : cfg.failMult), cfg) > 0) out.push({ type: 'levelUp', heroId: id, level: p.level });
+    }
+    this.phaseExp = new Map();
+  }
+
+  /** 이번 단계에 쌓인 (아직 넣지 않은) 경험치 */
+  pendingExp(id: string): number {
+    return this.phaseExp.get(id) ?? 0;
+  }
+
+  /** 처치: 경험치 + 조각 드롭 (보스는 bossDropTier × bossDropCount 확정, 일반은 killDropChance로 1단계 1개) */
+  private defeated(role: Role, x: number, y: number, boss: boolean, out: CoreEvent[]): void {
+    const sp = this.data.balance.spawn;
+    this.stats.worriesDefeated += 1;
+    this.attemptStats.defeated += 1;
+    this.giveExp(role, this.data.balance.exp.kill);
+    if (boss) for (let k = 0; k < sp.bossDropCount; k++) this.makePiece('boss', sp.bossDropTier, { role, x, y }, out);
+    else if (this.rng() < sp.killDropChance) this.makePiece('drop', 1, { role, x, y }, out);
+  }
+
+  /** 오누이 인연: 이 영웅의 팀에 켜져 있고 이번 단계에 아직 안 썼으면 쓴다 → 일어날 hp 비율 */
+  private siblingsRevive(role: Role, id: string): number | null {
+    const team = this.activeTeam[role];
+    const key = `${role}:${team}`;
+    if (this.siblingsUsed.has(key)) return null;
+    const b = this.bonds.find((x) => x.side === role && x.team === team && x.bond.effect.firstFallReviveHp !== undefined && x.heroes.includes(id));
+    if (!b) return null;
+    this.siblingsUsed.add(key);
+    return b.bond.effect.firstFallReviveHp!;
+  }
+
+  /** 낮: 핵 찾아 돌아오기 (팀 릴레이) */
   private stepOffense(out: CoreEvent[]): void {
-    const b = this.data.balance;
     const ex = this.abyss;
-    const outbound = !ex.guardianDown;
     const from = out.length;
     ex.step(FIXED_DT, out, this.rng);
     this.countDamage(out, from);
-    let fell = false;
     let home = false;
     const end = out.length;
     for (let i = from; i < end; i++) {
       const e = out[i];
       switch (e.type) {
         case 'enemyDie':
-          this.defeated(e.joy);
+          this.defeated('offense', e.x, e.y, false, out);
           break;
-        case 'offenseUnitDie':
+        case 'offenseUnitDie': {
           if (e.role !== 'hero') {
             this.stats.offenseSoldierDeaths += 1;
             break;
           }
-          this.heroUnit.offense = null;
+          const id = e.chain;
+          this.heroUnits.delete(id);
           this.stats.offenseFalls += 1;
-          if (outbound) {
-            fell = true; // 가는 길 쓰러짐 = 그 낮 실패 (§5.17-10)
+          if (e.carrying) this.attemptStats.carryFalls += 1;
+          const again = this.siblingsRevive('offense', id);
+          if (again !== null) {
+            this.enterHero('offense', id, out, { hpRatio: again, revive: true, y: e.y });
           } else {
-            // 운반 중(guardian 처치 뒤) 쓰러짐 → reviveSeconds 뒤 그 자리에서 일어남
-            this.offenseDown = b.hero.reviveSeconds;
-            this.offenseFallY = e.y;
-            this.attemptStats.carryFalls += 1;
-            out.push({ type: 'heroDown', role: 'offense', unitId: e.unitId, seconds: b.hero.reviveSeconds });
+            this.fallen.add(id); // 그 낮 동안 안 일어남 (§5.20-3)
+            out.push({ type: 'heroDown', role: 'offense', unitId: e.unitId, heroId: id, seconds: 0 });
           }
-          break;
-        case 'guardianDown': {
-          this.stats.guardiansDown += 1;
-          this.attemptStats.guardianDown = 1;
-          const bonus: Grant[] = [];
-          if (this.faceBonus) {
-            this.faceBonus = false;
-            const chain = pickChain(this.rng, this.data.chains.map((c) => ({ id: c.archetypeId, weight: c.spawnWeight })));
-            bonus.push(this.grantPiece(this.newPiece(chain, 1), ex.geo.centerX, ex.geo.wallY));
-          }
-          out.push({ type: 'coreFound', stage: this.stage, bonus });
           break;
         }
+        case 'guardianDown':
+          this.stats.guardiansDown += 1;
+          this.attemptStats.guardianDown = 1;
+          this.giveExp('offense', this.data.balance.exp.guardian);
+          out.push({ type: 'coreFound', stage: this.stage });
+          for (let k = 0; k < this.data.balance.spawn.bossDropCount; k++) {
+            this.makePiece('boss', this.data.balance.spawn.bossDropTier, { role: 'offense', x: ex.geo.centerX, y: ex.geo.wallY }, out);
+          }
+          break;
         case 'coreDrop':
           this.stats.coreDrops += 1;
           this.attemptStats.drops += 1;
@@ -544,26 +753,48 @@ export class GameState {
       }
     }
     ex.expireSoldiers(FIXED_DT);
-    this.tickMomentum('offense');
+    this.tickBuffs('offense');
     this.offenseTimer -= FIXED_DT;
     this.attemptStats.carrySeconds = ex.carryTime;
-    if (this.offenseDown > 0 && !home) {
-      this.offenseDown -= FIXED_DT;
-      if (this.offenseDown <= TICK_EPS) {
-        this.offenseDown = 0;
-        this.enterHero('offense', out, b.hero.reviveHpRatio, true, this.offenseFallY);
+
+    if (home) {
+      this.coresDone += 1;
+      if (this.coresDone >= this.stageDef.cores) return this.daySuccess(out);
+      this.nextCore(out);
+      return;
+    }
+    // 팀 전멸 → 다음 팀이 이야기책에서 출발, 같은 핵 이어받기 (떨어진 핵은 그 자리)
+    if (this.teamUnits('offense').length === 0) {
+      if (this.activeTeam.offense + 1 < this.teams('offense').length) {
+        this.activeTeam.offense += 1;
+        this.stats.teamSwapsDay += 1;
+        this.attemptStats.teamSwaps += 1;
+        this.resetMomentum('offense');
+        this.enterTeam('offense', out);
+        out.push({ type: 'teamSwap', role: 'offense', team: this.activeTeam.offense, reason: 'wipe' });
+      } else {
+        return this.fail('dayFall', out);
       }
     }
-
-    if (home) this.daySuccess(out);
-    else if (fell) this.fail('dayFall', out);
-    else if (this.offenseTimer <= TICK_EPS) this.fail(ex.guardianDown ? 'returnTime' : 'dayTime', out);
+    if (this.offenseTimer <= TICK_EPS) this.fail(ex.guardianDown ? 'returnTime' : 'dayTime', out);
   }
 
-  /** 핵을 이야기책에 가져옴: 보스 스테이지면 와일드카드 → 1-length면 챕터 완성, 아니면 해질녘 */
+  /** 핵을 하나 들였고 남은 핵이 있다: 다음 핵은 다음 팀 (없으면 같은 팀) */
+  private nextCore(out: CoreEvent[]): void {
+    this.removeTeamUnits('offense');
+    this.resetExpedition();
+    if (this.activeTeam.offense + 1 < this.teams('offense').length) this.activeTeam.offense += 1;
+    this.stats.teamSwapsDay += 1;
+    this.attemptStats.teamSwaps += 1;
+    this.enterTeam('offense', out);
+    out.push({ type: 'teamSwap', role: 'offense', team: this.activeTeam.offense, reason: 'core' });
+  }
+
+  /** 핵을 모두 이야기책에 가져옴: 보스 스테이지면 와일드카드 → 1-length면 챕터 완성, 아니면 해질녘 */
   private daySuccess(out: CoreEvent[]): void {
     const b = this.data.balance;
     const ex = this.abyss;
+    this.commitExp(true, out);
     if (this.stageDef.day.boss) {
       const rewards: Grant[] = [];
       for (let k = 0; k < b.guardian.bossWildcards; k++) {
@@ -574,15 +805,15 @@ export class GameState {
     }
     if (this.stage >= this.chapterLength) {
       const record = this.finishAttempt('success');
-      this.pages.push(this.stage);
-      out.push({ type: 'stageClear', stage: this.stage, record });
+      this.openPage(record);
+      out.push({ type: 'stageClear', stage: this.stage, record, notes: this.pageNotes[this.stage] });
       this.enterChapterComplete(out);
       return;
     }
     this.dusk(out);
   }
 
-  /** 밤: 웨이브 → 방어 레인 → 핵 HP → 영웅 일어남 */
+  /** 밤: 웨이브 → 방어 레인 → 핵 HP → 영웅 일어남 → 구간·전멸 교대 */
   private stepDefense(out: CoreEvent[]): void {
     const b = this.data.balance;
     this.spawnFromWave(out);
@@ -593,16 +824,21 @@ export class GameState {
     for (let i = from; i < end; i++) {
       const e = out[i];
       if (e.type === 'unitDie' && e.role === 'hero') {
-        // 밤 영웅 쓰러짐 → reviveSeconds 뒤 hp × reviveHpRatio로 일어남 (§5.17-10)
-        this.heroUnit.defense = null;
-        this.defenseDown = b.hero.reviveSeconds;
+        const id = e.chain;
+        this.heroUnits.delete(id);
         this.stats.defenseFalls += 1;
         this.attemptStats.defenseFalls += 1;
-        out.push({ type: 'heroDown', role: 'defense', unitId: e.unitId, seconds: b.hero.reviveSeconds });
+        const again = this.siblingsRevive('defense', id);
+        if (again !== null) {
+          this.enterHero('defense', id, out, { hpRatio: again, revive: true });
+        } else {
+          // 밤 쓰러짐 → reviveSeconds 뒤 hp × reviveHpRatio로 일어남
+          this.reviveTimers.set(id, b.hero.reviveSeconds);
+          out.push({ type: 'heroDown', role: 'defense', unitId: e.unitId, heroId: id, seconds: b.hero.reviveSeconds });
+        }
       } else if (e.type === 'worryDie') {
-        this.defeated(e.joy);
+        this.defeated('defense', e.x, e.y, e.boss, out);
       } else if (e.type === 'sink') {
-        // 거점에 닿음 → 핵 HP − (보스 웨이브 적은 bossSinkDamage, §5.19-3)
         const damage = e.boss ? b.core.bossSinkDamage : b.core.sinkDamage;
         this.coreHp = Math.max(0, this.coreHp - damage);
         this.stats.sunkCount += 1;
@@ -611,29 +847,55 @@ export class GameState {
       }
     }
 
-    if (this.defenseDown > 0) {
-      this.defenseDown -= FIXED_DT;
-      if (this.defenseDown <= TICK_EPS) {
-        this.defenseDown = 0;
-        this.enterHero('defense', out, b.hero.reviveHpRatio, true);
-      }
+    for (const [id, t] of [...this.reviveTimers]) {
+      const left = t - FIXED_DT;
+      if (left <= TICK_EPS) {
+        this.reviveTimers.delete(id);
+        if (this.activeTeamIds('defense').includes(id)) this.enterHero('defense', id, out, { hpRatio: b.hero.reviveHpRatio, revive: true });
+      } else this.reviveTimers.set(id, left);
     }
     this.defense.expireSoldiers(FIXED_DT);
-    this.tickMomentum('defense');
+    this.tickBuffs('defense');
+
+    // 교대: 웨이브 구간 담당이 넘어감 / 팀 전멸 → 다음 팀 즉시 (마지막 팀은 그대로 일어남을 기다린다)
+    const teams = this.teams('defense');
+    const n = Math.max(1, this.wave.waveCount);
+    const owner = Math.min(teams.length - 1, Math.floor((this.wave.slot * teams.length) / n));
+    if (owner > this.activeTeam.defense) this.swapDefense(owner, 'segment', out);
+    else if (this.teamUnits('defense').length === 0 && this.activeTeam.defense + 1 < teams.length) this.swapDefense(this.activeTeam.defense + 1, 'wipe', out);
 
     if (this.coreHp <= 0) this.fail('night', out);
     else if (this.wave.phase === 'done') this.nightSuccess(out);
   }
 
-  /** 밤 1단계: 이번 틱에 등장할 적 (stages.json night, 스테이지 고정) */
+  private swapDefense(team: number, reason: 'wipe' | 'segment', out: CoreEvent[]): void {
+    this.removeTeamUnits('defense');
+    this.reviveTimers.clear();
+    this.activeTeam.defense = team;
+    this.resetMomentum('defense');
+    this.stats.teamSwapsNight += 1;
+    this.attemptStats.teamSwaps += 1;
+    this.enterTeam('defense', out);
+    out.push({ type: 'teamSwap', role: 'defense', team, reason });
+  }
+
+  /** 밤 1단계: 이번 틱에 등장할 적 (stages.json night × 떼, 스테이지 고정). 동시 적 상한이면 대기열 → 자리가 나면 등장 */
   private spawnFromWave(out: CoreEvent[]): void {
     const lane = this.defense;
     const geo = lane.geo;
-    for (const s of this.wave.step(FIXED_DT, lane.worries.length === 0)) {
-      const x = geo.spawnXMin + this.rng() * (geo.spawnXMax - geo.spawnXMin);
-      const st: WorryStats = { ...enemyStats(this.data, s.type, this.stage), boss: s.boss };
-      lane.spawnWorry(st, x, out);
+    for (const s of this.wave.step(FIXED_DT, lane.worries.length === 0 && this.nightQueue.length === 0)) {
+      this.nightQueue.push({ ...enemyStats(this.data, s.type, this.stage, !s.boss), boss: s.boss });
     }
+    const max = this.data.balance.swarm.laneMaxEnemies;
+    while (this.nightQueue.length && lane.worries.length < max) {
+      const x = geo.spawnXMin + this.rng() * (geo.spawnXMax - geo.spawnXMin);
+      lane.spawnWorry(this.nightQueue.shift()!, x, out);
+    }
+  }
+
+  /** 밤 대기열에 남은 적 수 (표시용) */
+  get nightQueued(): number {
+    return this.nightQueue.length;
   }
 
   /** 조각 지급: 빈 칸(rng)에, 없으면 사라짐 */
@@ -649,61 +911,35 @@ export class GameState {
 
   // ── 스테이지 흐름 (§5.19-1) ──
 
-  /** 적 묶음 → 능력치 줄 (종류별로 번갈아) */
+  /** 적 묶음 × 떼 → 능력치 줄 (종류별로 번갈아) */
   private expand(groups: readonly EnemyGroup[]): EnemyStats[] {
-    return interleave(groups).map((t) => enemyStats(this.data, t, this.stage));
+    return interleave(swarmGroups(this.data, groups)).map((t) => enemyStats(this.data, t, this.stage));
   }
 
-  /**
-   * 장면 카드를 닫는다(갈림길이면 선택). 시도 시작 처리 (이 순서):
-   * 1. 시도 수 + 1, 이번 시도 기록·생성 비용 초기화
-   * 2. 기쁨 바닥 joy = max(joy, morningJoyFloor) (D-024)
-   * 3. 갈림길 선택 효과 (joy, flag, face: 이번 시도 guardian HP × (1 − reduce) · guardian 처치 때 조각 +1)
-   * 4. 낮 시작: guardian·가는 길 무리·추격 무리 배치, 낮덱 영웅이 이야기책에 hp 가득으로, offense.seconds
-   */
-  confirmDay(choiceId?: string): ConfirmResult {
+  /** 장면 카드를 닫는다 → 시도 수 + 1, 낮 시작 */
+  confirmDay(): ConfirmResult {
     if (this.phase !== 'dayStart') return { ok: false, reason: 'notDayStart' };
-    const cr = this.crossroad;
-    const choice = cr?.event.choices.find((c) => c.id === choiceId);
-    if (cr && choiceId === undefined) return { ok: false, reason: 'needChoice' };
-    if (cr && !choice) return { ok: false, reason: 'badChoice' };
     const b = this.data.balance;
     const out = this.pending;
-    this.assignmentDone = true;
-
-    // 1
+    this.formationSeen = true;
     this.attempt += 1;
     this.attempts[this.stage - 1] += 1;
     this.stats.attempts += 1;
-    this.spawnedAttempt = 0;
-    this.attemptStats = emptyAttemptStats(this.stage, this.attempt, this.joy, b.grid.maxTier);
-
-    // 2
-    this.joy = Math.max(this.joy, b.days.morningJoyFloor);
-
-    // 3
-    this.faceReduce = 0;
-    this.faceBonus = false;
-    if (choice) {
-      this.pendingCrossroad = false;
-      this.joy = Math.max(0, this.joy + choice.joy);
-      this.flags.push(choice.flag);
-      this.faceReduce = choice.faceLayerHpReduce ?? 0;
-      this.faceBonus = choice.bonusReturnPiece ?? false;
-    }
-    this.attemptStats.joyStart = this.joy;
-
-    // 4
+    this.attemptStats = emptyAttemptStats(this.stage, this.attempt, b.grid.maxTier);
     this.phase = 'day';
-    this.offenseTimer = this.offenseSeconds;
-    this.clearLaneUnits();
-    this.wave.stop();
+    this.startDay(out);
+    out.push({ type: 'dayBegin', stage: this.stage, attempt: this.attempt });
+    return { ok: true };
+  }
+
+  /** guardian·가는 길 무리·추격 무리 배치 */
+  private resetExpedition(): void {
     const st = this.stageDef;
-    const g = b.guardian;
+    const g = this.data.balance.guardian;
     this.abyss.reset(
       {
         type: st.day.guardian,
-        hp: st.day.guardianHp * (1 - this.faceReduce),
+        hp: st.day.guardianHp,
         atk: g.counterAtk * (st.day.boss ? g.bossCounterMult : 1),
         atkInterval: g.counterAtkInterval,
         range: g.counterRange,
@@ -713,9 +949,23 @@ export class GameState {
       this.expand(st.day.chase),
       this.rng,
     );
-    this.enterHero('offense', out);
-    out.push({ type: 'dayBegin', stage: this.stage, attempt: this.attempt });
-    return { ok: true };
+  }
+
+  /** 낮 시작 (또는 편성 재시작): 스냅샷 → 레인 비움 → 공격대 1팀 출발 */
+  private startDay(out: CoreEvent[]): void {
+    this.takeSnapshot();
+    this.offenseTimer = this.offenseSeconds;
+    this.clearLaneUnits();
+    this.wave.stop();
+    this.fallen.clear();
+    this.siblingsUsed.clear();
+    this.phaseExp = new Map();
+    this.coresDone = 0;
+    this.autoTimer = this.data.balance.spawn.autoInterval;
+    this.activeTeam.offense = 0;
+    for (const r of ROLES) this.resetMomentum(r);
+    this.resetExpedition();
+    this.enterTeam('offense', out);
   }
 
   /** 두 레인 위 우리 편·적을 모두 비운다 (단계가 바뀔 때) */
@@ -723,33 +973,45 @@ export class GameState {
     this.abyss.clear();
     this.defense.units.length = 0;
     this.defense.worries.length = 0;
-    this.heroUnit = { offense: null, defense: null };
+    this.nightQueue.length = 0;
+    this.heroUnits.clear();
     this.unitRoles.clear();
-    this.defenseDown = 0;
-    this.offenseDown = 0;
+    this.reviveTimers.clear();
+    this.abyss.atkMult = 1;
+    this.defense.atkMult = 1;
   }
 
-  /**
-   * 해질녘 (즉시): 낮 병사·영웅은 물러난다(귀환 없음) → 기세 초기화 → 밤 시작:
-   * 핵이 이야기책에 놓인다 (핵 HP 가득), 밤덱 영웅이 거점 앞에 hp 가득으로, 스테이지의 웨이브 시작.
-   */
+  /** 해질녘 (즉시): 낮 레인 비움 → 밤 시작 */
   private dusk(out: CoreEvent[]): void {
     this.offenseTimer = 0;
+    this.phase = 'night';
+    this.startNight(out);
+    out.push({ type: 'dusk', stage: this.stage });
+  }
+
+  /** 밤 시작 (또는 편성 재시작): 스냅샷 → 핵이 이야기책에 (HP 가득) → 수비대 1팀 → 스테이지 웨이브 */
+  private startNight(out: CoreEvent[]): void {
+    this.takeSnapshot();
     this.clearLaneUnits();
     for (const r of ROLES) this.resetMomentum(r);
-    this.phase = 'night';
+    this.siblingsUsed.clear();
+    this.phaseExp = new Map();
+    this.foughtNight.clear();
     this.coreHp = this.data.balance.core.hp;
+    this.autoTimer = this.data.balance.spawn.autoInterval;
+    this.activeTeam.defense = 0;
     const n = this.stageDef.night;
-    this.wave.start(n.waves, n.bossWave);
-    this.enterHero('defense', out);
-    out.push({ type: 'dusk', stage: this.stage });
+    this.wave.start(
+      n.waves.map((w) => swarmGroups(this.data, w)),
+      n.bossWave,
+    );
+    this.enterTeam('defense', out);
   }
 
   /** 시도를 마치고 기록 (판 stats 누적) */
   private finishAttempt(result: AttemptResult): AttemptStats {
     const a = this.attemptStats;
     a.result = result;
-    a.joyEnd = this.joy;
     a.carrySeconds = this.abyss.carryTime;
     if (this.phase === 'night') a.coreHpEnd = this.coreHp;
     this.stats.carrySeconds += a.carrySeconds;
@@ -762,38 +1024,61 @@ export class GameState {
     return a;
   }
 
-  /** 실패 → 레인 비움 → 같은 스테이지 장면 카드 (재도전). 영웅 강화·그리드·기쁨은 그대로 (D-054) */
+  /** 실패 → 레인 비움 → 같은 스테이지 장면 카드 (재도전). 경험치는 × failMult, 그리드는 그대로 */
   private fail(reason: FailReason, out: CoreEvent[]): void {
+    this.commitExp(false, out);
     const record = this.finishAttempt(reason);
     this.offenseTimer = 0;
     this.clearLaneUnits();
     for (const r of ROLES) this.resetMomentum(r);
     this.wave.stop();
+    this.snapshot = null;
     this.retry = reason;
     this.phase = 'dayStart';
     out.push({ type: 'attemptFail', stage: this.stage, reason, record });
-    out.push({ type: 'stageStart', stage: this.stage, retry: reason, crossroad: this.pendingCrossroad });
+    out.push({ type: 'stageStart', stage: this.stage, retry: reason });
   }
 
-  /** 새벽 (핵 HP > 0): 스테이지 성공 → 아침 이야기 한 장. 1-turningPoint면 다음 장면 카드 = 갈림길 */
+  /** 새벽 (핵 HP > 0): 밤 성공 경험치(싸운 영웅 균등) → 스테이지 성공 → 아침 이야기 한 장 */
   private nightSuccess(out: CoreEvent[]): void {
+    const fought = [...this.foughtNight];
+    for (const id of fought) this.phaseExp.set(id, (this.phaseExp.get(id) ?? 0) + this.data.balance.exp.nightWin / fought.length);
+    this.commitExp(true, out);
     const record = this.finishAttempt('success');
     this.clearLaneUnits();
     for (const r of ROLES) this.resetMomentum(r);
     this.wave.stop();
+    this.snapshot = null;
     this.phase = 'diary';
-    this.pages.push(this.stage);
-    if (this.stage === this.data.balance.chapter.turningPoint) this.pendingCrossroad = true;
-    out.push({ type: 'stageClear', stage: this.stage, record });
+    this.openPage(record);
+    out.push({ type: 'stageClear', stage: this.stage, record, notes: this.pageNotes[this.stage] });
   }
 
-  /** [다음 이야기]: 이야기 한 장 → 다음 스테이지 장면 카드 */
+  /** 이야기책에 장을 펼치고 플레이 문장을 덧붙인다 (§5.20-8) */
+  private openPage(record: AttemptStats): void {
+    this.pages.push(this.stage);
+    const pl = this.data.chapter.pageLines;
+    const st = this.stageDef;
+    const notes: string[] = [];
+    const carrier = this.abyss.lastCarrier;
+    if (carrier) notes.push(fillTemplate(pl.carrier, { hero: this.heroDef(carrier).name, core: st.coreName }));
+    if (record.coreHpEnd !== null) {
+      const hp = record.coreHpEnd;
+      const max = this.data.balance.core.hp;
+      notes.push(hp >= max ? pl.hpFull : hp >= max / 2 ? pl.hpMid : pl.hpLow);
+    }
+    const tries = this.attempts[this.stage - 1];
+    if (tries >= 2) notes.push(fillTemplate(st.retryPageLine ?? pl.retry, { n: tries }));
+    this.pageNotes[this.stage] = notes;
+  }
+
+  /** 이야기 한 장 → 다음 스테이지 장면 카드 */
   nextStage(): boolean {
     if (this.phase !== 'diary') return false;
     this.stage = Math.min(this.chapterLength, this.stage + 1);
     this.retry = null;
     this.phase = 'dayStart';
-    this.pending.push({ type: 'stageStart', stage: this.stage, retry: null, crossroad: this.pendingCrossroad });
+    this.pending.push({ type: 'stageStart', stage: this.stage, retry: null });
     return true;
   }
 
@@ -801,10 +1086,11 @@ export class GameState {
     this.offenseTimer = 0;
     this.clearLaneUnits();
     this.wave.stop();
+    this.snapshot = null;
     this.completed = true;
     this.phase = 'chapterComplete';
     out.push({ type: 'chapterComplete', completed: true });
-    this.joinHeroes(this.data.chapter.id, out);
+    this.joinHeroes((h) => h.reward === this.data.chapter.id, out);
   }
 
   /** 이 챕터의 보상 영웅 (heroes.json reward = 챕터 id) */
@@ -812,18 +1098,16 @@ export class GameState {
     return this.data.heroes.heroes.filter((h) => h.reward === this.data.chapter.id);
   }
 
-  /** 보상 영웅 합류: reward가 이 챕터인 영웅 중 아직 없는 영웅 (D-057). reward 생략 = 모든 보상 영웅 (디버그) */
-  private joinHeroes(reward: string | null, out: CoreEvent[]): void {
-    const ids = this.data.heroes.heroes
-      .filter((h) => h.reward !== undefined && (reward === null || h.reward === reward) && !this.joinedHeroes.includes(h.id))
-      .map((h) => h.id);
+  /** 영웅 합류 (아직 없는 영웅만) */
+  private joinHeroes(pred: (h: HeroDef) => boolean, out: CoreEvent[]): void {
+    const ids = this.data.heroes.heroes.filter((h) => pred(h) && !this.owned.includes(h.id)).map((h) => h.id);
     if (!ids.length) return;
-    this.joinedHeroes.push(...ids);
+    for (const id of ids) this.roster.push(emptyProgress(id));
     out.push({ type: 'heroesJoined', ids });
   }
 
   /**
-   * 저장된 경계 상태로 복원 (§5.19-7). 생성자가 쓴 rng는 마지막에 rngState로 되돌린다.
+   * 저장된 경계 상태로 복원 (§5.20-11). 생성자가 쓴 rng는 마지막에 rngState로 되돌린다.
    * 레인 유닛·적·웨이브 진행 상태는 경계에서 항상 비어 있으므로 기본값 그대로.
    */
   static fromSave(data: GameData, save: SaveGame, rng: SeededRng, geometry: GameGeometry, size: GridSize): GameState {
@@ -841,8 +1125,7 @@ export class GameState {
     g.tickCount = save.tickCount;
     g.nextPieceId = save.nextPieceId;
     g.nextUnitId = save.nextUnitId;
-    g.spawnedAttempt = save.spawnedAttempt;
-    g.joy = save.joy;
+    g.autoSkill = save.autoSkill;
     g.coreHp = save.core.hp;
     refill(g.grid.cells, save.grid);
     g.lostReturns = save.lostReturns;
@@ -850,62 +1133,38 @@ export class GameState {
     g.defense.nextWorryId = save.nextWorryId;
     Object.assign(g.stats, copy(save.stats));
     refill(g.pages, save.pages);
-    refill(g.flags, save.flags);
+    for (const [k, v] of Object.entries(save.pageNotes)) g.pageNotes[Number(k)] = copy(v);
     refill(g.attemptLog, save.attemptLog);
     g.lastAttempt = g.attemptLog.length ? g.attemptLog[g.attemptLog.length - 1] : null;
-    refill(g.feedLog, save.feedLog);
     g.completed = save.completed;
-    g.pendingCrossroad = save.pendingCrossroad;
-    g.assignmentDone = save.assignmentDone;
-    refill(g.joinedHeroes, save.joinedHeroes);
-    g.heroes.offense = copy(save.heroes.offense);
-    g.heroes.defense = copy(save.heroes.defense);
-    g.attemptStats = emptyAttemptStats(g.stage, g.attempt + 1, g.joy, data.balance.grid.maxTier);
+    g.formationSeen = save.formationSeen;
+    refill(g.roster, save.roster);
+    g.formation = cloneFormation(save.formation);
+    g.attemptStats = emptyAttemptStats(g.stage, g.attempt + 1, data.balance.grid.maxTier);
     g.pending = [];
     rng.setState(save.rngState);
     return g;
   }
 
-  // ── 조각 생성 ──
+  // ── 조각 생성 (§5.20-4·13): 저절로·처치 드롭만 (makePiece) ──
 
-  get spawnCost(): number {
-    return spawnCost(this.data.balance.grid, this.spawnedAttempt);
-  }
-
-  get spawnBlock(): SpawnBlock | null {
-    return spawnBlock(this.grid, this.joy, this.spawnCost);
-  }
-
-  /** 체인 가중치: spawnWeight (이벤트 가중치는 M8.10에서 끔) */
-  chainWeight(id: string): number {
-    return this.data.chains.find((ch) => ch.archetypeId === id)?.spawnWeight ?? 0;
-  }
-
-  /** 기쁨을 쓰고 빈 칸 랜덤 위치에 1단계 조각. 불가하면 null */
-  spawn(): { index: number; piece: Piece } | null {
-    if (this.spawnBlock) return null;
-    const index = pickEmpty(this.rng, this.grid)!;
-    const chain = pickChain(
-      this.rng,
-      this.data.chains.map((c) => ({ id: c.archetypeId, weight: this.chainWeight(c.archetypeId) })),
-    );
-    this.joy -= this.spawnCost;
-    this.spawnedAttempt += 1;
-    this.attemptStats.spawns += 1;
-    const piece = this.newPiece(chain, 1);
-    this.grid.cells[index] = piece;
-    return { index, piece };
+  /** 지금 생성될 수 있는 체인 = 레인 팀(전투 밖이면 다음에 나갈 공격대 팀) 영웅들의 체인 (중복 제거) */
+  get spawnChains(): string[] {
+    const ids = this.activeTeamIds(this.laneRole);
+    const chains = [...new Set(ids.map((id) => this.heroDef(id).chain))];
+    return chains.length ? chains : this.data.chains.map((c) => c.archetypeId);
   }
 
   // ── 드래그 ──
 
-  /** 드롭: 머지 / 교환·이동 (조합 제작은 끔, §5.17-6). 전투 중 머지면 버프 + 병사 */
+  /** 드롭: 머지 / 교환·이동. 전투 중 머지면 버프 + 병사 + 스킬 게이지 */
   drop(from: number, to: number | null): DropKind {
     const kind = applyDrop(this.grid, from, to);
     if (kind === 'merge') {
       this.attemptStats.merges += 1;
       const p = this.grid.cells[to!]!;
-      if (p.tier >= this.data.balance.grid.maxTier) this.stats.tier3ByChain[p.chain] = (this.stats.tier3ByChain[p.chain] ?? 0) + 1;
+      if (p.tier >= 3) this.stats.tier3ByChain[p.chain] = (this.stats.tier3ByChain[p.chain] ?? 0) + 1;
+      if (p.tier >= this.data.balance.grid.maxTier) this.stats.tier5Made += 1;
       if (this.inBattle) this.battleMerge(p, to!);
     }
     return kind;
@@ -920,35 +1179,35 @@ export class GameState {
   }
 
   /**
-   * 전투 중 머지 (§5.17-3, [11]-1·2). 결과 조각 p(그리드에 남음)의 체인 기준, 와일드카드 머지도 결과 체인.
-   * 버프: heal = 즉시 회복 maxHp × healPct / momentum = 기세 중첩 (결과 3단계면 회복 ×tier3Mult·중첩 tier3Mult개)
-   * 병사: 결과 2단계 = 1단, 3단계 = 2단. soldierCap이면 병사 없이 버프만. 때 맞춤이면 병사 능력치·버프 × affinityMult
+   * 전투 중 머지 (§5.17-3, [11]-1·2, §5.20-5). 결과 조각 p(그리드에 남음)의 체인 기준.
+   * 버프: heal = 팀 영웅 즉시 회복 / momentum = 기세 중첩 (결과 3단계 이상이면 × tier3Mult)
+   * 병사: 결과 2~5단계 = 1~4단. 상한이면 버프만. 때 맞춤이면 병사 능력치·버프·특별 버프 × affinityMult
+   * 스킬 게이지: 레인에 있는 그 체인 주인 영웅 + tierPoints (5단계 = 즉시 가득). 5단계 = 특별 버프
    */
   private battleMerge(p: Piece, cell: number): void {
     const role = this.fightingRole!;
     const b = this.data.balance;
     const c = this.data.chains.find((x) => x.archetypeId === p.chain)!;
-    const tier3 = p.tier >= b.grid.maxTier;
+    const big = p.tier >= 3;
     const affinity = this.isAffinity(p.chain);
     const mult = affinity ? b.merge.affinityMult : 1;
     this.stats.battleMerges += 1;
     this.attemptStats.battleMerges += 1;
     if (affinity) this.stats.affinityMerges += 1;
 
-    // 버프 (지금 싸우는 쪽 영웅)
-    const hero = this.heroUnitOf(role);
+    // 버프 (지금 싸우는 팀)
     if (c.buff === 'heal') {
       let healed = 0;
-      if (hero) {
-        const before = hero.hp;
-        hero.hp = Math.min(hero.maxHp, hero.hp + hero.maxHp * b.buff.healPct * (tier3 ? b.buff.tier3Mult : 1) * mult);
-        healed = hero.hp - before;
-        this.stats.buffHeal += healed;
+      for (const u of this.teamUnits(role)) {
+        const before = u.hp;
+        u.hp = Math.min(u.maxHp, u.hp + u.maxHp * b.buff.healPct * (big ? b.buff.tier3Mult : 1) * mult);
+        healed += u.hp - before;
       }
+      this.stats.buffHeal += healed;
       this.pending.push({ type: 'buff', role, kind: 'heal', amount: healed, stacks: 0, affinity, cell });
     } else {
-      const m = this.heroes[role].momentum;
-      const add = tier3 ? b.buff.tier3Mult : 1;
+      const m = this.momentum[role];
+      const add = big ? b.buff.tier3Mult : 1;
       for (let k = 0; k < add && m.stacks < b.buff.momentumMaxStacks; k++) {
         m.stacks += 1;
         m.bonus += b.buff.momentumAtkPct * mult;
@@ -956,6 +1215,22 @@ export class GameState {
       m.timer = b.buff.momentumSeconds;
       this.applyMomentum(role);
       this.pending.push({ type: 'buff', role, kind: 'momentum', amount: m.bonus, stacks: m.stacks, affinity, cell });
+    }
+
+    // 5단계 특별 버프 (§5.18-9)
+    const top = p.tier >= b.skill.fullAtTier;
+    if (top) this.special(role, c.side, mult, affinity, cell);
+
+    // 스킬 게이지: 레인에 있는 체인 주인
+    for (const id of this.activeTeamIds(role)) {
+      if (this.heroDef(id).chain !== p.chain || !this.heroUnit(id)) continue;
+      const prog = this.progressOf(id);
+      const max = this.heroDef(id).skill.gauge;
+      if (top) prog.gauge = max;
+      else prog.gauge = Math.min(max, prog.gauge + (b.skill.tierPoints[p.tier - 1] ?? 0) * this.bondEffect(id).gaugeMult);
+      this.pending.push({ type: 'gauge', heroId: id, gauge: prog.gauge, max });
+      // 자동이면 차는 즉시, 수동이면 탭(castReady)을 기다린다. 5단계는 수동이어도 즉시 (§5.20-13)
+      if ((this.autoSkill || top) && this.skillReady(id)) this.fireSkill(role, id, this.pending);
     }
 
     // 병사
@@ -974,6 +1249,7 @@ export class GameState {
       role: 'soldier',
       soldier: c.soldier.kind,
       life: b.merge.soldierLifetime,
+      attackType: 'melee',
       ...(lv.slow !== undefined ? { slow: lv.slow, slowSeconds: lv.slowSeconds ?? 0 } : {}),
     })!;
     this.unitRoles.set(u.id, 'soldier');
@@ -984,82 +1260,145 @@ export class GameState {
     this.pending.push({ type: 'soldier', role, unitId: u.id, chain: p.chain, level, affinity, cell, capped: false });
   }
 
+  /** 지금 레인의 적 (스킬 대상). 낮이면 guardian도 */
+  private foes(role: Role): Foe[] {
+    if (role === 'defense') return this.defense.worries.filter((w) => w.hp > 0);
+    const list: Foe[] = this.abyss.enemies.filter((e) => e.hp > 0);
+    const g = this.abyss.guardian;
+    const wallY = this.abyss.geo.wallY;
+    if (g.hp > 0) {
+      list.push({
+        get hp() {
+          return g.hp;
+        },
+        set hp(v: number) {
+          g.hp = v;
+        },
+        y: wallY,
+        get slowTimer() {
+          return g.slowTimer;
+        },
+        set slowTimer(v: number) {
+          g.slowTimer = v;
+        },
+        get slowMult() {
+          return g.slowMult;
+        },
+        set slowMult(v: number) {
+          g.slowMult = v;
+        },
+      });
+    }
+    return list;
+  }
+
+  /** 레인의 우리 편 (영웅·병사) */
+  private allies(role: Role): Unit[] {
+    return this.laneOf(role).units.filter((u) => u.hp > 0);
+  }
+
+  private skillHit(f: Foe, dmg: number): void {
+    f.hp -= dmg;
+    this.stats.damageSkill += dmg;
+  }
+
+  /** 게이지가 가득이고 레인에 서 있는 영웅 (수동 모드에서 원형 버튼이 빛남) */
+  skillReady(id: string): boolean {
+    const role = this.fightingRole;
+    if (!role || !this.activeTeamIds(role).includes(id) || !this.heroUnit(id)) return false;
+    return this.progressOf(id).gauge >= this.heroDef(id).skill.gauge - 1e-9;
+  }
+
+  /** 게이지를 비우고 발동 */
+  private fireSkill(role: Role, id: string, out: CoreEvent[]): void {
+    this.progressOf(id).gauge = 0;
+    this.castSkill(role, id, out);
+  }
+
+  /** 수동 발동 (원형 버튼 탭): 게이지가 찬 레인 영웅이면 발동하고 true */
+  castReady(id: string): boolean {
+    const role = this.fightingRole;
+    if (!role || !this.skillReady(id)) return false;
+    this.fireSkill(role, id, this.pending);
+    return true;
+  }
+
+  /** HUD [자동] 토글 */
+  setAutoSkill(on: boolean): void {
+    if (this.autoSkill === on) return;
+    this.autoSkill = on;
+    this.pending.push({ type: 'autoSkill', on });
+  }
+
+  /** 스킬 발동 (§5.20-5, 1★) */
+  private castSkill(role: Role, id: string, out: CoreEvent[]): void {
+    const u = this.heroUnit(id);
+    if (!u) return;
+    const sk = this.heroDef(id).skill;
+    const mult = this.laneOf(role).atkMult;
+    this.stats.skillCasts[id] = (this.stats.skillCasts[id] ?? 0) + 1;
+    this.attemptStats.skills += 1;
+    const foes = this.foes(role);
+    switch (sk.kind) {
+      case 'strike': {
+        const near = [...foes].sort((a, b) => Math.abs(a.y - u.y) - Math.abs(b.y - u.y)).slice(0, sk.pierce);
+        for (const f of near) this.skillHit(f, u.atk * sk.mult * mult);
+        break;
+      }
+      case 'ward': {
+        for (const f of foes) if (Math.abs(f.y - u.y) <= sk.radius) stun(f, sk.stunSeconds);
+        for (const a of this.teamUnits(role)) a.shield += a.maxHp * sk.shieldPct;
+        break;
+      }
+      case 'beam': {
+        for (const f of foes) this.skillHit(f, u.atk * sk.mult * mult);
+        break;
+      }
+      case 'mend': {
+        for (const a of this.teamUnits(role)) a.hp = Math.min(a.maxHp, a.hp + a.maxHp * sk.healPct);
+        let left = sk.revive;
+        const ratio = this.data.balance.hero.reviveHpRatio;
+        for (const other of this.activeTeamIds(role)) {
+          if (left <= 0) break;
+          if (role === 'offense' && this.fallen.has(other)) {
+            this.fallen.delete(other);
+            this.enterHero(role, other, out, { hpRatio: ratio, revive: true, y: u.y });
+            left -= 1;
+          } else if (role === 'defense' && this.reviveTimers.has(other)) {
+            this.reviveTimers.delete(other);
+            this.enterHero(role, other, out, { hpRatio: ratio, revive: true });
+            left -= 1;
+          }
+        }
+        break;
+      }
+    }
+    out.push({ type: 'skill', role, heroId: id, unitId: u.id, kind: sk.kind, name: sk.name });
+  }
+
+  /** 5단계 특별 버프: 해 = 한낮 (우리 편 atk +, 초) / 달 = 보름달 (적 정지 + 보호막) */
+  private special(role: Role, side: 'sun' | 'moon', mult: number, affinity: boolean, cell: number): void {
+    const s = this.data.balance.special;
+    this.stats.specials += 1;
+    if (side === 'sun') {
+      this.noon[role] = { timer: s.noonSeconds, pct: s.noonAtkPct * mult };
+      this.laneOf(role).atkMult = 1 + this.noon[role].pct;
+    } else {
+      for (const f of this.foes(role)) stun(f, s.fullMoonStunSeconds);
+      for (const a of this.allies(role)) a.shield += a.maxHp * s.fullMoonShieldPct * mult;
+    }
+    this.pending.push({ type: 'special', role, kind: side === 'sun' ? 'noon' : 'fullMoon', affinity, cell });
+  }
+
   // ── 놓아주기 ──
 
-  /** 드래그 중 미리보기: 이 칸의 조각을 놓아주면 받는 기쁨. 와일드카드·빈 칸은 null */
-  releasePreview(index: number): number | null {
-    const p = this.grid.cells[index];
-    return p ? releaseValue(p, this.data.balance.grid.releaseRefund) : null;
-  }
-
-  /** 놓아주기 영역에 드롭: 즉시 제거·환급. 빈 칸·와일드카드는 무시하고 null (원위치) */
-  release(index: number): number | null {
-    const r = releaseAt(this.grid, index, this.data.balance.grid.releaseRefund);
-    if (!r) return null;
-    this.joy += r.refund;
+  /** 놓아주기 영역에 드롭: 즉시 제거 (환급 없음, §5.20-13). 빈 칸·와일드카드는 무시하고 false (원위치) */
+  release(index: number): boolean {
+    const p = releaseAt(this.grid, index);
+    if (!p) return false;
     this.attemptStats.releases += 1;
-    const t = isWildcard(r.piece) ? 0 : r.piece.tier;
-    if (t < this.attemptStats.releaseTiers.length) this.attemptStats.releaseTiers[t] += 1;
-    return r.refund;
-  }
-
-  // ── 먹이기 (§5.17-2) ──
-
-  /** 이 단계에서 먹일 수 있는지: 낮·밤 언제든, 두 영웅 모두 */
-  get feedOpen(): boolean {
-    return this.phase === 'day' || this.phase === 'night';
-  }
-
-  /** 단계 점수 (tierScore[tier-1]) */
-  feedScore(tier: number): number {
-    return this.data.balance.feed.tierScore[tier - 1] ?? 0;
-  }
-
-  /** 드래그 중 미리보기용: 먹일 수 없으면 사유, 가능하면 null */
-  canFeed(cell: number, _role: Role): FeedBlock | null {
-    if (!this.feedOpen) return 'closed';
-    const p = this.grid.cells[cell];
-    if (!p) return 'empty';
-    if (isWildcard(p)) return 'wildcard';
-    return null;
-  }
-
-  /** 먹이기: 조각 소모 → 그 영웅의 그 체인 점수 + 단계 점수. 레인 위에 있으면 능력치를 바로 반영 (늘어난 maxHp만큼 hp도) */
-  feed(cell: number, role: Role): FeedResult {
-    const block = this.canFeed(cell, role);
-    if (block) return { ok: false, reason: block };
-    const p = this.grid.cells[cell]!;
-    const points = this.feedScore(p.tier);
-    const before = this.heroStats(role);
-    const h = this.heroes[role];
-    h.points[p.chain] = (h.points[p.chain] ?? 0) + points;
-    this.grid.cells[cell] = null;
-    const u = this.heroUnitOf(role);
-    if (u) {
-      const s = this.heroStats(role);
-      u.maxHp = s.hp;
-      u.hp = Math.min(s.hp, u.hp + (s.hp - before.hp));
-      u.atkInterval = s.atkInterval;
-      u.dmgMult = s.dmgMult;
-      this.applyMomentum(role);
-    }
-    this.feedLog.push({
-      t: this.playTime,
-      attempt: this.attempt,
-      stage: this.stage,
-      role,
-      hero: h.id,
-      chain: p.chain,
-      tier: p.tier,
-      points,
-      cell: toCell(this.grid, cell),
-      heldFor: this.playTime - p.bornAt,
-    });
-    this.stats.feeds += 1;
-    this.attemptStats.feeds += 1;
-    this.attemptStats.feedPoints += points;
-    this.pending.push({ type: 'feed', role, cell, chain: p.chain, tier: p.tier, points });
-    return { ok: true, points };
+    if (p.tier < this.attemptStats.releaseTiers.length) this.attemptStats.releaseTiers[p.tier] += 1;
+    return true;
   }
 
   // ── 조각 만들기 ──
@@ -1069,10 +1408,6 @@ export class GameState {
   }
 
   // ── 디버그 (?debug=1) ──
-
-  debugAddJoy(amount: number): void {
-    this.joy += amount;
-  }
 
   /** 빈 칸 랜덤 위치에 지급. 칸이 없으면 null */
   debugGrant(chain: ChainId | typeof WILDCARD, tier: number): number | null {
@@ -1087,20 +1422,30 @@ export class GameState {
     if (this.phase === 'day') this.abyss.guardian.hp = 0;
   }
 
-  /** 낮 레인 우리 편 전멸 → 다음 틱에 사망 처리 (가는 길이면 낮 실패, 운반 중이면 핵 떨어뜨림) */
+  /** 낮 레인 우리 편 전멸 → 다음 틱에 사망 처리 (다음 팀 / 낮 실패) */
   debugKillAbyssUnits(): void {
     for (const u of this.abyss.units) u.hp = 0;
   }
 
-  /** 밤 영웅 hp 0 → 다음 틱에 쓰러짐 */
+  /** 밤 팀 영웅 hp 0 → 다음 틱에 쓰러짐 */
   debugKnockDefenseHero(): void {
-    const u = this.heroUnitOf('defense');
-    if (u) u.hp = 0;
+    for (const u of this.teamUnits('defense')) u.hp = 0;
+  }
+
+  /** 레인 팀 영웅 스킬을 바로 발동 */
+  debugCastSkills(): void {
+    const role = this.fightingRole;
+    if (!role) return;
+    for (const id of this.activeTeamIds(role)) {
+      if (!this.heroUnit(id)) continue;
+      this.fireSkill(role, id, this.pending);
+    }
   }
 
   /** 낮 즉시 성공 (핵을 이야기책에) → 해질녘 */
   debugToNight(): void {
     if (this.phase !== 'day') return;
+    this.abyss.lastCarrier ??= this.activeTeamIds('offense')[0] ?? null;
     this.daySuccess(this.pending);
   }
 
@@ -1122,7 +1467,6 @@ export class GameState {
   /** 즉시 챕터 완성: 레인을 비우고 chapterComplete */
   debugCompleteChapter(): void {
     if (this.phase === 'chapterComplete') return;
-    this.pendingCrossroad = false;
     this.enterChapterComplete();
   }
 
@@ -1132,22 +1476,16 @@ export class GameState {
     this.stage = Math.max(1, Math.min(this.chapterLength, Math.floor(stage)));
     this.retry = null;
     this.phase = 'dayStart';
-    this.pending.push({ type: 'stageStart', stage: this.stage, retry: null, crossroad: this.pendingCrossroad });
+    this.pending.push({ type: 'stageStart', stage: this.stage, retry: null });
   }
 
-  /** 보상 영웅 지급 (덱 화면 M8.11 테스트용, D-057) */
-  debugGrantRewardHeroes(): void {
-    this.joinHeroes(null, this.pending);
+  /** 영웅 전부 지급: 시작 + 챕터 보상 (테스트 영웅 제외, §5.20-1) */
+  debugGrantAllHeroes(): void {
+    this.joinHeroes((h) => h.reward !== 'debug', this.pending);
   }
 
-  /** 장면 카드에서 갈림길을 바로 연다 */
-  debugOpenCrossroad(): void {
-    if (this.phase !== 'dayStart') return;
-    this.pendingCrossroad = true;
-    this.pending.push({ type: 'stageStart', stage: this.stage, retry: this.retry, crossroad: true });
+  /** 테스트 영웅 2명 추가 (reward "debug") */
+  debugGrantTestHeroes(): void {
+    this.joinHeroes((h) => h.reward === 'debug', this.pending);
   }
-}
-
-function emptyHero(id: string): HeroState {
-  return { id, points: {}, momentum: { stacks: 0, bonus: 0, timer: 0 } };
 }

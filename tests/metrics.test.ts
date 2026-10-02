@@ -28,17 +28,17 @@ import type { PolicyReport } from '../sim/report';
 const data = structuredClone(rawGameData) as unknown as GameData;
 const SIZE = { cols: 5, rows: 4 };
 const NOW = '2026-10-01T00:00:00.000Z';
-const GEO = gameGeometry(data.balance.merge.soldierCap + 1);
+const GEO = gameGeometry(data.balance.merge.soldierCap + data.balance.team.teamSize);
 
-function attemptMetrics(attempt: number, stage: number, result: AttemptResult, feeds = 0): AttemptMetrics {
-  const record = { ...emptyAttemptStats(stage, attempt, 50, data.balance.grid.maxTier), result, realSeconds: 90 };
+function attemptMetrics(attempt: number, stage: number, result: AttemptResult): AttemptMetrics {
+  const record = { ...emptyAttemptStats(stage, attempt, data.balance.grid.maxTier), result, realSeconds: 90 };
   return {
     attempt,
     stage,
     result,
     realDate: '2026-10-01',
     record,
-    feeds: Array.from({ length: feeds }, (_, i) => ({ t: i, attempt, stage, role: 'offense' as const, hero: 'sapsal', chain: 'companion_animal', tier: 1, points: 1, cell: { col: 0, row: 0 }, heldFor: 0 })),
+    formation: { offense: [['sapsal']], defense: [['haetae']] },
     dropFails: { invalid: 0, laneFull: 0, wildcard: 0 },
     dragDistance: 0,
     realSeconds: 60,
@@ -62,17 +62,18 @@ describe('상한 (500 / 20 / 크기)', () => {
     expect(w).toHaveLength(2);
   });
 
-  it('직렬화 크기가 상한을 넘으면 가장 오래된 판의 feeds부터 비운다', () => {
+  it('직렬화 크기가 상한을 넘으면 가장 오래된 판의 시도 기록부터 버린다', () => {
     const m = emptyMetrics(NOW);
     const a = newLife(1, SIZE, NOW);
     const b = newLife(2, SIZE, NOW);
-    a.attempts.push(attemptMetrics(1, 1, 'success', 50));
-    b.attempts.push(attemptMetrics(1, 1, 'success', 50));
+    a.attempts.push(attemptMetrics(1, 1, 'dayTime'), attemptMetrics(2, 1, 'success'));
+    b.attempts.push(attemptMetrics(1, 1, 'success'));
     m.lives.push(a, b);
     const limit = byteLength(JSON.stringify(m)) - 100;
-    enforceLimits(m, limit);
-    expect(a.attempts[0].feeds).toEqual([]);
-    expect(b.attempts[0].feeds).toHaveLength(50);
+    const w = enforceLimits(m, limit);
+    expect(a.attempts.map((x) => x.attempt)).toEqual([2]);
+    expect(b.attempts).toHaveLength(1);
+    expect(w).toHaveLength(1);
   });
 
   it('byteLength: UTF-8 (한글 3바이트)', () => {
@@ -144,7 +145,7 @@ describe('MetricsRecorder', () => {
   }
   const stored = (): MetricsData => JSON.parse(store.getItem(METRICS_KEY)!);
 
-  it('시도 끝: AttemptMetrics 확정 (core 기록·그 시도 먹이기·입력 카운터), inProgress 지움', () => {
+  it('시도 끝: AttemptMetrics 확정 (core 기록·그 시도 편성·입력 카운터), inProgress 지움', () => {
     const s = fresh();
     const rec = new MetricsRecorder(s, SIZE);
     s.confirmDay();
@@ -155,7 +156,6 @@ describe('MetricsRecorder', () => {
     rec.drop(null, 5);
     rec.frame(0.5, 1);
     rec.frame(0.25, 3);
-    s.feed(s.debugGrant('companion_animal', 3)!, 'defense');
     s.debugFail();
     rec.endAttempt(s.lastAttempt!);
     const m = stored();
@@ -171,7 +171,7 @@ describe('MetricsRecorder', () => {
       speedUsed: 0.25,
       rating: null,
     });
-    expect(d.feeds).toHaveLength(1);
+    expect(d.formation).toEqual({ offense: [['sapsal']], defense: [['haetae']] });
     expect(d.record).toEqual(JSON.parse(JSON.stringify(s.lastAttempt)));
     expect(m.sessions[0].attemptsCompleted).toBe(1);
   });
@@ -215,7 +215,7 @@ describe('MetricsRecorder', () => {
     store.setItem(METRICS_KEY, '{broken');
     const rec = new MetricsRecorder(fresh(), SIZE);
     expect(rec.data.lives).toHaveLength(1);
-    expect(stored().version).toBe(4);
+    expect(stored().version).toBe(5);
     store.setItem = () => {
       throw new Error('QuotaExceededError');
     };
@@ -230,7 +230,7 @@ describe('MetricsRecorder', () => {
 describe('요약·분석', () => {
   const life = newLife(1, SIZE, NOW);
   life.attempts.push(
-    attemptMetrics(1, 1, 'success', 2),
+    attemptMetrics(1, 1, 'success'),
     attemptMetrics(2, 2, 'night'),
     attemptMetrics(3, 2, 'dayFall'),
     { ...attemptMetrics(4, 2, 'success'), speedUsed: 5, realSeconds: 999 },
@@ -248,9 +248,9 @@ describe('요약·분석', () => {
     expect(longestStreak(['2026-10-01', '2026-10-02', '2026-10-04'])).toBe(2);
   });
 
-  it('분석 표: 개요 → 스테이지별 → 길이 → 먹이기 → 주관 → 판별, --bot 비교', () => {
+  it('분석 표: 개요 → 스테이지별 → 길이 → 편성·조각 → 주관 → 판별, --bot 비교', () => {
     const sections = analyze(data4);
-    expect(sections.map((x) => x.title.split(' ')[0])).toEqual(['개요', '스테이지별', '시도', '먹이기', '주관', '판별']);
+    expect(sections.map((x) => x.title.split(' ')[0])).toEqual(['개요', '스테이지별', '시도', '편성', '주관', '판별']);
     const st = sections[1];
     expect(st.rows.map((r) => r[0])).toEqual(['1-1', '1-2']);
     const bot = {

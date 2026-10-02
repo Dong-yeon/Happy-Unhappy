@@ -1,6 +1,12 @@
 {
   "id": "ch01",
   "world": "tale_sun_moon",
-  "crossroad": "first_tooth",
-  "bossName": "호랑이"
+  "bossName": "호랑이",
+  "pageLines": {
+    "carrier": "{hero}{이/가} {core}{을/를} 품고 돌아왔다.",
+    "hpFull": "핵은 흠집 하나 없었다.",
+    "hpMid": "핵을 지켜 냈다.",
+    "hpLow": "아슬아슬하게 지켜 냈다.",
+    "retry": "{n}번 만에 넘은 고개."
+  }
 }

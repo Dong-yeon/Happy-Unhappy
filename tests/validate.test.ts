@@ -83,9 +83,9 @@ describe('validateGameData', () => {
 
   it('타입 오류', () => {
     const issues = issuesAfter((d) => {
-      (d.balance.grid as Record<string, unknown>).spawnCostBase = '10';
+      (d.balance.grid as Record<string, unknown>).maxTier = '5';
     });
-    expectIssue(issues, 'balance.grid.spawnCostBase', /숫자/);
+    expectIssue(issues, 'balance.grid.maxTier', /숫자/);
   });
 
   it('기본 그리드가 프리셋에 없음', () => {
@@ -147,7 +147,7 @@ describe('validateGameData', () => {
   it('freePieces.tier가 maxTier 초과', () => {
     const issues = issuesAfter((d) => {
 (d.events.seasonal as unknown[]).push({ id: 'gift', world: d.chapter.world, archetypeId: 'gift', title: '선물', text: '', effects: { freePieces: [{ chain: 'companion_animal', tier: 2 }] }, diaryLine: '선물.' });
-      (d.events.seasonal as unknown as { effects: { freePieces: { tier: number }[] } }[])[0].effects.freePieces[0].tier = 4;
+      (d.events.seasonal as unknown as { effects: { freePieces: { tier: number }[] } }[])[0].effects.freePieces[0].tier = 6;
     });
     expectIssue(issues, 'events.seasonal[0].effects.freePieces[0].tier', /이하/);
   });
@@ -159,16 +159,9 @@ describe('validateGameData', () => {
     expectIssue(issues, 'events.daily[2].effects.chainWeight.no_chain', /없는 체인/);
   });
 
-  it('faceLayerHpReduce는 0~1 비율', () => {
-    const issues = issuesAfter((d) => {
-      (d.events.milestones[0].choices[1] as Record<string, unknown>).faceLayerHpReduce = 30;
-    });
-    expectIssue(issues, 'events.milestones[0].choices[1].faceLayerHpReduce', /1 이하/);
-  });
-
   it('이벤트 id 중복 (종류가 달라도)', () => {
     const issues = issuesAfter((d) => {
-      d.events.daily[0].id = 'first_tooth';
+      d.events.daily[0].id = d.events.daily[1].id;
     });
     expectIssue(issues, 'events', /중복/);
   });
@@ -184,14 +177,13 @@ describe('validateGameData', () => {
   it('M8.8: balance.chapter (turningPoint < length), days.lifeLengthDays·growthDays·world·age 는 알 수 없는 키', () => {
     expectIssue(issuesAfter((d) => (d.balance.chapter.turningPoint = 10)), 'balance.chapter.turningPoint', /length보다 작아야/);
     expectIssue(issuesAfter((d) => delete (d.balance as Record<string, unknown>).chapter), 'balance.chapter', /필수 키/);
-    expectIssue(issuesAfter((d) => ((d.balance.days as Record<string, unknown>).lifeLengthDays = 14)), 'balance.days.lifeLengthDays', /알 수 없는 키/);
     for (const k of ['growthDays', 'world', 'age']) {
       expectIssue(issuesAfter((d) => ((d.days as Record<string, unknown>)[k] = 1)), `days.${k}`, /알 수 없는 키/);
     }
   });
 
-  it('M8.8: chapter.json (갈림길 id = 이정표)·chapter_complete.json (learnedRecipes)', () => {
-    expectIssue(issuesAfter((d) => (d.chapter.crossroad = 'scraped_knee')), 'chapter.crossroad', /없는 갈림길/);
+  it('M8.8: chapter.json (갈림길은 D-063에서 삭제 → crossroad는 알 수 없는 키)·chapter_complete.json (learnedRecipes)', () => {
+    expectIssue(issuesAfter((d) => ((d.chapter as Record<string, unknown>).crossroad = 'scraped_knee')), 'chapter.crossroad', /알 수 없는 키/);
     expectIssue(issuesAfter((d) => ((d.chapter as Record<string, unknown>).sceneNames = ['a'])), 'chapter.sceneNames', /알 수 없는 키/);
     expectIssue(issuesAfter((d) => ((d.chapterComplete.learnedRecipes[0] as Record<string, unknown>).side = 'noon')), 'chapterComplete.learnedRecipes[0].side', /day 또는 night/);
     expectIssue(issuesAfter((d) => ((d.chapterComplete as Record<string, unknown>).companions = [])), 'chapterComplete.companions', /알 수 없는 키/);
@@ -222,8 +214,6 @@ describe('validateGameData', () => {
   it('M8.10: 일차·gating·그림자 키가 남아 있으면 오류 (maxDays·dailyLimit·storeCap·shadow·diary·stallShadowPerSec, D-054·D-055)', () => {
     const b = (d: Raw) => d.balance as unknown as Record<string, Record<string, unknown>>;
     expectIssue(issuesAfter((d) => (b(d).chapter.maxDays = 20)), 'balance.chapter.maxDays', /알 수 없는 키/);
-    expectIssue(issuesAfter((d) => (b(d).days.dailyLimit = 2)), 'balance.days.dailyLimit', /알 수 없는 키/);
-    expectIssue(issuesAfter((d) => (b(d).days.storeCap = 4)), 'balance.days.storeCap', /알 수 없는 키/);
     expectIssue(issuesAfter((d) => (b(d).shadow = { shadowMax: 100 } as never)), 'balance.shadow', /알 수 없는 키/);
     expectIssue(issuesAfter((d) => (b(d).diary = { diarySinkThreshold: 3 } as never)), 'balance.diary', /알 수 없는 키/);
     expectIssue(issuesAfter((d) => (b(d).offense.stallShadowPerSec = 0.3)), 'balance.offense.stallShadowPerSec', /알 수 없는 키/);
@@ -236,11 +226,10 @@ describe('validateGameData', () => {
   it('M8.10: heroes reward (보상 영웅은 시작 배정 불가), chapter.id 필수 (D-057)', () => {
     expectIssue(issuesAfter((d) => (d.heroes.offense = 'nui')), 'heroes.offense', /보상 영웅/);
     expectIssue(issuesAfter((d) => delete (d.chapter as Record<string, unknown>).id), 'chapter.id', /필수 키/);
-    expect(rawGameData.heroes.heroes.filter((h) => 'reward' in h).map((h) => h.id)).toEqual(['nui', 'orabi']);
+    expect(rawGameData.heroes.heroes.filter((h) => 'reward' in h).map((h) => h.id)).toEqual(['nui', 'orabi', 'test_a', 'test_b']);
   });
 
   it('M8.9: 먹이기 tierScore는 maxTier개, 병사 단은 maxTier − 1개, side·buff 값 ([11])', () => {
-    expectIssue(issuesAfter((d) => d.balance.feed.tierScore.pop()), 'balance.feed.tierScore', /maxTier/);
     expectIssue(issuesAfter((d) => d.chains[0].soldier.levels.pop()), 'chains[0].soldier.levels', /maxTier − 1/);
     expectIssue(issuesAfter((d) => ((d.chains[0] as unknown as Record<string, unknown>).side = 'noon')), 'chains[0].side', /sun 또는 moon/);
     expectIssue(issuesAfter((d) => ((d.chains[1] as unknown as Record<string, unknown>).buff = 'shield')), 'chains[1].buff', /heal 또는 momentum/);
@@ -251,18 +240,29 @@ describe('validateGameData', () => {
     expectIssue(issuesAfter((d) => ((d.recipes.recipes[0] as Record<string, unknown>).kind = 'sad')), 'recipes.recipes[0].kind', /.+/);
   });
 
-  it('M6.5: days.quietDays 필수, balance.days.morningJoyFloor는 0 이상 정수', () => {
-    const issues = issuesAfter((d) => {
-      delete (d.days as Record<string, unknown>).quietDays;
-      d.balance.days.morningJoyFloor = 2.5;
-    });
-    expectIssue(issues, 'days.quietDays', /필수 키/);
-    expectIssue(issues, 'balance.days.morningJoyFloor', /정수/);
-    expectIssue(
-      issuesAfter((d) => (d.balance.days.morningJoyFloor = -1)),
-      'balance.days.morningJoyFloor',
-      /0 이상/,
-    );
+  it('M6.5: days.quietDays 필수', () => {
+    expectIssue(issuesAfter((d) => delete (d.days as Record<string, unknown>).quietDays), 'days.quietDays', /필수 키/);
+  });
+
+  it('M8.11 (§5.20-13, D-064): 기쁨 키가 남아 있으면 오류 (start.joy·spawnCost·releaseRefund·days.morningJoyFloor·joyReward·이벤트 joy)', () => {
+    const b = (d: Raw) => d.balance as unknown as Record<string, Record<string, unknown>>;
+    expectIssue(issuesAfter((d) => (b(d).start.joy = 60)), 'balance.start.joy', /알 수 없는 키/);
+    expectIssue(issuesAfter((d) => (b(d).grid.spawnCostBase = 10)), 'balance.grid.spawnCostBase', /알 수 없는 키/);
+    expectIssue(issuesAfter((d) => (b(d).grid.spawnCostStep = 2)), 'balance.grid.spawnCostStep', /알 수 없는 키/);
+    expectIssue(issuesAfter((d) => (b(d).grid.releaseRefund = 4)), 'balance.grid.releaseRefund', /알 수 없는 키/);
+    expectIssue(issuesAfter((d) => (b(d).days = { morningJoyFloor: 20 })), 'balance.days', /알 수 없는 키/);
+    expectIssue(issuesAfter((d) => ((d.monsters.base as unknown as Record<string, unknown>).joyReward = 3)), 'monsters.base.joyReward', /알 수 없는 키/);
+    expectIssue(issuesAfter((d) => ((d.events.daily[1].effects as Record<string, unknown>).joy = 15)), 'events.daily[1].effects.joy', /알 수 없는 키/);
+  });
+
+  it('M8.11 (§5.20-13): spawn·swarm 필수·범위 (bossDropTier ≤ maxTier, killDropChance 0~1)', () => {
+    const b = (d: Raw) => d.balance as unknown as Record<string, Record<string, unknown>>;
+    expectIssue(issuesAfter((d) => delete b(d).spawn), 'balance.spawn', /필수 키/);
+    expectIssue(issuesAfter((d) => delete b(d).swarm), 'balance.swarm', /필수 키/);
+    expectIssue(issuesAfter((d) => (b(d).spawn.killDropChance = 1.5)), 'balance.spawn.killDropChance', /1 이하/);
+    expectIssue(issuesAfter((d) => (b(d).spawn.bossDropTier = 6)), 'balance.spawn.bossDropTier', /maxTier/);
+    expectIssue(issuesAfter((d) => (b(d).spawn.autoInterval = 0)), 'balance.spawn.autoInterval', /.+/);
+    expectIssue(issuesAfter((d) => (b(d).swarm.laneMaxEnemies = 2.5)), 'balance.swarm.laneMaxEnemies', /정수/);
   });
 
   it('M8.5: lane.defenseInterceptRange·defenseMoveSpeed·defenseContact 필수, 0 이상', () => {

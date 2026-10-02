@@ -6,11 +6,11 @@ import { FIXED_DT, Lane, type InterceptConfig, type LaneEvent, type Worry } from
 import { gameGeometry } from '../src/scenes/layout';
 
 const base = structuredClone(rawGameData) as unknown as GameData;
-const GEO = gameGeometry(base.balance.merge.soldierCap + 1).defense;
+const GEO = gameGeometry(base.balance.merge.soldierCap + base.balance.team.teamSize).defense;
 const LINE = GEO.lineY;
 const HAPPY = { atk: 0, atkInterval: 1, range: 0 }; // Happy는 끼어들지 않게
 const SPIRIT = { hp: 1000, atk: 1, atkInterval: 1, range: 20 };
-const WORRY = { type: 'shadow', hp: 1000, speed: 60, atk: 0, atkInterval: 1, joyReward: 0 };
+const WORRY = { type: 'shadow', hp: 1000, speed: 60, atk: 0, atkInterval: 1 };
 const IC: InterceptConfig = { range: 80, speed: 60, contact: 8 };
 
 function lane(ic: InterceptConfig | null): Lane {

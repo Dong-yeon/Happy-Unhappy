@@ -1,6 +1,7 @@
 // 밤(디펜스) 레인 표시 — 핵 지키기 (§4.3.1, §5.19-3): 가로 레인. 이야기책(핵)은 왼쪽, 적은 오른쪽에서 밀려온다.
 // 우리 편 = 밤덱 영웅 + 전투 중 머지 병사. 영웅이 쓰러지면 거점 위에 일어나기까지 카운트다운. 거점 위에 핵 HP 막대.
-// 상태는 항상 core에서 읽고 layout.toScreen()으로 화면에 옮긴다. 이벤트는 연출(처치 빛 점, 가라앉음, 타격)에만 쓴다.
+// 상태는 항상 core에서 읽고 layout.toScreen()으로 화면에 옮긴다. 이벤트는 연출(가라앉음, 타격)에만 쓴다.
+// 처치 드롭 조각은 GridView가 처치 지점에서 판으로 날린다 (§5.20-13). 동시 적 상한을 넘은 대기열 수는 오른쪽 위에.
 import Phaser from 'phaser';
 import type { CoreEvent, GameState } from '../core/game';
 import type { GameData } from '../data/types';
@@ -10,9 +11,7 @@ import { COLOR, text } from './ui';
 
 /** 걱정은 방어선에 닿도록 중심을 진행 축으로 이만큼 앞(오른쪽)에 그린다 (core y 기준) */
 const WORRY_DRAW_OFFSET = 9;
-const JOY_DOT_COLOR = 0xf2c94c;
 const CORE_BAR_W = 64;
-const JOY_DOT_MS = 400; // 처치 지점 → HUD 기쁨
 const SINK_MS = 450;
 /** 우리 편은 core 위치보다 이만큼 거점 쪽(진행 축)에 그린다 (방어선에서 걱정과 겹치지 않게) */
 const UNIT_DRAW_OFFSET = CORE.homeY - CORE.lineY;
@@ -29,6 +28,8 @@ export class DefenseLaneView {
   private readonly worries = new Map<number, EnemyView>();
   private readonly units = new Map<number, UnitView>();
   private readonly downLabel: Phaser.GameObjects.Text;
+  private readonly teamLabel: Phaser.GameObjects.Text;
+  private readonly spawnLabel: Phaser.GameObjects.Text;
   private readonly coreFill: Phaser.GameObjects.Rectangle;
   private readonly coreText: Phaser.GameObjects.Text;
 
@@ -36,15 +37,15 @@ export class DefenseLaneView {
     private readonly scene: Phaser.Scene,
     private readonly state: GameState,
     private readonly data: GameData,
-    private readonly joyTarget: { x: number; y: number },
   ) {
     const g = REGION.ground;
     // 밤 땅 띠(1챕터: 오두막 앞마당에 내려앉은 이야기책, 도형 단계는 배경색만) + 방어선(세로) + Happy 거점
     const bg = scene.add.rectangle(g.x, g.y, g.w, g.h, COLOR.abyss).setOrigin(0);
     const lineX = progressX(CORE.lineY);
     const line = scene.add.line(0, 0, lineX, g.y + 6, lineX, g.y + g.h - 6, COLOR.line).setOrigin(0).setLineWidth(1);
-    const spawnLabel = text(scene, g.x + g.w - 6, g.y + 4, '← 핵을 노리는 무리', { fontSize: '10px', color: '#c9b98a' }).setOrigin(1, 0);
-    const laneLabel = text(scene, g.x + g.w / 2, g.y + g.h - 4, '밤 · 핵 지키기', { fontSize: '9px', color: '#8f835f' }).setOrigin(0.5, 1);
+    this.spawnLabel = text(scene, g.x + g.w - 6, g.y + 4, '← 핵을 노리는 무리', { fontSize: '10px', color: '#c9b98a' }).setOrigin(1, 0);
+    this.teamLabel = text(scene, g.x + 8, g.y + 20, '', { fontSize: '10px', color: '#cfd6ea' });
+    const laneLabel = text(scene, g.x + g.w * 0.38, g.y + g.h - 4, '밤 · 핵 지키기', { fontSize: '9px', color: '#8f835f' }).setOrigin(0.5, 1);
     const home = HOME.defense;
     // 본거지 이야기책 (핵을 품고 있음, D-056)
     const happy = storyBook(scene, home.x, home.y);
@@ -59,7 +60,7 @@ export class DefenseLaneView {
       .setOrigin(0, 0.5)
       .setVisible(false);
     this.root = scene.add
-      .container(0, 0, [bg, line, spawnLabel, laneLabel, happy, coreGem, coreFrame, this.coreFill, this.coreText, this.downLabel])
+      .container(0, 0, [bg, line, this.spawnLabel, this.teamLabel, laneLabel, happy, coreGem, coreFrame, this.coreFill, this.coreText, this.downLabel])
       .setDepth(1)
       .setVisible(false);
   }
@@ -72,12 +73,9 @@ export class DefenseLaneView {
   handle(events: CoreEvent[]): void {
     for (const e of events) {
       switch (e.type) {
-        case 'worryDie': {
+        case 'worryDie':
           this.removeWorry(e.worryId);
-          const p = toScreen('defense', e.x, e.y - WORRY_DRAW_OFFSET);
-          this.joyDot(p.x, p.y);
           break;
-        }
         case 'sink': {
           const v = this.worries.get(e.worryId);
           this.worries.delete(e.worryId);
@@ -158,9 +156,19 @@ export class DefenseLaneView {
     if (this.coreText.text !== ct) this.coreText.setText(ct);
 
     // 쓰러짐 카운트다운 (§5.17-9)
-    const down = this.state.defenseDown;
+    const s = this.state;
+    const timers = [...s.reviveTimers.values()];
+    const down = timers.length ? Math.min(...timers) : 0;
+    const teams = s.teams('defense').length;
     this.downLabel.setVisible(down > 0);
-    if (down > 0) this.downLabel.setText(`쓰러짐 · ${Math.ceil(down)}초 뒤 일어남`);
+    if (down > 0) this.downLabel.setText(`쓰러짐 ${timers.length} · ${Math.ceil(down)}초 뒤 일어남`);
+    // 팀 표시 (§5.20-13): "1팀 출격 · 2팀 대기"
+    const at = s.activeTeam.defense;
+    const tl = s.phase === 'night' ? `${at + 1}팀 출격${at + 1 < teams ? ` · ${at + 2}팀 대기` : ''}` : '';
+    if (this.teamLabel.text !== tl) this.teamLabel.setText(tl);
+    const q = s.nightQueued;
+    const sl = `← 핵을 노리는 무리${q > 0 ? ` (+${q} 대기)` : ''}`;
+    if (this.spawnLabel.text !== sl) this.spawnLabel.setText(sl);
   }
 
   private flash(x: number, y: number, color: number): void {
@@ -179,19 +187,6 @@ export class DefenseLaneView {
     if (!v) return;
     this.scene.tweens.killTweensOf(v.container);
     this.scene.tweens.add({ targets: v.container, alpha: 0, duration: 150, onComplete: () => v.container.destroy() });
-  }
-
-  /** 처치 → 작은 빛 점이 HUD 기쁨으로 (HUD 숫자는 core 값으로 이미 갱신됨) */
-  private joyDot(x: number, y: number): void {
-    const dot = this.scene.add.circle(x, y, 3, JOY_DOT_COLOR).setDepth(40);
-    this.scene.tweens.add({
-      targets: dot,
-      x: this.joyTarget.x,
-      y: this.joyTarget.y,
-      duration: JOY_DOT_MS,
-      ease: 'Sine.easeIn',
-      onComplete: () => dot.destroy(),
-    });
   }
 
   /** 거점에 닿음: 방어선을 지나 왼쪽 이야기책으로 빨려 들어가며 사라진다 (핵 HP −) */

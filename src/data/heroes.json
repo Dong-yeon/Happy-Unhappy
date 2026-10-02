@@ -6,7 +6,17 @@
       "hp": 120,
       "atk": 18,
       "atkInterval": 0.9,
-      "range": 50
+      "range": 18,
+      "chain": "bone",
+      "role": "attack",
+      "attackType": "melee",
+      "skill": {
+        "kind": "strike",
+        "name": "쫓는 울음",
+        "gauge": 20,
+        "mult": 3,
+        "pierce": 2
+      }
     },
     {
       "id": "haetae",
@@ -14,7 +24,18 @@
       "hp": 160,
       "atk": 14,
       "atkInterval": 1.0,
-      "range": 50
+      "range": 22,
+      "chain": "bell",
+      "role": "tank",
+      "attackType": "melee",
+      "skill": {
+        "kind": "ward",
+        "name": "수호의 울타리",
+        "gauge": 20,
+        "radius": 80,
+        "stunSeconds": 1.5,
+        "shieldPct": 0.15
+      }
     },
     {
       "id": "nui",
@@ -22,7 +43,16 @@
       "hp": 120,
       "atk": 18,
       "atkInterval": 0.9,
-      "range": 50,
+      "range": 90,
+      "chain": "companion_animal",
+      "role": "attack",
+      "attackType": "ranged",
+      "skill": {
+        "kind": "beam",
+        "name": "햇살 한 줄기",
+        "gauge": 20,
+        "mult": 2
+      },
       "reward": "ch01"
     },
     {
@@ -31,8 +61,56 @@
       "hp": 160,
       "atk": 14,
       "atkInterval": 1.0,
-      "range": 50,
+      "range": 70,
+      "chain": "comfort_object",
+      "role": "support",
+      "attackType": "ranged",
+      "skill": {
+        "kind": "mend",
+        "name": "달빛 동아줄",
+        "gauge": 20,
+        "healPct": 0.2,
+        "revive": 1
+      },
       "reward": "ch01"
+    },
+    {
+      "id": "test_a",
+      "name": "테스트 A",
+      "hp": 120,
+      "atk": 18,
+      "atkInterval": 0.9,
+      "range": 90,
+      "chain": "companion_animal",
+      "role": "attack",
+      "attackType": "ranged",
+      "skill": {
+        "kind": "beam",
+        "name": "시험 빛줄기",
+        "gauge": 20,
+        "mult": 2
+      },
+      "reward": "debug"
+    },
+    {
+      "id": "test_b",
+      "name": "테스트 B",
+      "hp": 160,
+      "atk": 14,
+      "atkInterval": 1.0,
+      "range": 22,
+      "chain": "bell",
+      "role": "tank",
+      "attackType": "melee",
+      "skill": {
+        "kind": "ward",
+        "name": "시험 울타리",
+        "gauge": 20,
+        "radius": 80,
+        "stunSeconds": 1.5,
+        "shieldPct": 0.15
+      },
+      "reward": "debug"
     }
   ],
   "offense": "sapsal",

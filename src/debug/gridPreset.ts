@@ -20,9 +20,9 @@ export function showDebugUi(): boolean {
   return isDebug() && !isPlaytest();
 }
 
-/** 하루 끝·결말 주관 평가 버튼 */
+/** 시도 끝·결말 주관 평가 버튼 (§5.20-12: ?playtest=1일 때만) */
 export function showRatings(): boolean {
-  return isDebug() || isPlaytest();
+  return isPlaytest();
 }
 
 export function loadGridOverride(): GridSize | null {

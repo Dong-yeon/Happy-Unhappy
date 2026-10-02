@@ -1,4 +1,5 @@
-// 레인 우리 편 표시 (§5.17-9, [11]-5, 도형만): 영웅 = 초상 원 + 이름 첫 글자 + hp 바 + 기세 표시 /
+// 레인 우리 편 표시 (§5.17-9, [11]-5, §5.20, 도형만): 영웅 = 체인 색 초상 원 + 이름 첫 글자 + hp 바 + 기세 표시
+//   (원거리는 테두리 금색 + 작은 점, 보호막이 있으면 흰 고리) /
 // 병사 = 영웅보다 작은 사각형 + 체인 색 + 단 + 얇은 수명 바. 적 = 종류별 색·크기 원 + hp 바 (§5.19-5). 두 레인 뷰가 같이 쓴다.
 import Phaser from 'phaser';
 import type { GameState, Role } from '../core/game';
@@ -20,12 +21,25 @@ export interface UnitView {
   life: Phaser.GameObjects.Rectangle | null;
   /** 영웅 기세 표시 */
   momentum: Phaser.GameObjects.Text | null;
+  /** 보호막 고리 */
+  shield: Phaser.GameObjects.Arc | null;
   color: number;
 }
 
-/** 영웅 초상 색: 낮덱 = 해, 밤덱 = 달 */
+/** 영웅 초상 색: 낮덱 = 해, 밤덱 = 달 (편성 카드 등 역할 표시용) */
 export function heroColor(role: Role): number {
   return role === 'offense' ? COLOR.happy : COLOR.unhappy;
+}
+
+/** 영웅 자기 체인 색 (§5.20-1) */
+export function heroChainColor(data: GameData, id: string): number {
+  const chain = data.heroes.heroes.find((h) => h.id === id)?.chain;
+  return parseInt((data.chains.find((c) => c.archetypeId === chain)?.color ?? '#cccccc').slice(1), 16);
+}
+
+/** 체인 짧은 이름 (조각·스킬 버튼 글씨): 2단계 이름의 첫 낱말 ("뼈다귀", "방울", "떡", "새끼줄") */
+export function chainShortName(c: { tierNames: string[] }): string {
+  return (c.tierNames[1] ?? c.tierNames[0] ?? '').split(' ')[0];
 }
 
 export function heroName(data: GameData, id: string): string {
@@ -34,14 +48,19 @@ export function heroName(data: GameData, id: string): string {
 
 export function makeUnitView(scene: Phaser.Scene, data: GameData, u: Unit, role: Role): UnitView {
   if (u.role === 'hero') {
-    const color = heroColor(role);
-    const body = scene.add.circle(0, 0, HERO_R, color).setStrokeStyle(2, 0x1b1d24);
+    void role;
+    const color = heroChainColor(data, u.chain);
+    const ranged = u.attackType === 'ranged';
+    const body = scene.add.circle(0, 0, HERO_R, color).setStrokeStyle(2, ranged ? 0xf2c94c : 0x1b1d24);
     const label = text(scene, 0, 0, heroName(data, u.chain).slice(0, 1), { fontSize: '11px', color: '#1b1d24', fontStyle: 'bold' }).setOrigin(0.5);
     const bg = scene.add.rectangle(-HP_W / 2, HERO_R + 4, HP_W, 3, 0x1b1d24).setOrigin(0, 0.5);
     const hp = scene.add.rectangle(-HP_W / 2, HERO_R + 4, HP_W, 3, 0x7ed67e).setOrigin(0, 0.5);
     const momentum = text(scene, 0, -HERO_R - 7, '', { fontSize: '8px', color: '#ffb46b', fontStyle: 'bold' }).setOrigin(0.5);
-    const container = scene.add.container(0, 0, [body, label, bg, hp, momentum]);
-    return { container, body, hp, hpW: HP_W, life: null, momentum, color };
+    const shield = scene.add.circle(0, 0, HERO_R + 3).setStrokeStyle(2, 0xffffff, 0.8).setVisible(false);
+    const parts: Phaser.GameObjects.GameObject[] = [shield, body, label, bg, hp, momentum];
+    if (ranged) parts.push(scene.add.circle(HERO_R - 2, -HERO_R + 2, 2.5, 0xf2c94c));
+    const container = scene.add.container(0, 0, parts);
+    return { container, body, hp, hpW: HP_W, life: null, momentum, shield, color };
   }
   const color = parseInt((data.chains.find((c) => c.archetypeId === u.chain)?.color ?? '#999999').slice(1), 16);
   const body = scene.add.rectangle(0, 0, SOLDIER, SOLDIER, color).setStrokeStyle(1, u.soldier === 'shield' ? 0xf5f2e8 : 0x1b1d24);
@@ -50,15 +69,16 @@ export function makeUnitView(scene: Phaser.Scene, data: GameData, u: Unit, role:
   const hp = scene.add.rectangle(-S_HP_W / 2, SOLDIER / 2 + 2, S_HP_W, 2, 0x7ed67e).setOrigin(0, 0.5);
   const life = scene.add.rectangle(-S_HP_W / 2, SOLDIER / 2 + 4, S_HP_W, 1, 0xe6e9f5).setOrigin(0, 0.5);
   const container = scene.add.container(0, 0, [body, label, bg, hp, life]);
-  return { container, body, hp, hpW: S_HP_W, life, momentum: null, color };
+  return { container, body, hp, hpW: S_HP_W, life, momentum: null, shield: null, color };
 }
 
 /** 매 프레임: hp·수명·기세 */
 export function syncUnitView(v: UnitView, u: Unit, state: GameState, role: Role): void {
   v.hp.width = v.hpW * Math.max(0, Math.min(1, u.hp / u.maxHp));
   if (v.life && u.life !== undefined && u.lifeMax) v.life.width = v.hpW * Math.max(0, Math.min(1, u.life / u.lifeMax));
+  v.shield?.setVisible(u.shield > 0.5);
   if (v.momentum) {
-    const m = state.heroes[role].momentum;
+    const m = state.momentum[role];
     const t = m.stacks > 0 ? `기세 ${m.stacks}` : '';
     if (v.momentum.text !== t) v.momentum.setText(t);
   }

@@ -8,18 +8,18 @@ export interface CombatStats {
 }
 
 export interface Balance {
-  version: 4;
+  version: 5;
   /** swapHeroes: true면 기본 배정(heroes.json offense/defense)을 맞바꾼다 (영웅 배정 기본값, [11]-3) */
-  start: { joy: number; swapHeroes: boolean };
+  start: { swapHeroes: boolean };
   grid: {
     gridCols: number;
     gridRows: number;
     gridPresets: [number, number][];
-    spawnCostBase: number;
-    spawnCostStep: number;
     maxTier: number;
-    releaseRefund: number;
   };
+  /** 조각이 생기는 길 (§5.20-13, D-064): 전투 중 autoInterval초마다 1단계 1개 + 처치 시 killDropChance로 1단계 1개.
+   *  밤 보스·guardian은 bossDropTier단계 bossDropCount개 확정. 그리드가 가득이면 버림 */
+  spawn: { autoInterval: number; killDropChance: number; bossDropTier: number; bossDropCount: number };
   lane: {
     /** 낮(오펜스): 영웅·병사 이동 속도 (가는 길·돌아오는 길, px/초) */
     abyssAdvanceSpeed: number;
@@ -40,6 +40,9 @@ export interface Balance {
   };
   /** 적 공통: HP = base.hp × hpMult × hpGrowthPerStage^(스테이지-1) (낮·밤 모두) */
   enemy: { hpGrowthPerStage: number };
+  /** 몬스터 떼 (§5.20-13): 스테이지 적 수 × countMult (밤 보스 웨이브 제외), 한 마리 hp × hpMult (보스 제외).
+   *  레인 동시 적 최대 laneMaxEnemies, 넘으면 대기열 */
+  swarm: { countMult: number; hpMult: number; laneMaxEnemies: number };
   /** 낮: 핵을 쥔 그림자 (§5.19-2, 구 심연 층 1개). HP는 stages.json */
   guardian: {
     counterAtk: number;
@@ -61,22 +64,18 @@ export interface Balance {
     chaseInterval: number;
     /** 영웅이 떨어진 핵을 줍는 거리 (적이 닿는 거리도 같음, px) */
     pickupRange: number;
+    /** 추격 무리 이동 속도 배수 (운반자보다 빨라야 함, §5.20-9) */
+    chaseSpeedMult: number;
   };
   /** 밤: 핵 HP (§5.19-3) */
   core: { hp: number; sinkDamage: number; bossSinkDamage: number };
   /** 영웅 공통 (§5.17-2·4·10) */
   hero: {
-    /** 떡 성장 받는 피해 감소의 상한 */
-    dmgReduceMax: number;
-    /** 동아줄 성장 atkInterval 하한(초) */
-    atkIntervalMin: number;
-    /** 쓰러짐 → 이 초 뒤 일어남 (밤 영웅, 낮 운반 중 영웅) */
+    /** 밤 쓰러짐 → 이 초 뒤 일어남 (낮 쓰러짐은 그 낮 동안 안 일어남, §5.20-3) */
     reviveSeconds: number;
-    /** 일어날 때 hp = maxHp × 이 값 */
+    /** 일어날 때 hp = maxHp × 이 값 (밤 부활·달빛 동아줄) */
     reviveHpRatio: number;
   };
-  /** 먹이기 (§5.17-2): 단계별 점수 (index 0 = 1단계) */
-  feed: { tierScore: number[] };
   /** 전투 중 머지 버프 (§5.17-3) */
   buff: {
     /** 떡: 즉시 회복 maxHp × healPct */
@@ -85,7 +84,7 @@ export interface Balance {
     momentumAtkPct: number;
     momentumSeconds: number;
     momentumMaxStacks: number;
-    /** 결과 3단계 머지면 회복 × / 중첩 수 × */
+    /** 결과 3단계 이상 머지면 회복 × / 중첩 수 × */
     tier3Mult: number;
   };
   /** 전투 중 머지 병사 ([11]-1·2, D-049·D-050) */
@@ -98,43 +97,67 @@ export interface Balance {
     /** 때 맞춤 (낮 sun 체인 / 밤 moon 체인) 병사 능력치·버프 배수 */
     affinityMult: number;
   };
+  /** 스킬 게이지 (§5.20-5): 자기 체인 머지 결과 단계 → 게이지 (index 0 = 1단계), fullAtTier 단계는 즉시 가득 */
+  skill: { tierPoints: number[]; fullAtTier: number };
+  /** 5단계 특별 버프 (§5.18-9): 해 = 한낮 (atk +, 초) / 달 = 보름달 (적 정지 초, 보호막 maxHp 비율) */
+  special: { noonAtkPct: number; noonSeconds: number; fullMoonStunSeconds: number; fullMoonShieldPct: number };
+  /** 편성·팀 릴레이 (§5.20-2·3): 팀 수 상한·팀 인원·무리 간격(px)·교대 연출(초) */
+  team: { maxTeams: number; teamSize: number; spacing: number; swapSeconds: number };
+  /** 경험치 → 레벨 임시 (§5.20-7) */
+  exp: {
+    kill: number;
+    guardian: number;
+    nightWin: number;
+    /** 실패로 끝난 단계의 경험치 배수 */
+    failMult: number;
+    /** 레벨 n → n+1 필요 = levelBase + levelStep × (n − 1) */
+    levelBase: number;
+    levelStep: number;
+    /** 레벨당 maxHp·atk + (기본값 기준) */
+    perLevelPct: number;
+    maxLevel: number;
+  };
   /** 낮 = 오펜스: 해가 지기까지(초). 왕복이라 v0.15에서 늘림 */
   offense: { seconds: number };
   /** 챕터 진행 (§5.19-1): 1-1 ~ 1-length 스테이지 */
   chapter: {
     length: number;
-    /** 이 스테이지를 성공하면 다음 dayStart에 갈림길 */
+    /** (M8.11 D-063 갈림길 삭제로 지금은 안 씀) */
     turningPoint: number;
-  };
-  days: {
-    /** 스테이지 시작(장면 카드를 닫을 때) 기쁨 바닥. 가산이 아니라 max (D-024) */
-    morningJoyFloor: number;
   };
 }
 
-/** 영웅 (§5.17-1, §5.19-9, heroes.json): 시작 모험대(삽살·해태) + 챕터 완성 보상 영웅(reward) */
+/** 영웅 스킬 (§5.20-5): 게이지가 차면 자동 발동, 1★ 고정 */
+export type SkillDef =
+  /** 맨 앞 적·guardian에 atk × mult, pierce개체 관통 */
+  | { kind: 'strike'; name: string; gauge: number; mult: number; pierce: number }
+  /** 거리 radius 안 적 stunSeconds 정지 + 팀 전원 보호막 maxHp × shieldPct */
+  | { kind: 'ward'; name: string; gauge: number; radius: number; stunSeconds: number; shieldPct: number }
+  /** 레인의 모든 적·guardian에 atk × mult */
+  | { kind: 'beam'; name: string; gauge: number; mult: number }
+  /** 팀 전원 hp maxHp × healPct 회복 + 쓰러진 팀원 revive명 즉시 일으킴 */
+  | { kind: 'mend'; name: string; gauge: number; healPct: number; revive: number };
+
+export type HeroRole = 'tank' | 'attack' | 'support';
+
+/** 영웅 (§5.17-1, §5.19-9, §5.20-1, heroes.json): 시작 모험대(삽살·해태) + 보상 영웅(reward = 챕터 id, "debug" = 테스트) */
 export interface HeroDef extends CombatStats {
   id: string;
   name: string;
-  /** 챕터 완성 보상 영웅 (예: "ch01" = 1챕터 완성 시 합류, D-057). 없으면 시작 모험대 */
+  /** 자기 체인 (chains.json archetypeId): 레인에 있으면 그리드에 이 체인이 나온다 */
+  chain: string;
+  role: HeroRole;
+  /** 근접 = 붙어서 / 원거리 = 사거리 끝에서 (§5.20-3-1) */
+  attackType: 'melee' | 'ranged';
+  skill: SkillDef;
   reward?: string;
 }
 
 export interface Heroes {
   heroes: HeroDef[];
-  /** 기본 배정: 낮(오펜스) / 밤(디펜스) 영웅 id */
+  /** 기본 편성: 공격대 1팀 / 수비대 1팀 영웅 id */
   offense: string;
   defense: string;
-}
-
-/** 먹이기 성장 (점수 1당, §5.17-2) */
-export interface ChainGrowth {
-  maxHp?: number;
-  /** 받는 피해 감소 (비율) */
-  dmgReduce?: number;
-  atk?: number;
-  /** atkInterval 감소 (비율) */
-  atkIntervalPct?: number;
 }
 
 export interface SoldierLevel extends CombatStats {
@@ -151,11 +174,10 @@ export interface Chain {
   tierNames: string[];
   /** 때 맞춤 ([11]-2): sun = 낮에 머지하면 강함 / moon = 밤 */
   side: 'sun' | 'moon';
-  growth: ChainGrowth;
   /** 전투 중 머지 버프 (§5.17-3) */
   buff: 'heal' | 'momentum';
-  /** 전투 중 머지 병사 ([11]-1): shield = 접촉한 적 정지·반격을 먼저 받음 / snare = 맞힌 적 감속 */
-  soldier: { kind: 'shield' | 'snare'; name: string; levels: SoldierLevel[] };
+  /** 전투 중 머지 병사 ([11]-1, §5.20-1): shield·charger = 막음 / snare = 맞힌 적 감속 / bell = 맞힌 적 짧게 정지 (막지 않음) */
+  soldier: { kind: 'shield' | 'snare' | 'charger' | 'bell'; name: string; levels: SoldierLevel[] };
 }
 
 /** 적 공통 능력치 (§5.19-5): 종류별 배수를 곱한다 */
@@ -164,7 +186,6 @@ export interface EnemyBase {
   speed: number;
   atk: number;
   atkInterval: number;
-  joyReward: number;
 }
 
 export interface EnemyDef {
@@ -190,6 +211,10 @@ export interface EnemyGroup {
 export interface StageDef {
   stage: number;
   title: string;
+  /** 낮에 찾아올 핵 수 (§5.20-3, 1챕터는 전부 1) */
+  cores: number;
+  /** 이야기책 시도 수 문장 덮어쓰기 ("{n}" = 시도 수, §5.20-8) */
+  retryPageLine?: string;
   /** dayStart 장면 카드 여는 글 */
   intro: string;
   coreName: string;
@@ -225,7 +250,6 @@ export interface Stages {
 export type Flag = 'avoid' | 'face';
 
 export interface EventEffects {
-  joy?: number;
   shadow?: number;
   freePieces?: { chain: string; tier: number }[];
   worryMultiplier?: number;
@@ -236,7 +260,6 @@ export interface MilestoneChoice {
   id: string;
   label: string;
   flag: Flag;
-  joy: number;
   shadow: number;
   /** 다음 스테이지 첫 시도의 guardian HP 감소 비율 (0~1). 0.3 = 30% 감소 */
   faceLayerHpReduce?: number;
@@ -292,10 +315,31 @@ export interface Chapter {
   id: string;
   /** 이 챕터의 world 값 (체인·이벤트의 world와 같아야 함) */
   world: string;
-  /** 1-turningPoint 성공 다음 dayStart에 나오는 갈림길 (events.milestones의 id) */
-  crossroad: string;
   /** 1-length 보스 표시 이름 */
   bossName: string;
+  /** 이야기책 장마다 덧붙이는 플레이 문장 (§5.20-8). {hero}·{core}·{n}, {이/가}·{을/를} = 앞 낱말 받침에 맞춤 */
+  pageLines: { carrier: string; hpFull: string; hpMid: string; hpLow: string; retry: string };
+}
+
+/** 인연 시너지 (§5.20-6, bonds.json) */
+export type BondDef =
+  | { id: string; name: string; kind: 'sameTeam'; heroes: string[]; effect: BondEffect }
+  | { id: string; name: string; kind: 'split'; offense: string; defense: string; effect: BondEffect }
+  | { id: string; name: string; kind: 'roleMix'; roles: HeroRole[]; effect: BondEffect };
+
+export interface BondEffect {
+  /** 받는 피해 − */
+  dmgReduce?: number;
+  /** 팀원이 처음 쓰러질 때 1회 hp 비율로 즉시 일어남 */
+  firstFallReviveHp?: number;
+  /** 스킬 게이지가 차는 배수 */
+  gaugeMult?: number;
+  /** 팀 atk + */
+  atkPct?: number;
+}
+
+export interface Bonds {
+  bonds: BondDef[];
 }
 
 /** 챕터 완성 화면 (§5.15-5, chapter_complete.json). learnedRecipes는 표시만 (조합표에 추가하지 않음, D-043) */
@@ -336,6 +380,7 @@ export interface GameData {
   events: Events;
   days: Days;
   stages: Stages;
+  bonds: Bonds;
   chapter: Chapter;
   chapterComplete: ChapterComplete;
   recipes: Recipes;

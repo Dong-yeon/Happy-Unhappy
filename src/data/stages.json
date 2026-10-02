@@ -11,15 +11,36 @@
       "day": {
         "guardian": "shadow",
         "guardianHp": 120,
-        "enemies": [{ "type": "shadow", "count": 6 }],
-        "chase": [{ "type": "shadow", "count": 3 }]
+        "enemies": [
+          {
+            "type": "shadow",
+            "count": 6
+          }
+        ],
+        "chase": [
+          {
+            "type": "shadow",
+            "count": 3
+          }
+        ]
       },
       "night": {
         "waves": [
-          [{ "type": "shadow", "count": 6 }],
-          [{ "type": "shadow", "count": 6 }]
+          [
+            {
+              "type": "shadow",
+              "count": 6
+            }
+          ],
+          [
+            {
+              "type": "shadow",
+              "count": 6
+            }
+          ]
         ]
-      }
+      },
+      "cores": 1
     },
     {
       "stage": 2,
@@ -31,15 +52,52 @@
       "day": {
         "guardian": "shadow",
         "guardianHp": 160,
-        "enemies": [{ "type": "shadow", "count": 6 }, { "type": "wildcat", "count": 3 }],
-        "chase": [{ "type": "shadow", "count": 3 }, { "type": "wildcat", "count": 2 }]
+        "enemies": [
+          {
+            "type": "shadow",
+            "count": 6
+          },
+          {
+            "type": "wildcat",
+            "count": 3
+          }
+        ],
+        "chase": [
+          {
+            "type": "shadow",
+            "count": 3
+          },
+          {
+            "type": "wildcat",
+            "count": 2
+          }
+        ]
       },
       "night": {
         "waves": [
-          [{ "type": "shadow", "count": 3 }, { "type": "wildcat", "count": 5 }],
-          [{ "type": "shadow", "count": 3 }, { "type": "wildcat", "count": 5 }]
+          [
+            {
+              "type": "shadow",
+              "count": 3
+            },
+            {
+              "type": "wildcat",
+              "count": 5
+            }
+          ],
+          [
+            {
+              "type": "shadow",
+              "count": 3
+            },
+            {
+              "type": "wildcat",
+              "count": 5
+            }
+          ]
         ]
-      }
+      },
+      "cores": 1
     },
     {
       "stage": 3,
@@ -52,16 +110,42 @@
       "day": {
         "guardian": "shadow",
         "guardianHp": 210,
-        "enemies": [{ "type": "wildcat", "count": 8 }],
-        "chase": [{ "type": "wildcat", "count": 4 }]
+        "enemies": [
+          {
+            "type": "wildcat",
+            "count": 8
+          }
+        ],
+        "chase": [
+          {
+            "type": "wildcat",
+            "count": 4
+          }
+        ]
       },
       "night": {
         "waves": [
-          [{ "type": "shadow", "count": 10 }],
-          [{ "type": "shadow", "count": 10 }],
-          [{ "type": "shadow", "count": 10 }]
+          [
+            {
+              "type": "shadow",
+              "count": 10
+            }
+          ],
+          [
+            {
+              "type": "shadow",
+              "count": 10
+            }
+          ],
+          [
+            {
+              "type": "shadow",
+              "count": 10
+            }
+          ]
         ]
-      }
+      },
+      "cores": 1
     },
     {
       "stage": 4,
@@ -73,16 +157,62 @@
       "day": {
         "guardian": "shadow",
         "guardianHp": 270,
-        "enemies": [{ "type": "shadow", "count": 8 }, { "type": "wildcat", "count": 4 }],
-        "chase": [{ "type": "shadow", "count": 4 }, { "type": "wildcat", "count": 2 }]
+        "enemies": [
+          {
+            "type": "shadow",
+            "count": 8
+          },
+          {
+            "type": "wildcat",
+            "count": 4
+          }
+        ],
+        "chase": [
+          {
+            "type": "shadow",
+            "count": 4
+          },
+          {
+            "type": "wildcat",
+            "count": 2
+          }
+        ]
       },
       "night": {
         "waves": [
-          [{ "type": "shadow", "count": 6 }, { "type": "wildcat", "count": 6 }],
-          [{ "type": "shadow", "count": 6 }, { "type": "wildcat", "count": 6 }],
-          [{ "type": "shadow", "count": 6 }, { "type": "wildcat", "count": 6 }]
+          [
+            {
+              "type": "shadow",
+              "count": 6
+            },
+            {
+              "type": "wildcat",
+              "count": 6
+            }
+          ],
+          [
+            {
+              "type": "shadow",
+              "count": 6
+            },
+            {
+              "type": "wildcat",
+              "count": 6
+            }
+          ],
+          [
+            {
+              "type": "shadow",
+              "count": 6
+            },
+            {
+              "type": "wildcat",
+              "count": 6
+            }
+          ]
         ]
-      }
+      },
+      "cores": 1
     },
     {
       "stage": 5,
@@ -96,17 +226,68 @@
         "guardian": "mitten",
         "guardianHp": 510,
         "boss": true,
-        "enemies": [{ "type": "mitten", "count": 2 }, { "type": "shadow", "count": 6 }],
-        "chase": [{ "type": "mitten", "count": 1 }, { "type": "shadow", "count": 3 }]
+        "enemies": [
+          {
+            "type": "mitten",
+            "count": 2
+          },
+          {
+            "type": "shadow",
+            "count": 6
+          }
+        ],
+        "chase": [
+          {
+            "type": "mitten",
+            "count": 1
+          },
+          {
+            "type": "shadow",
+            "count": 3
+          }
+        ]
       },
       "night": {
         "waves": [
-          [{ "type": "shadow", "count": 8 }, { "type": "wildcat", "count": 6 }],
-          [{ "type": "shadow", "count": 8 }, { "type": "wildcat", "count": 6 }],
-          [{ "type": "shadow", "count": 8 }, { "type": "wildcat", "count": 6 }]
+          [
+            {
+              "type": "shadow",
+              "count": 8
+            },
+            {
+              "type": "wildcat",
+              "count": 6
+            }
+          ],
+          [
+            {
+              "type": "shadow",
+              "count": 8
+            },
+            {
+              "type": "wildcat",
+              "count": 6
+            }
+          ],
+          [
+            {
+              "type": "shadow",
+              "count": 8
+            },
+            {
+              "type": "wildcat",
+              "count": 6
+            }
+          ]
         ],
-        "bossWave": [{ "type": "mitten", "count": 1 }]
-      }
+        "bossWave": [
+          {
+            "type": "mitten",
+            "count": 1
+          }
+        ]
+      },
+      "cores": 1
     },
     {
       "stage": 6,
@@ -118,16 +299,62 @@
       "day": {
         "guardian": "shadow",
         "guardianHp": 420,
-        "enemies": [{ "type": "mitten", "count": 3 }, { "type": "wildcat", "count": 4 }],
-        "chase": [{ "type": "mitten", "count": 2 }, { "type": "wildcat", "count": 2 }]
+        "enemies": [
+          {
+            "type": "mitten",
+            "count": 3
+          },
+          {
+            "type": "wildcat",
+            "count": 4
+          }
+        ],
+        "chase": [
+          {
+            "type": "mitten",
+            "count": 2
+          },
+          {
+            "type": "wildcat",
+            "count": 2
+          }
+        ]
       },
       "night": {
         "waves": [
-          [{ "type": "shadow", "count": 10 }, { "type": "wildcat", "count": 6 }],
-          [{ "type": "shadow", "count": 10 }, { "type": "wildcat", "count": 6 }],
-          [{ "type": "shadow", "count": 10 }, { "type": "wildcat", "count": 6 }]
+          [
+            {
+              "type": "shadow",
+              "count": 10
+            },
+            {
+              "type": "wildcat",
+              "count": 6
+            }
+          ],
+          [
+            {
+              "type": "shadow",
+              "count": 10
+            },
+            {
+              "type": "wildcat",
+              "count": 6
+            }
+          ],
+          [
+            {
+              "type": "shadow",
+              "count": 10
+            },
+            {
+              "type": "wildcat",
+              "count": 6
+            }
+          ]
         ]
-      }
+      },
+      "cores": 1
     },
     {
       "stage": 7,
@@ -139,16 +366,70 @@
       "day": {
         "guardian": "shadow",
         "guardianHp": 500,
-        "enemies": [{ "type": "shadow", "count": 6 }, { "type": "wildcat", "count": 4 }, { "type": "mitten", "count": 2 }],
-        "chase": [{ "type": "shadow", "count": 3 }, { "type": "wildcat", "count": 2 }, { "type": "mitten", "count": 1 }]
+        "enemies": [
+          {
+            "type": "shadow",
+            "count": 6
+          },
+          {
+            "type": "wildcat",
+            "count": 4
+          },
+          {
+            "type": "mitten",
+            "count": 2
+          }
+        ],
+        "chase": [
+          {
+            "type": "shadow",
+            "count": 3
+          },
+          {
+            "type": "wildcat",
+            "count": 2
+          },
+          {
+            "type": "mitten",
+            "count": 1
+          }
+        ]
       },
       "night": {
         "waves": [
-          [{ "type": "shadow", "count": 10 }, { "type": "wildcat", "count": 8 }],
-          [{ "type": "shadow", "count": 10 }, { "type": "wildcat", "count": 8 }],
-          [{ "type": "shadow", "count": 10 }, { "type": "wildcat", "count": 8 }]
+          [
+            {
+              "type": "shadow",
+              "count": 10
+            },
+            {
+              "type": "wildcat",
+              "count": 8
+            }
+          ],
+          [
+            {
+              "type": "shadow",
+              "count": 10
+            },
+            {
+              "type": "wildcat",
+              "count": 8
+            }
+          ],
+          [
+            {
+              "type": "shadow",
+              "count": 10
+            },
+            {
+              "type": "wildcat",
+              "count": 8
+            }
+          ]
         ]
-      }
+      },
+      "cores": 1
     },
     {
       "stage": 8,
@@ -161,18 +442,94 @@
       "day": {
         "guardian": "shadow",
         "guardianHp": 590,
-        "enemies": [{ "type": "mitten", "count": 5 }, { "type": "shadow", "count": 6 }],
-        "chase": [{ "type": "mitten", "count": 3 }, { "type": "shadow", "count": 3 }]
+        "enemies": [
+          {
+            "type": "mitten",
+            "count": 5
+          },
+          {
+            "type": "shadow",
+            "count": 6
+          }
+        ],
+        "chase": [
+          {
+            "type": "mitten",
+            "count": 3
+          },
+          {
+            "type": "shadow",
+            "count": 3
+          }
+        ]
       },
       "night": {
         "waves": [
-          [{ "type": "shadow", "count": 8 }, { "type": "mitten", "count": 4 }, { "type": "wildcat", "count": 8 }],
-          [{ "type": "shadow", "count": 8 }, { "type": "mitten", "count": 4 }, { "type": "wildcat", "count": 8 }],
-          [{ "type": "shadow", "count": 8 }, { "type": "mitten", "count": 4 }, { "type": "wildcat", "count": 8 }],
-          [{ "type": "shadow", "count": 8 }, { "type": "mitten", "count": 4 }, { "type": "wildcat", "count": 8 }]
+          [
+            {
+              "type": "shadow",
+              "count": 8
+            },
+            {
+              "type": "mitten",
+              "count": 4
+            },
+            {
+              "type": "wildcat",
+              "count": 8
+            }
+          ],
+          [
+            {
+              "type": "shadow",
+              "count": 8
+            },
+            {
+              "type": "mitten",
+              "count": 4
+            },
+            {
+              "type": "wildcat",
+              "count": 8
+            }
+          ],
+          [
+            {
+              "type": "shadow",
+              "count": 8
+            },
+            {
+              "type": "mitten",
+              "count": 4
+            },
+            {
+              "type": "wildcat",
+              "count": 8
+            }
+          ],
+          [
+            {
+              "type": "shadow",
+              "count": 8
+            },
+            {
+              "type": "mitten",
+              "count": 4
+            },
+            {
+              "type": "wildcat",
+              "count": 8
+            }
+          ]
         ],
-        "bossWave": [{ "type": "mitten", "count": 2 }]
-      }
+        "bossWave": [
+          {
+            "type": "mitten",
+            "count": 2
+          }
+        ]
+      },
+      "cores": 1
     },
     {
       "stage": 9,
@@ -184,17 +541,80 @@
       "day": {
         "guardian": "shadow",
         "guardianHp": 690,
-        "enemies": [{ "type": "shadow", "count": 8 }, { "type": "wildcat", "count": 5 }, { "type": "mitten", "count": 3 }],
-        "chase": [{ "type": "shadow", "count": 4 }, { "type": "wildcat", "count": 3 }, { "type": "mitten", "count": 2 }]
+        "enemies": [
+          {
+            "type": "shadow",
+            "count": 8
+          },
+          {
+            "type": "wildcat",
+            "count": 5
+          },
+          {
+            "type": "mitten",
+            "count": 3
+          }
+        ],
+        "chase": [
+          {
+            "type": "shadow",
+            "count": 4
+          },
+          {
+            "type": "wildcat",
+            "count": 3
+          },
+          {
+            "type": "mitten",
+            "count": 2
+          }
+        ]
       },
       "night": {
         "waves": [
-          [{ "type": "shadow", "count": 12 }, { "type": "wildcat", "count": 10 }],
-          [{ "type": "shadow", "count": 12 }, { "type": "wildcat", "count": 10 }],
-          [{ "type": "shadow", "count": 12 }, { "type": "wildcat", "count": 10 }],
-          [{ "type": "shadow", "count": 12 }, { "type": "wildcat", "count": 10 }]
+          [
+            {
+              "type": "shadow",
+              "count": 12
+            },
+            {
+              "type": "wildcat",
+              "count": 10
+            }
+          ],
+          [
+            {
+              "type": "shadow",
+              "count": 12
+            },
+            {
+              "type": "wildcat",
+              "count": 10
+            }
+          ],
+          [
+            {
+              "type": "shadow",
+              "count": 12
+            },
+            {
+              "type": "wildcat",
+              "count": 10
+            }
+          ],
+          [
+            {
+              "type": "shadow",
+              "count": 12
+            },
+            {
+              "type": "wildcat",
+              "count": 10
+            }
+          ]
         ]
-      }
+      },
+      "cores": 1
     },
     {
       "stage": 10,
@@ -208,12 +628,23 @@
         "guardian": "boss",
         "guardianHp": 900,
         "boss": true,
-        "enemies": [{ "type": "mitten", "count": 4 }],
-        "chase": [{ "type": "mitten", "count": 2 }]
+        "enemies": [
+          {
+            "type": "mitten",
+            "count": 4
+          }
+        ],
+        "chase": [
+          {
+            "type": "mitten",
+            "count": 2
+          }
+        ]
       },
       "night": {
         "waves": []
-      }
+      },
+      "cores": 1
     }
   ]
 }

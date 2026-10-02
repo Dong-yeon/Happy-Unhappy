@@ -1,8 +1,8 @@
 // 자동 플레이 시뮬레이터 CLI (스펙 §8.1). Node 전용: core + data + layout 좌표만 import (Phaser 없음).
 //
 //   npm run sim -- --policy balanced --seeds 200 --grid 5x4 [--until chapter] [--maxAttempts 50] [--out 파일]   (한 판 = 1챕터, 시도 상한까지)
-//   npm run sim -- --policy idle,random,balanced,lazy,dayOnly,nightOnly,hoarder,noFeed ...   (여러 정책 + 비교 표)
-//   먹이기 배분 r(낮덱 몫, balanced·lazy): --sweep feedRatio=0,0.25,0.5,0.75,1 (sim.json feedRatio, 데이터 수치가 아님)
+//   npm run sim -- --policy all [--roster start|all]   (전 정책 + 비교 표. roster all = 디버그 6명 지급, §5.20-10)
+//   npm run sim -- --policy bondOn,bondOff --roster all   (인연 켬/끔 비교)
 //   npm run sim -- --compare a.json b.json
 //
 // JSON 수치를 파일 수정 없이 덮어쓰기 (여러 번 가능, 키는 balance.json 기준 — 다른 파일은 monsters.… 처럼 앞에 붙임)
@@ -18,10 +18,12 @@ import { isPreset } from '../src/core/grid';
 import { loadGameData } from '../src/data';
 import type { GameData } from '../src/data/types';
 import { applyOverrides, overridesRecord, parseSet, parseSweep, type Override } from './overrides';
-import { POLICIES, POLICY_ALIASES } from './policies';
+import { EXTRA_POLICIES, POLICY_ALIASES } from './policies';
+import { POLICIES } from './policies';
 import {
   buildReport,
   checkM810Goals,
+  checkM811Goals,
   formatComparison,
   formatCompare,
   formatGoals,
@@ -32,7 +34,7 @@ import {
   type RoundTripCheck,
   type SweepRow,
 } from './report';
-import { runLife, runOne } from './runner';
+import { runLife, runOne, type Roster } from './runner';
 import { serializeGame } from '../src/core/save';
 import simJson from './sim.json';
 import type { SimConfig } from './types';
@@ -51,7 +53,10 @@ interface Args {
   sweep: { key: string; values: Override[] } | null;
   saveRoundTrip: boolean;
   maxAttempts: number;
+  roster: Roster;
 }
+
+const ALL_POLICIES = { ...POLICIES, ...EXTRA_POLICIES };
 
 function fail(msg: string): never {
   console.error(`sim: ${msg}`);
@@ -87,7 +92,7 @@ function parseArgs(argv: string[]): Args {
       ? Object.keys(POLICIES)
       : policyArg.split(',').map((p) => {
           const name = POLICY_ALIASES[p] ?? p;
-          if (!POLICIES[name]) fail(`알 수 없는 정책 "${p}" (가능: ${Object.keys(POLICIES).join(', ')}, all)`);
+          if (!ALL_POLICIES[name]) fail(`알 수 없는 정책 "${p}" (가능: ${Object.keys(ALL_POLICIES).join(', ')}, all)`);
           return name;
         });
 
@@ -106,6 +111,8 @@ function parseArgs(argv: string[]): Args {
   }
   const maxAttempts = Number(get('maxAttempts') ?? (simJson as SimConfig).maxAttempts);
   if (!Number.isInteger(maxAttempts) || maxAttempts < 1) fail('--maxAttempts는 1 이상의 정수');
+  const roster = get('roster') ?? 'start';
+  if (roster !== 'start' && roster !== 'all') fail('--roster는 start 또는 all');
 
   return {
     policies,
@@ -118,6 +125,7 @@ function parseArgs(argv: string[]): Args {
     sweep,
     saveRoundTrip: argv.includes('--saveRoundTrip'),
     maxAttempts,
+    roster,
   };
 }
 
@@ -140,7 +148,7 @@ function runPolicies(args: Args, data: GameData, sets: Override[], cfg: SimConfi
   for (const name of args.policies) {
     const started = Date.now();
     const runs = Array.from({ length: args.seeds }, (_, i) =>
-      runOne(data, cfg, POLICIES[name], { seed: i + 1, grid: args.grid, maxAttempts: args.maxAttempts }),
+      runOne(data, cfg, ALL_POLICIES[name], { seed: i + 1, grid: args.grid, maxAttempts: args.maxAttempts, roster: args.roster }),
     );
     const report = buildReport(
       name,
@@ -149,7 +157,7 @@ function runPolicies(args: Args, data: GameData, sets: Override[], cfg: SimConfi
         seeds: args.seeds,
         grid: `${args.grid.cols}x${args.grid.rows}`,
         maxAttempts: args.maxAttempts,
-        feedRatio: cfg.feedRatio,
+        roster: args.roster,
         ...(sets.length ? { overrides: overridesRecord(sets) } : {}),
       },
       cfg,
@@ -157,7 +165,7 @@ function runPolicies(args: Args, data: GameData, sets: Override[], cfg: SimConfi
     reports.push(report);
     if (verbose) {
       const file =
-        args.out ?? join(OUT_DIR, `${today()}_${name}_chapter${setsTag(sets)}.json`);
+        args.out ?? join(OUT_DIR, `${today()}_${name}_${args.roster}${setsTag(sets)}.json`);
       writeFileSync(file, JSON.stringify(report, null, 2));
       console.log(formatReport(report));
       console.log(`→ ${file} (${((Date.now() - started) / 1000).toFixed(1)}초)\n`);
@@ -175,8 +183,9 @@ function checkRoundTrip(args: Args, data: GameData, cfg: SimConfig): RoundTripCh
     let matched = 0;
     const mismatchSeeds: number[] = [];
     for (let seed = 1; seed <= args.seeds; seed++) {
-      const a = runLife(data, cfg, POLICIES[name], { seed, grid: args.grid, maxAttempts: args.maxAttempts });
-      const b = runLife(data, cfg, POLICIES[name], { seed, grid: args.grid, maxAttempts: args.maxAttempts, saveRoundTrip: true });
+      const opt = { seed, grid: args.grid, maxAttempts: args.maxAttempts, roster: args.roster };
+      const a = runLife(data, cfg, ALL_POLICIES[name], opt);
+      const b = runLife(data, cfg, ALL_POLICIES[name], { ...opt, saveRoundTrip: true });
       const boundary = (s: typeof a.state) => s.phase === 'chapterComplete' || s.phase === 'dayStart' || s.phase === 'diary';
       const fin = (s: typeof a.state) => (boundary(s) ? JSON.stringify(serializeGame(s)) : '');
       if (JSON.stringify(a.result) === JSON.stringify(b.result) && fin(a.state) === fin(b.state)) matched += 1;
@@ -217,12 +226,9 @@ function main(): void {
     if (!args.policyGiven) console.log('(--policy가 없어 전 정책으로 돌립니다)');
 
     const rows: SweepRow[] = [];
-    // feedRatio는 데이터가 아니라 봇 설정 (sim.json): 데이터는 그대로, cfg만 바꾼다
-    const isRatio = key === 'feedRatio';
     for (const v of values) {
-      if (isRatio && typeof v.value !== 'number') fail('--sweep feedRatio=값은 숫자');
-      const sets = isRatio ? fixed : [...fixed, v];
-      const runCfg: SimConfig = isRatio ? { ...cfg, feedRatio: v.value as number } : cfg;
+      const sets = [...fixed, v];
+      const runCfg: SimConfig = cfg;
       const data = attempt(() => applyOverrides(base, sets));
       const started = Date.now();
       const reports = runPolicies(args, data, sets, runCfg, false);
@@ -285,7 +291,9 @@ function main(): void {
     );
     console.log();
   }
-  console.log(formatGoals(checkM810Goals(reports, cfg.m810Goals, roundTrip), '§5.19-6 M8.10 진행 목표 (판정 출력만, 통과는 (b) 튜닝)'));
+  console.log(formatGoals(checkM810Goals(reports, cfg.m810Goals, roundTrip), '§5.19-6 M8.10 진행 목표 (참고, 판정 출력만)'));
+  console.log();
+  console.log(formatGoals(checkM811Goals(reports, cfg.m811Goals), '§5.20-10 M8.11 목표 (판정 출력만, 튜닝은 M8.12 뒤)'));
 }
 
 main();

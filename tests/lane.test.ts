@@ -15,7 +15,7 @@ const GEO: LaneGeometry = {
 /** Happy가 끼어들지 않도록 사거리 밖 */
 const NO_HAPPY = { atk: 0, atkInterval: 1, range: -1e6 };
 
-const WORRY: WorryStats = { type: 'shadow', hp: 18, speed: 60, atk: 3, atkInterval: 1.2, joyReward: 3 };
+const WORRY: WorryStats = { type: 'shadow', hp: 18, speed: 60, atk: 3, atkInterval: 1.2 };
 const SPIRIT = { hp: 20, atk: 4, atkInterval: 1.0, range: 40 };
 
 function lane(happy = NO_HAPPY): Lane {

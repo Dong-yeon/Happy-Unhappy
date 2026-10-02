@@ -1,11 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import balance from '../src/data/balance.json';
 
-const SLOTS = balance.merge.soldierCap + 1;
+const SLOTS = balance.merge.soldierCap + balance.team.teamSize;
 import {
   CORE,
-  HERO_SLOT,
-  HERO_SLOT_PAD,
+  DROP_R,
   HOME,
   REGION,
   RELEASE_HIT,
@@ -22,27 +21,53 @@ import {
   gridLayout,
   inRect,
   progressX,
+  SKILL_BTN_R,
+  skillButtonCenter,
   skyArc,
   toScreen,
   type DropTarget,
 } from '../src/scenes/layout';
 
-describe('레이아웃 영역 (v0.8 §5.11-2)', () => {
-  it('세로: HUD → 하늘 띠 → 땅 띠 → 영웅 슬롯(구 포탈 받침) → 그리드 → 하단 바가 0~640을 빈틈없이 덮는다', () => {
-    const rows = [REGION.hud, REGION.sky, REGION.ground, REGION.portalBase, REGION.grid, REGION.bottomBar];
+describe('레이아웃 영역 (§5.20-13 화면 배치 표)', () => {
+  it('세로: HUD 40 → 해·달 띠 24 → 전장 236 → 머지 판 → 놓아주기가 0~640을 빈틈없이 덮는다', () => {
+    const rows = [REGION.hud, REGION.sky, REGION.ground, REGION.board, REGION.bottomBar];
     expect(rows[0].y).toBe(0);
     for (let i = 1; i < rows.length; i++) expect(rows[i].y).toBe(rows[i - 1].y + rows[i - 1].h);
     const last = rows[rows.length - 1];
     expect(last.y + last.h).toBe(VIEW_H);
-    expect([REGION.sky.y, REGION.ground.y, REGION.portalBase.y]).toEqual([36, 136, 376]);
+    expect(rows.map((r) => r.h).slice(0, 3)).toEqual([40, 24, 236]);
+    expect(REGION.board.h).toBeGreaterThanOrEqual(276);
+    expect(REGION.bottomBar.h).toBeGreaterThanOrEqual(62);
   });
 
-  it('하늘·땅 띠는 화면 너비 전체 (레인 폭 360)', () => {
+  it('해·달 띠·전장은 화면 너비 전체 (레인 폭 360)', () => {
     for (const r of [REGION.sky, REGION.ground]) expect([r.x, r.w]).toEqual([0, VIEW_W]);
   });
+});
 
-  it('그리드는 4행(160px)이 들어가는 높이', () => {
-    expect(REGION.grid.h).toBeGreaterThanOrEqual(4 * 40);
+describe('원형 스킬 버튼 (§5.20-13)', () => {
+  it('전장과 머지 판 경계에 걸쳐 떠 있고, 오른쪽 정렬·겹치지 않음·화면 안', () => {
+    for (const n of [1, 2, 3]) {
+      const cs = Array.from({ length: n }, (_, i) => skillButtonCenter(i, n));
+      for (const c of cs) {
+        expect(c.y - SKILL_BTN_R).toBeLessThan(REGION.board.y);
+        expect(c.y + SKILL_BTN_R).toBeGreaterThan(REGION.board.y);
+        expect(c.x + SKILL_BTN_R).toBeLessThanOrEqual(VIEW_W);
+        expect(c.x - SKILL_BTN_R).toBeGreaterThanOrEqual(0);
+      }
+      for (let i = 1; i < n; i++) expect(cs[i].x - cs[i - 1].x).toBeGreaterThan(SKILL_BTN_R * 2);
+      expect(cs[n - 1].x).toBe(skillButtonCenter(2, 3).x);
+    }
+  });
+
+  it('스킬 버튼은 머지 판 자리(드롭 판정 원)와 겹치지 않는다', () => {
+    for (let i = 0; i < 3; i++) {
+      const b = skillButtonCenter(i, 3);
+      for (let k = 0; k < 20; k++) {
+        const c = cellCenter(5, 4, k);
+        expect(Math.hypot(b.x - c.x, b.y - c.y)).toBeGreaterThan(SKILL_BTN_R + DROP_R - 12);
+      }
+    }
   });
 });
 
@@ -101,47 +126,35 @@ describe('core 좌표 → 화면 변환 (진행 축 → screenX, 옆 축 → scr
     for (const p of pts) expect(inRect(REGION.ground, p.x, p.y)).toBe(true);
   });
 
-  it('해/달 궤적: 왼쪽에서 떠서 오른쪽으로 지고, 가운데가 가장 높다 (하늘 띠 안)', () => {
+  it('해/달 진행도: 왼쪽에서 오른쪽으로, 얇은 띠 가운데 줄 (해·달 띠 안)', () => {
     const [a, m, b] = [skyArc(0), skyArc(0.5), skyArc(1)];
     expect(a.x).toBeLessThan(m.x);
     expect(m.x).toBeLessThan(b.x);
-    expect(m.y).toBeLessThan(a.y);
     expect(a.y).toBeCloseTo(b.y, 9);
+    expect(m.y).toBeCloseTo(a.y, 9);
     for (const p of [a, m, b]) expect(inRect(REGION.sky, p.x, p.y)).toBe(true);
-  });
-});
-
-describe('영웅 슬롯 (§5.17-9)', () => {
-  it('구 포탈 받침 안에 두 칸, 왼쪽 ☀ 낮덱 / 오른쪽 ☾ 밤덱, 겹치지 않음', () => {
-    for (const r of Object.values(HERO_SLOT)) {
-      expect(r.y).toBeGreaterThanOrEqual(REGION.portalBase.y);
-      expect(r.y + r.h).toBeLessThanOrEqual(REGION.portalBase.y + REGION.portalBase.h);
-      expect(r.x).toBeGreaterThanOrEqual(0);
-      expect(r.x + r.w).toBeLessThanOrEqual(VIEW_W);
-    }
-    expect(HERO_SLOT.offense.x + HERO_SLOT.offense.w).toBeLessThan(HERO_SLOT.defense.x);
   });
 });
 
 const G54 = { cols: 5, rows: 4 };
 const NONE: DropTarget = { kind: 'none' };
 const RELEASE: DropTarget = { kind: 'release' };
-const OFF: DropTarget = { kind: 'feed', role: 'offense' };
-const DEF: DropTarget = { kind: 'feed', role: 'defense' };
-const mid = (r: { x: number; y: number; w: number; h: number }) => ({ x: r.x + r.w / 2, y: r.y + r.h / 2 });
 
-describe('dropTarget — 우선순위: 그리드 칸 → 놓아주기 영역 → 영웅 슬롯 → 무효 (§5.17-9)', () => {
-  it('그리드 칸', () => {
+describe('dropTarget — 우선순위: 자리(중심 원) → 놓아주기 영역 → 무효 (먹이기 슬롯 삭제, §5.20-13)', () => {
+  it('자리 중심 + 판정 원 반지름 안', () => {
     const c = cellCenter(G54.cols, G54.rows, 7);
     expect(dropTarget(G54, c.x, c.y)).toEqual({ kind: 'cell', index: 7 });
+    expect(dropTarget(G54, c.x + DROP_R - 1, c.y)).toEqual({ kind: 'cell', index: 7 });
+    expect(dropTarget(G54, c.x, c.y - DROP_R + 1)).toEqual({ kind: 'cell', index: 7 });
   });
 
-  it('그리드 칸이 슬롯 판정 여유보다 우선 (슬롯 아래 여유가 그리드 윗줄과 겹쳐도)', () => {
-    const c = cellCenter(G54.cols, G54.rows, 1);
-    expect(dropTarget(G54, c.x, REGION.grid.y + 2).kind).toBe('cell');
+  it('자리 사이 빈 곳(판정 원 밖)은 무효', () => {
+    const a = cellCenter(G54.cols, G54.rows, 0);
+    const b = cellCenter(G54.cols, G54.rows, 6);
+    expect(dropTarget(G54, (a.x + b.x) / 2, (a.y + b.y) / 2)).toEqual(NONE);
   });
 
-  it('그리드 영역이라도 칸이 아닌 여백은 무효 (4×4 좌우 여백)', () => {
+  it('판 영역이라도 자리 밖 여백은 무효 (4×4 좌우 여백)', () => {
     const l = gridLayout(4, 4);
     expect(dropTarget({ cols: 4, rows: 4 }, l.x - 4, l.y + 10)).toEqual(NONE);
   });
@@ -168,42 +181,37 @@ describe('dropTarget — 우선순위: 그리드 칸 → 놓아주기 영역 →
     expect(dropTarget(G54, cx, z.y + z.h + p + 1)).toEqual(NONE);
   });
 
-  it('놓아주기 판정은 그리드·영웅 슬롯과 겹치지 않는다', () => {
-    expect(RELEASE_HIT.y).toBeGreaterThanOrEqual(REGION.grid.y + REGION.grid.h);
-    for (const r of Object.values(HERO_SLOT)) expect(RELEASE_HIT.y).toBeGreaterThan(r.y + r.h + HERO_SLOT_PAD);
+  it('놓아주기 판정은 머지 판 자리와 겹치지 않는다 (하단 칸, 넓게)', () => {
+    const l = gridLayout(G54.cols, G54.rows);
+    expect(RELEASE_HIT.y).toBeGreaterThanOrEqual(l.y + l.height);
+    expect(RELEASE_ZONE.w).toBeGreaterThanOrEqual(VIEW_W * 0.8);
   });
 
-  it('영웅 슬롯 사각형 안 = 그 덱 먹이기, 위·아래 여유까지', () => {
-    expect(dropTarget(G54, mid(HERO_SLOT.offense).x, mid(HERO_SLOT.offense).y)).toEqual(OFF);
-    expect(dropTarget(G54, mid(HERO_SLOT.defense).x, mid(HERO_SLOT.defense).y)).toEqual(DEF);
-    expect(dropTarget(G54, HERO_SLOT.offense.x + 2, HERO_SLOT.offense.y - HERO_SLOT_PAD + 1)).toEqual(OFF);
-    expect(dropTarget(G54, HERO_SLOT.defense.x + HERO_SLOT.defense.w - 2, HERO_SLOT.defense.y + 2)).toEqual(DEF);
-  });
-
-  it('땅 띠(레인)·하늘·HUD·두 슬롯 사이·하단 바 나머지는 무효 (구 포탈·땅 띠 소환 없음)', () => {
-    expect(dropTarget(G54, 10, 200)).toEqual(NONE); // 땅 띠
+  it('전장(레인)·해·달 띠·HUD·스킬 버튼 자리는 무효', () => {
+    expect(dropTarget(G54, 10, 200)).toEqual(NONE); // 전장
     expect(dropTarget(G54, 350, 200)).toEqual(NONE);
-    expect(dropTarget(G54, VIEW_W / 2, 80)).toEqual(NONE); // 하늘
-    expect(dropTarget(G54, VIEW_W / 2, mid(HERO_SLOT.offense).y)).toEqual(NONE); // 두 슬롯 사이
+    expect(dropTarget(G54, VIEW_W / 2, 50)).toEqual(NONE); // 해·달 띠
     expect(dropTarget(G54, 100, 10)).toEqual(NONE); // HUD
-    expect(dropTarget(G54, 60, 612)).toEqual(NONE); // 조각 생성 버튼 위
-    expect(dropTarget(G54, 300, 612)).toEqual(NONE); // 그림자 게이지 위
+    const b = skillButtonCenter(2, 3);
+    expect(dropTarget(G54, b.x, b.y)).toEqual(NONE);
   });
 });
 
-describe('그리드 배치', () => {
-  it.each(balance.grid.gridPresets as [number, number][])('%i×%i 프리셋이 그리드 영역에 들어가고 가운데 정렬', (cols, rows) => {
+describe('머지 판 배치 (칸 테두리 없음, 원형 조각)', () => {
+  it.each(balance.grid.gridPresets as [number, number][])('%i×%i 프리셋이 머지 판에 들어가고 가운데 정렬, 조각 지름 40 이상', (cols, rows) => {
     expect(gridFits(cols, rows)).toBe(true);
     const l = gridLayout(cols, rows);
     expect(l.x).toBeGreaterThanOrEqual(0);
     expect(Math.abs(VIEW_W - (l.x * 2 + l.width))).toBeLessThanOrEqual(1);
-    expect(l.y).toBeGreaterThanOrEqual(REGION.grid.y);
-    expect(l.y + l.height).toBeLessThanOrEqual(REGION.grid.y + REGION.grid.h);
+    expect(l.y).toBeGreaterThanOrEqual(REGION.board.y);
+    expect(l.y + l.height).toBeLessThanOrEqual(REGION.board.y + REGION.board.h);
+    expect(l.tokenR * 2).toBeGreaterThanOrEqual(40);
+    expect(l.tokenR * 2).toBeLessThan(Math.min(l.cellW, l.cellH));
   });
 });
 
 describe('cellAt / cellCenter', () => {
-  it.each(balance.grid.gridPresets as [number, number][])('%i×%i: 칸 중심 → 같은 칸, 그리드 밖 → null', (cols, rows) => {
+  it.each(balance.grid.gridPresets as [number, number][])('%i×%i: 자리 중심 → 같은 자리, 판 밖 → null', (cols, rows) => {
     for (let i = 0; i < cols * rows; i++) {
       const c = cellCenter(cols, rows, i);
       expect(cellAt(cols, rows, c.x, c.y)).toBe(i);

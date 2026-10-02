@@ -9,12 +9,13 @@ import { AbyssLaneView } from './AbyssLaneView';
 import { DayUi } from './DayUi';
 import { DefenseLaneView } from './DefenseLaneView';
 import { GridView, type DragHover } from './GridView';
-import { HeroSlotView } from './HeroSlotView';
+import { FormationView } from './FormationView';
+import { SkillButtonsView } from './SkillButtonsView';
 import { ReleaseZoneView } from './ReleaseZoneView';
 import { SaveSession } from './session';
 import { SkyView } from './SkyView';
 import { stageLabel } from './labels';
-import { REGION, VIEW_W, gridLayout, skyArc, type Rect } from './layout';
+import { REGION, VIEW_W, cellCenter, skyArc, toScreen, type Rect } from './layout';
 import { Button, COLOR, setupCamera, text } from './ui';
 import type { Role } from '../core/game';
 
@@ -23,7 +24,8 @@ const MAX_FRAME_MS = 100;
 
 /**
  * M8.10: 스테이지 = 장면 카드 → 낮(핵 찾아 돌아오기) → 밤(핵 지키기) → 이야기 한 장 (§5.19, D-053).
- * 화면은 가로 레인 하나 + 하늘 띠(해/달) + 영웅 슬롯 두 칸(먹이기). + 경계 저장/복원 (§5.19-7), metrics (§5.10).
+ * §5.20-13 화면: HUD(스테이지·시도 / [자동] [편성] [책]) + 해·달 띠 + 전장(가로 레인 하나) + 머지 판(원형 조각, 경계의 원형 스킬 버튼)
+ * + 놓아주기 칸. 조각 생성 버튼·기쁨은 없다 (저절로 + 처치 드롭). + 경계 저장/복원 (§5.19-7), metrics (§5.10).
  * 게임 규칙은 core(GameState)에서, 이 씬은 표시·입력만.
  */
 export class GameScene extends Phaser.Scene {
@@ -31,14 +33,14 @@ export class GameScene extends Phaser.Scene {
   private session!: SaveSession;
   private metrics!: MetricsRecorder;
   private gridView!: GridView;
-  private joyText!: Phaser.GameObjects.Text;
-  private spawnBtn!: Button;
+  private autoBtn!: Button;
   private releaseZone!: ReleaseZoneView;
   private laneView!: DefenseLaneView;
   private abyssView!: AbyssLaneView;
   private dayUi!: DayUi;
   private retryText!: Phaser.GameObjects.Text;
-  private slots!: Record<Role, HeroSlotView>;
+  private skills!: SkillButtonsView;
+  private formationView: FormationView | null = null;
   private sky!: SkyView;
   /** 땅 띠가 지금 보여주는 단계 (전환 연출 중에는 core 단계와 다를 수 있다) */
   private groundShown: 'day' | 'night' = 'day';
@@ -62,20 +64,14 @@ export class GameScene extends Phaser.Scene {
 
     this.drawHud(data);
     this.sky = new SkyView(this, this.state);
-    this.fill(REGION.portalBase, COLOR.grid);
     this.drawGrid(size);
-    this.slots = {
-      offense: new HeroSlotView(this, this.state, data, 'offense'),
-      defense: new HeroSlotView(this, this.state, data, 'defense'),
-    };
+    this.skills = new SkillButtonsView(this, this.state, data, data.balance.team.teamSize);
     this.drawBottomBar();
-    this.laneView = new DefenseLaneView(this, this.state, data, { x: this.joyText.x, y: this.joyText.y });
+    this.laneView = new DefenseLaneView(this, this.state, data);
     this.abyssView = new AbyssLaneView(this, this.state, data);
-    this.drawRecipeButton();
     this.gridView = new GridView(this, this.state, data, {
       onChange: () => this.syncUi(),
       onHover: (hover) => this.onDragHover(hover),
-      onFeed: (role, piece, points, x, y) => this.slots[role].onFeed(x, y, this.gridView.colorOf(piece), points),
       canInteract: () => this.canAct(),
       onDropResult: (fail, distance) => this.metrics.drop(fail, distance),
     });
@@ -83,11 +79,11 @@ export class GameScene extends Phaser.Scene {
     this.dayUi = new DayUi(this, this.state, data, {
       onChange: () => this.onDebugChange(),
       onRestart: () => this.restartLife(),
+      openFormation: (done) => this.openFormation(false, done),
       rating: (attempt) => this.metrics.rating(attempt),
       rate: (attempt, key, value) => this.metrics.rate(attempt, key, value),
       endingAgree: () => this.metrics.endingAgree,
       setEndingAgree: (v) => this.metrics.setEndingAgree(v),
-      persist: () => this.session.saveGame(this.state),
     });
     // metrics 세션 시간 쓰기: 숨겨질 때 (§5.10-3)
     const onVisible = () => {
@@ -109,6 +105,24 @@ export class GameScene extends Phaser.Scene {
     }
     this.gridView.refresh();
     this.syncUi();
+  }
+
+  /**
+   * 편성 화면 (§5.20-2): 판 시작(취소 없음) / HUD [편성]. 전투 밖에서 확정하면 경계라 바로 저장,
+   * 전투 중 확정하면 core가 그 단계를 스냅샷으로 되돌려 다시 (formationRestart 이벤트).
+   */
+  private openFormation(cancellable: boolean, done?: () => void): void {
+    if (this.formationView?.isOpen) return;
+    this.gridView.cancel();
+    const data = this.registry.get('data') as GameData;
+    this.formationView = new FormationView(this, this.state, data, () => {
+      this.formationView = null;
+      const p = this.state.phase;
+      if (p === 'dayStart' || p === 'diary' || p === 'chapterComplete') this.session.saveGame(this.state);
+      this.gridView.refresh();
+      done?.();
+      this.syncUi();
+    }, cancellable);
   }
 
   /** [처음부터]: 새 판 → 다시 부팅하면 새 시드로 만들고 장면 카드 저장 */
@@ -135,8 +149,8 @@ export class GameScene extends Phaser.Scene {
 
   update(_time: number, delta: number): void {
     const dt = Math.min(delta, MAX_FRAME_MS) / 1000;
-    // 낮 → 밤 전환 연출(1.5초) 동안은 게임 시간을 멈춘다 (밤이 줄어들지 않게, 입력도 막힘)
-    const paused = this.sky.transitioning;
+    // 낮 → 밤 전환 연출(1.5초)·편성 화면 동안은 게임 시간을 멈춘다
+    const paused = this.sky.transitioning || this.formationView !== null;
     // metrics 실제 시간: 배속을 곱하지 않은 프레임 시간 (백그라운드 동안은 프레임이 멈춘다)
     this.metrics.frame(paused ? 0 : dt, this.speed);
     const events = this.state.tick(paused ? 0 : dt * this.speed);
@@ -145,13 +159,15 @@ export class GameScene extends Phaser.Scene {
     this.laneView.handle(events);
     this.abyssView.handle(events);
     this.onMergeEvents(events);
-    // 지급 조각(갈림길 보너스·와일드카드)은 core에서 이미 그리드에 들어가 있다
-    const gridEvents = ['coreFound', 'freePiece', 'bossReward'];
+    this.onFxEvents(events);
+    this.gridView.handle(events);
+    this.skills.handle(events);
+    // 지급 조각(와일드카드)·편성 재시작(그리드 되돌림)은 core에서 이미 그리드에 반영됐다
+    const gridEvents = ['bossReward', 'formationRestart'];
     if (events.some((e) => gridEvents.includes(e.type))) this.gridView.refresh();
     this.laneView.sync();
     this.abyssView.sync();
-    this.slots.offense.sync();
-    this.slots.defense.sync();
+    this.skills.sync();
     this.sky.sync();
     this.dayUi.sync();
     this.syncUi();
@@ -175,13 +191,53 @@ export class GameScene extends Phaser.Scene {
     const data = this.registry.get('data') as GameData;
     const pct = Math.round((data.balance.merge.affinityMult - 1) * 100);
     const p = skyArc(0.5);
-    const at = { x: p.x, y: REGION.sky.y + 26 };
+    const at = { x: p.x, y: REGION.sky.y + REGION.sky.h / 2 };
     const ring = this.add.circle(at.x, at.y, 14, role === 'offense' ? COLOR.happy : 0xe6e9f5, 0.5).setDepth(30);
     this.tweens.add({ targets: ring, scale: 2, alpha: 0, duration: 600, onComplete: () => ring.destroy() });
     const t = text(this, at.x, at.y + 18, `+${pct}%`, { fontSize: '12px', color: role === 'offense' ? '#ffe08a' : '#dfe6ff', fontStyle: 'bold' })
       .setOrigin(0.5)
       .setDepth(31);
     this.tweens.add({ targets: t, y: at.y + 8, alpha: 0, delay: 600, duration: 400, onComplete: () => t.destroy() });
+  }
+
+  /**
+   * 레인 연출 (§5.20): 스킬 이름 (영웅 위로 떠오름) / 5단계 특별 버프 (하늘 띠 번쩍 + "한낮!"·"보름달!") /
+   * 팀 교대 ("2팀 출발") / 편성 재시작 ("편성이 바뀌어 처음부터").
+   */
+  private onFxEvents(events: CoreEvent[]): void {
+    const data = this.registry.get('data') as GameData;
+    for (const e of events) {
+      if (e.type === 'skill') {
+        const lane = e.role === 'offense' ? this.state.abyss : this.state.defense;
+        const u = lane.units.find((x) => x.id === e.unitId);
+        const p = u ? toScreen(e.role === 'offense' ? 'abyss' : 'defense', u.x, u.y) : { x: VIEW_W / 2, y: REGION.ground.y + 40 };
+        const t = text(this, p.x, p.y - 16, `${e.name}!`, { fontSize: '11px', color: '#9fe0ff', fontStyle: 'bold', backgroundColor: '#1b1d24', padding: { x: 3, y: 1 } })
+          .setOrigin(0.5)
+          .setDepth(40);
+        this.tweens.add({ targets: t, y: p.y - 40, alpha: 0, delay: 500, duration: 500, onComplete: () => t.destroy() });
+      } else if (e.type === 'special') {
+        const noon = e.kind === 'noon';
+        const sky = REGION.sky;
+        const flash = this.add.rectangle(sky.x, sky.y, sky.w, sky.h + REGION.ground.h, noon ? 0xffe08a : 0xdfe6ff, 0.35).setOrigin(0).setDepth(35);
+        this.tweens.add({ targets: flash, alpha: 0, duration: 700, onComplete: () => flash.destroy() });
+        this.banner(noon ? '☀ 한낮! 우리 편 공격 +' : '☾ 보름달! 적이 멈춘다', noon ? '#ffe08a' : '#dfe6ff');
+      } else if (e.type === 'teamSwap') {
+        this.banner(`${e.role === 'offense' ? '☀' : '☾'} ${e.team + 1}팀 출발`, '#ffffff');
+      } else if (e.type === 'formationRestart') {
+        this.banner('편성이 바뀌어 처음부터', '#ffb46b');
+      } else if (e.type === 'levelUp') {
+        void data;
+      }
+    }
+  }
+
+  /** 땅 띠 위쪽 한 줄 알림 (1.2초) */
+  private banner(msg: string, color: string): void {
+    const g = REGION.ground;
+    const t = text(this, g.x + g.w / 2, g.y + 34, msg, { fontSize: '13px', color, fontStyle: 'bold', backgroundColor: '#1b1d24cc', padding: { x: 6, y: 3 } })
+      .setOrigin(0.5)
+      .setDepth(41);
+    this.tweens.add({ targets: t, alpha: 0, delay: 900, duration: 300, onComplete: () => t.destroy() });
   }
 
   /** 낮/밤 전환: 해질녘 → 1.5초 연출 (절반에서 땅 띠 교체) / 장면 카드(스테이지 시작·실패 뒤) → 낮 */
@@ -211,16 +267,13 @@ export class GameScene extends Phaser.Scene {
     if (which === 'night' && !this.sky.transitioning) this.sky.setMode('night');
   }
 
-  /** 그리드·버튼 입력 가능: 낮·밤 + 모달 없음 + 전환 연출 아님 */
+  /** 그리드·버튼 입력 가능: 낮·밤 + 모달·편성 화면 없음 + 전환 연출 아님 */
   private canAct(): boolean {
-    return this.state.timeFlows && !this.dayUi.blocking && !this.sky.transitioning;
+    return this.state.timeFlows && !this.dayUi.blocking && !this.sky.transitioning && this.formationView === null;
   }
 
   private onDragHover(hover: DragHover): void {
     this.releaseZone.setHover(hover?.kind === 'release' ? hover.hover : null);
-    for (const role of ['offense', 'defense'] as const) {
-      this.slots[role].setHovered(hover?.kind === 'feed' && hover.role === role && hover.block === null);
-    }
   }
 
   private onDebugChange(): void {
@@ -232,74 +285,57 @@ export class GameScene extends Phaser.Scene {
   private syncUi(): void {
     const s = this.state;
     const data = this.registry.get('data') as GameData;
-    const joy = `기쁨 ${s.joy}`;
-    if (this.joyText.text !== joy) this.joyText.setText(joy);
-    // HUD (§5.19-1): "1-3 · 셋째 고개", 재도전일 때만 "다시 도전". 일차는 쓰지 않는다
+    // HUD (§5.19-1, §5.20-13): "1-3 · 셋째 고개", 아래 줄에 시도 수 (재도전이면 "다시 도전 · n번째")
     const phase = s.phase === 'chapterComplete' ? '이야기 끝' : stageLabel(data, s.stage);
     if (this.phaseText.text !== phase) this.phaseText.setText(phase);
+    const tries = s.attempts[s.stage - 1] + (s.phase === 'dayStart' ? 1 : 0);
     const retry = (s.phase === 'dayStart' && s.retry !== null) || ((s.phase === 'day' || s.phase === 'night') && s.attempts[s.stage - 1] > 1);
-    const tag = retry ? '다시 도전' : s.wave.paused ? '(웨이브 정지)' : '';
-    if (this.retryText.text !== tag) this.retryText.setText(tag);
-    // 영웅 슬롯: 낮·밤 언제든 양쪽 먹이기 (§5.17-2)
-    this.slots.offense.setClosed(!s.feedOpen);
-    this.slots.defense.setClosed(!s.feedOpen);
-    const block = s.spawnBlock;
-    const canAct = this.canAct();
-    this.spawnBtn
-      .setLabel(block === 'full' ? '칸 가득' : block === 'noJoy' ? `기쁨 부족 (${s.spawnCost})` : `조각 생성 (${s.spawnCost})`)
-      .setEnabled(block === null && canAct);
-  }
-
-  private onSpawn(): void {
-    if (!this.canAct()) return;
-    if (this.state.spawn()) this.gridView.refresh();
-    this.syncUi();
+    const tag =
+      s.phase === 'chapterComplete' || s.phase === 'diary' ? '' : `${retry ? '다시 도전 · ' : ''}${tries}번째 시도${s.wave.paused ? ' (웨이브 정지)' : ''}`;
+    if (this.retryText.text !== tag) this.retryText.setText(tag).setColor(retry ? '#ffb46b' : '#9aa1b5');
+    this.autoBtn.setLabel(s.autoSkill ? '자동' : '수동').setActive(s.autoSkill);
   }
 
   private fill(r: Rect, color: number): Phaser.GameObjects.Rectangle {
     return this.add.rectangle(r.x, r.y, r.w, r.h, color).setOrigin(0);
   }
 
-  private drawHud(data: GameData): void {
+  /** HUD (§5.20-13): 왼쪽 스테이지명·시도 / 오른쪽 [자동] [편성] [책] 작은 버튼 */
+  private drawHud(_data: GameData): void {
     const r = REGION.hud;
     this.fill(r, COLOR.hud);
     const midY = r.y + r.h / 2;
-    this.phaseText = text(this, 8, midY, '', { fontSize: '11px' }).setOrigin(0, 0.5);
-    this.joyText = text(this, VIEW_W / 2 + 30, midY, `기쁨 ${data.balance.start.joy}`, { fontSize: '12px', color: '#f2c94c' }).setOrigin(0.5);
-    this.retryText = text(this, VIEW_W - 8, midY, '', { fontSize: '11px', color: '#ffb46b' }).setOrigin(1, 0.5);
+    this.phaseText = text(this, 8, midY - 7, '', { fontSize: '11px' }).setOrigin(0, 0.5);
+    this.retryText = text(this, 8, midY + 8, '', { fontSize: '9px', color: '#9aa1b5' }).setOrigin(0, 0.5);
+    const bw = 44;
+    const gap = 4;
+    const x3 = VIEW_W - 6 - bw / 2;
+    // [자동] 스킬 자동/수동 (§5.20-13). 끄면 원형 스킬 버튼 탭 = 발동
+    this.autoBtn = new Button(this, x3 - (bw + gap) * 2, midY, bw, 24, '자동', () => this.state.setAutoSkill(!this.state.autoSkill), '11px');
+    // [편성] 언제든 (§5.20-2). 추억 조합 버튼은 삭제 (§5.20-12)
+    const f = new Button(this, x3 - (bw + gap), midY, bw, 24, '편성', () => {
+      if (!this.dayUi.blocking) this.openFormation(true);
+    }, '11px');
+    // [책] 이야기책 (§5.20-8)
+    const b = new Button(this, x3, midY, bw, 24, '책', () => {
+      if (!this.dayUi.blocking) this.dayUi.showDiaryList();
+    }, '11px');
+    for (const x of [this.autoBtn, f, b]) x.container.setDepth(8);
   }
 
-  /** [추억 조합] 도감 (§5.13-5): 하늘 띠 오른쪽 위, 언제나 */
-  private drawRecipeButton(): void {
-    const sky = REGION.sky;
-    const b = new Button(this, sky.x + sky.w - 40, sky.y + 14, 72, 20, '추억 조합', () => this.dayUi.showRecipes(), '10px');
-    b.container.setDepth(8);
-  }
-
-  /** 그리드는 중립 색 (좌우를 양/음 색으로 칠하지 않음, D-018) */
+  /** 머지 판 (§5.20-13): 칸 테두리 없이 배경 톤 + 빈 자리는 작은 점 (그리드는 중립 색, D-018) */
   private drawGrid(size: GridSize): void {
-    this.fill(REGION.grid, COLOR.grid);
-    const l = gridLayout(size.cols, size.rows);
+    this.fill(REGION.board, COLOR.grid);
     for (let i = 0; i < size.cols * size.rows; i++) {
-      const col = i % size.cols;
-      const row = Math.floor(i / size.cols);
-      this.add
-        .rectangle(l.x + col * l.cellW + 1, l.y + row * l.cellH + 1, l.cellW - 2, l.cellH - 2, COLOR.cell)
-        .setOrigin(0)
-        .setStrokeStyle(1, COLOR.cellLine);
+      const c = cellCenter(size.cols, size.rows, i);
+      this.add.circle(c.x, c.y, 4, 0xffffff, 0.08);
     }
   }
 
+  /** 하단: 넓은 놓아주기 칸만 (조각 생성 버튼 삭제, §5.20-13) */
   private drawBottomBar(): void {
-    const r = REGION.bottomBar;
-    this.fill(r, COLOR.bar);
-    const midY = r.y + r.h / 2;
-    this.spawnBtn = new Button(this, 62, midY, 108, 34, '', () => this.onSpawn());
+    this.fill(REGION.bottomBar, COLOR.bar);
     // 놓아주기는 버튼이 아니라 드롭 영역 (D-019)
     this.releaseZone = new ReleaseZoneView(this);
-    // 이야기책 (펼친 장, §5.19-4)
-    new Button(this, VIEW_W - 64, midY, 108, 34, '이야기책', () => {
-      if (!this.dayUi.blocking) this.dayUi.showDiaryList();
-    }, '12px');
   }
 }

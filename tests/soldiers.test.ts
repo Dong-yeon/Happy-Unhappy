@@ -13,7 +13,7 @@ const B = base.balance;
 const DOG = 'companion_animal'; // 떡 → 방패병, sun
 const ROPE = 'comfort_object'; // 동아줄 → 올가미병, moon
 const SIZE = { cols: 5, rows: 4 };
-const GEO = gameGeometry(B.merge.soldierCap + 1);
+const GEO = gameGeometry(B.merge.soldierCap + B.team.teamSize);
 const chain = (id: string) => base.chains.find((c) => c.archetypeId === id)!;
 
 function day(edit: (d: GameData) => void = () => {}): GameState {
@@ -88,13 +88,14 @@ describe('출전 ([11]-1)', () => {
     expect(g.stats.soldiersCapped).toBe(2);
     const es = g.tick(0);
     expect(ofType(es, 'soldier').filter((e) => e.capped)).toHaveLength(2);
-    expect(g.heroes.offense.momentum.stacks).toBe(Math.min(B.buff.momentumMaxStacks, B.merge.soldierCap + 2)); // 버프는 계속
+    expect(g.momentum.offense.stacks).toBe(Math.min(B.buff.momentumMaxStacks, B.merge.soldierCap + 2)); // 버프는 계속
   });
 
   it(`수명 soldierLifetime(${B.merge.soldierLifetime}초): 지나면 사라짐 (귀환 없음, 그리드 변화 없음)`, () => {
     const g = day((d) => {
       d.balance.lane.abyssAdvanceSpeed = 0; // 반격 범위 밖 오두막에서 제자리
       d.stages.stages[0].day.enemies = []; // 적 없음 (병사가 맞지 않게)
+      d.balance.spawn.autoInterval = 1e6; // 저절로 조각 없음 (그리드 변화 비교)
     });
     merge(g, DOG, 1);
     const cells = JSON.stringify(g.grid.cells);
@@ -111,7 +112,7 @@ describe('출전 ([11]-1)', () => {
     const g = day((d) => (d.balance.merge.soldiers = false));
     merge(g, ROPE, 1);
     expect(soldiers(g.abyss)).toHaveLength(0);
-    expect(g.heroes.offense.momentum.stacks).toBe(1);
+    expect(g.momentum.offense.stacks).toBe(1);
   });
 });
 
@@ -140,7 +141,7 @@ describe('때 맞춤 ([11]-2)', () => {
 
 describe('방패병·올가미병 (레인 규칙)', () => {
   const HAPPY = { atk: 0, atkInterval: 1, range: 0 };
-  const WORRY = { type: 'shadow', hp: 1000, speed: 60, atk: 5, atkInterval: 1, joyReward: 0 };
+  const WORRY = { type: 'shadow', hp: 1000, speed: 60, atk: 5, atkInterval: 1 };
   function defense(): Lane {
     return new Lane('defense', GEO.defense, HAPPY, null);
   }

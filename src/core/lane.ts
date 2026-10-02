@@ -91,7 +91,7 @@ export function stepAttack(a: Attacker, dt: number, hasTarget: boolean, interval
 /** 레인 위 우리 편: 영웅 (판 내내 한 명씩, §5.17-1) / 병사 (전투 중 머지, 일회성, [11]-1) */
 export type UnitRole = 'hero' | 'soldier';
 /** shield = 걱정을 막고 층 반격을 먼저 받음 / snare = 맞힌 걱정 감속, 걱정을 막지 않음 */
-export type SoldierKind = 'shield' | 'snare';
+export type SoldierKind = 'shield' | 'snare' | 'charger' | 'bell';
 
 export interface Unit extends Attacker {
   id: number;
@@ -108,6 +108,10 @@ export interface Unit extends Attacker {
   dmgMult: number;
   /** 병사 종류·남은 수명(초)·수명 전체 */
   soldier?: SoldierKind;
+  /** 근접 = 붙어서 / 원거리 = 사거리 끝에서 (§5.20-3-1). 병사는 근접 */
+  attackType: 'melee' | 'ranged';
+  /** 보호막: 받는 피해를 먼저 깎는다 (수호의 울타리·보름달) */
+  shield: number;
   life?: number;
   lifeMax?: number;
   /** 올가미병: 맞힌 걱정 감속 비율·시간 */
@@ -126,7 +130,19 @@ export interface Unit extends Attacker {
 
 /** 걱정을 막는 유닛 (영웅·방패병). 올가미병은 막지 않는다 */
 export function blocks(u: Unit): boolean {
-  return u.soldier !== 'snare';
+  return u.soldier !== 'snare' && u.soldier !== 'bell';
+}
+
+/** 유닛이 받는 피해: × dmgMult → 보호막 먼저 → hp. 실제 hp 감소량 */
+export function damageUnit(u: Unit, raw: number): number {
+  let dmg = raw * u.dmgMult;
+  if (u.shield > 0) {
+    const absorbed = Math.min(u.shield, dmg);
+    u.shield -= absorbed;
+    dmg -= absorbed;
+  }
+  u.hp -= dmg;
+  return dmg;
 }
 
 export type WorryState = 'moving' | 'stopped' | 'passing';
@@ -138,7 +154,6 @@ export interface Worry extends Attacker {
   hp: number;
   maxHp: number;
   speed: number;
-  joyReward: number;
   /** 적 종류 (monsters.enemies id, 표시용) */
   type: string;
   /** 보스 웨이브의 적: 거점에 닿으면 핵 피해 bossSinkDamage (§5.19-3) */
@@ -156,7 +171,6 @@ export interface WorryStats {
   speed: number;
   atk: number;
   atkInterval: number;
-  joyReward: number;
   boss?: boolean;
 }
 
@@ -166,7 +180,7 @@ export type LaneEvent =
   | { type: 'spawnWorry'; worryId: number; x: number; boss: boolean; enemy: string }
   | { type: 'worryStop'; worryId: number }
   | { type: 'attack'; attacker: AttackerRef; targetId: number; damage: number }
-  | { type: 'worryDie'; worryId: number; x: number; y: number; joy: number; boss: boolean }
+  | { type: 'worryDie'; worryId: number; x: number; y: number; boss: boolean }
   /** 밤 유닛 쓰러짐 (영웅은 GameState가 쓰러짐 → reviveSeconds 뒤 일어남, §5.17-10) */
   | { type: 'unitDie'; unitId: number; role: UnitRole; slot: number; chain: string; tier: number; x: number; y: number }
   | { type: 'sink'; worryId: number; x: number; y: number; boss: boolean };
@@ -183,22 +197,32 @@ export function slowedStep(w: { speed: number; slowTimer: number; slowMult: numb
   return w.speed * (1 - slow) * dt;
 }
 
-/** 유닛의 한 방: 피해 + 올가미 감속 ([11]-1) */
-export function applyHit(u: Unit, t: { hp: number; slowTimer: number; slowMult: number }): void {
-  t.hp -= u.atk;
+/** 유닛의 한 방: 피해(atk × mult) + 올가미 감속·방울 정지 ([11]-1). 준 피해 */
+export function applyHit(u: Unit, t: { hp: number; slowTimer: number; slowMult: number }, mult = 1): number {
+  const dmg = u.atk * mult;
+  t.hp -= dmg;
   if (u.slow !== undefined && u.slowSeconds !== undefined) {
     t.slowMult = Math.max(t.slowTimer > EPS ? t.slowMult : 0, u.slow);
     t.slowTimer = Math.max(t.slowTimer, u.slowSeconds);
   }
+  return dmg;
+}
+
+/** 정지(slow 100%)를 건다: 수호의 울타리·보름달·방울병 */
+export function stun(t: { slowTimer: number; slowMult: number }, seconds: number): void {
+  t.slowMult = 1;
+  t.slowTimer = Math.max(t.slowTimer, seconds);
 }
 
 /** addUnit의 추가 옵션: 영웅·병사 표시, 시작 hp, 시작 y (없으면 레인의 시작선) */
-export type UnitExtra = Partial<Pick<Unit, 'role' | 'dmgMult' | 'soldier' | 'life' | 'slow' | 'slowSeconds' | 'hp' | 'y'>>;
+export type UnitExtra = Partial<Pick<Unit, 'role' | 'dmgMult' | 'soldier' | 'life' | 'slow' | 'slowSeconds' | 'hp' | 'y' | 'attackType'>>;
 
 /** 두 레인 공용: 우리 편 슬롯·유닛 */
 export abstract class UnitHost<G extends SlotGeometry = SlotGeometry> {
   /** 레인에 오른 순서대로 */
   readonly units: Unit[] = [];
+  /** 우리 편 공격 배수 (한낮 특별 버프, §5.18-9). GameState가 매 틱 맞춘다 */
+  atkMult = 1;
 
   constructor(readonly geo: G) {}
 
@@ -253,6 +277,8 @@ export abstract class UnitHost<G extends SlotGeometry = SlotGeometry> {
       atkInterval: stats.atkInterval,
       range: stats.range,
       dmgMult: extra.dmgMult ?? 1,
+      attackType: extra.attackType ?? 'melee',
+      shield: 0,
       cd: 0,
       slot,
       x: this.geo.slotXs[slot],
@@ -321,7 +347,6 @@ export class Lane extends UnitHost<LaneGeometry> {
       speed: stats.speed,
       atk: stats.atk,
       atkInterval: stats.atkInterval,
-      joyReward: stats.joyReward,
       type: stats.type,
       boss: stats.boss ?? false,
       cd: 0,
@@ -398,8 +423,8 @@ export class Lane extends UnitHost<LaneGeometry> {
 
   /** 유닛의 한 방: 피해 + 올가미 감속 */
   private hit(u: Unit, t: Worry, out: LaneEventSink): void {
-    applyHit(u, t);
-    out.push({ type: 'attack', attacker: { kind: 'unit', id: u.id }, targetId: t.id, damage: u.atk });
+    const dmg = applyHit(u, t, this.atkMult);
+    out.push({ type: 'attack', attacker: { kind: 'unit', id: u.id }, targetId: t.id, damage: dmg });
   }
 
   /** 3. 유닛 공격 (레인에 오른 순서대로) → Happy */
@@ -438,7 +463,8 @@ export class Lane extends UnitHost<LaneGeometry> {
         if (claimed.has(w)) continue;
         if (!pick || w.y > pick.y + EPS) pick = w;
       }
-      const t = pick ?? fallback;
+      // 원거리는 이야기책 근처(자기 자리)에서 쏜다 — 나가 붙는 것은 근접만 (§5.20-3-1)
+      const t = u.attackType === 'ranged' ? null : (pick ?? fallback);
       if (t) claimed.add(t);
       const tx = t ? t.x : geo.slotXs[u.slot];
       const ty = t ? Math.max(zoneTop, Math.min(geo.lineY, t.y + ic.contact)) : geo.lineY;
@@ -464,7 +490,7 @@ export class Lane extends UnitHost<LaneGeometry> {
   private moveWorriesIntercept(dt: number, out: LaneEventSink): void {
     const { lineY } = this.geo;
     for (const w of this.worries) {
-      const blocker = this.pickUnitTarget(w.x);
+      const blocker = this.pickUnitTarget(w);
       if (w.state === 'stopped') {
         if (!blocker) w.state = w.y < lineY ? 'moving' : 'passing';
         else if (w.y < blocker.y - EPS) w.state = 'moving';
@@ -503,12 +529,17 @@ export class Lane extends UnitHost<LaneGeometry> {
     }
   }
 
-  /** 걱정을 막는(영웅·방패병) 살아 있는 유닛 중 x 거리가 가장 가까운 유닛. 같으면 먼저 오른 유닛 */
-  private pickUnitTarget(x: number): Unit | null {
+  /** 적이 노리는 유닛 (§5.20-3-1 "적은 가장 가까운 영웅을 친다"): 막는(영웅·방패병·돌격병) 살아 있는 유닛 중 가장 가까운 유닛. 같으면 먼저 오른 유닛 */
+  private pickUnitTarget(w: { x: number; y: number }): Unit | null {
     let best: Unit | null = null;
+    let bd = Infinity;
     for (const u of this.units) {
       if (u.hp <= 0 || !blocks(u)) continue;
-      if (!best || Math.abs(u.x - x) < Math.abs(best.x - x) - EPS) best = u;
+      const d = Math.hypot(u.x - w.x, u.y - w.y);
+      if (d < bd - EPS) {
+        best = u;
+        bd = d;
+      }
     }
     return best;
   }
@@ -517,19 +548,19 @@ export class Lane extends UnitHost<LaneGeometry> {
   private worryAttacks(dt: number, out: LaneEventSink): void {
     for (const w of this.worries) {
       if (w.state !== 'stopped' || w.hp <= 0) continue;
-      const t = this.pickUnitTarget(w.x);
-      if (stepAttack(w, dt, t !== null)) {
-        const dmg = w.atk * t!.dmgMult;
-        t!.hp -= dmg;
+      const t = this.pickUnitTarget(w);
+      // 정지(방울·울타리·보름달) 중에는 치지 않는다
+      if (stepAttack(w, dt, t !== null && !(w.slowTimer > EPS && w.slowMult >= 1))) {
+        const dmg = damageUnit(t!, w.atk);
         out.push({ type: 'attack', attacker: { kind: 'worry', id: w.id }, targetId: t!.id, damage: dmg });
       }
     }
   }
 
-  /** 5. 사망 처리. 기쁨 적용은 GameState가 worryDie 이벤트로 한다 */
+  /** 5. 사망 처리. 경험치·처치 드롭은 GameState가 worryDie 이벤트로 한다 */
   private removeDead(out: LaneEventSink): void {
     for (const w of removeWhere(this.worries, (w) => w.hp <= 0)) {
-      out.push({ type: 'worryDie', worryId: w.id, x: w.x, y: w.y, joy: w.joyReward, boss: w.boss });
+      out.push({ type: 'worryDie', worryId: w.id, x: w.x, y: w.y, boss: w.boss });
     }
     // 슬롯이 빈다. 나머지 유닛은 움직이지 않음
     for (const u of removeWhere(this.units, (u) => u.hp <= 0)) {

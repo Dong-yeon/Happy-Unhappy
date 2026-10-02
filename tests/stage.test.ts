@@ -11,7 +11,7 @@ import { gameGeometry } from '../src/scenes/layout';
 const base = structuredClone(rawGameData) as unknown as GameData;
 const B = base.balance;
 const SIZE = { cols: 5, rows: 4 };
-const GEO = gameGeometry(B.merge.soldierCap + 1);
+const GEO = gameGeometry(B.merge.soldierCap + B.team.teamSize);
 const DOG = 'companion_animal';
 
 function fresh(edit: (d: GameData) => void = () => {}, seed = 1): GameState {
@@ -40,7 +40,7 @@ function until(g: GameState, cond: () => boolean, seconds = 200): CoreEvent[] {
   return out;
 }
 function clearStage(g: GameState): void {
-  g.confirmDay(g.choices[0]?.id);
+  g.confirmDay();
   g.debugToNight();
   g.debugEndNight();
 }
@@ -75,8 +75,11 @@ describe('낮 — 핵 찾아 돌아오기 (§5.19-2)', () => {
     expect(g.coreState).toEqual({ state: 'hut' });
   });
 
-  it('운반 중 쓰러짐 → 핵 떨어짐 → 8초 뒤 그 자리에서 일어나 다시 든다 (그 낮은 계속)', () => {
+  it('운반 중 쓰러짐 → 핵 떨어짐 → (낮 쓰러짐은 안 일어남) 다음 팀이 이야기책에서 나와 그 핵을 다시 든다 (§5.20-3)', () => {
     const g = fresh(noEnemies);
+    g.debugGrantAllHeroes();
+    g.tick(0);
+    expect(g.setFormation({ offense: [['sapsal'], ['nui']], defense: [['haetae']] }).ok).toBe(true);
     setOut(g);
     g.debugKillGuardian();
     g.tick(FIXED_DT);
@@ -85,14 +88,25 @@ describe('낮 — 핵 찾아 돌아오기 (§5.19-2)', () => {
     g.abyss.carrier!.hp = 0;
     const es = g.tick(FIXED_DT);
     expect(ofType(es, 'coreDrop')[0].y).toBeCloseTo(fallY, 6);
-    expect(ofType(es, 'heroDown')[0]).toMatchObject({ role: 'offense', seconds: B.hero.reviveSeconds });
+    expect(ofType(es, 'heroDown')[0]).toMatchObject({ role: 'offense', heroId: 'sapsal', seconds: 0 });
+    expect(ofType(es, 'teamSwap')[0]).toMatchObject({ role: 'offense', team: 1, reason: 'wipe' });
     expect(g.phase).toBe('day');
     expect(g.abyss.core).toEqual({ at: 'dropped', y: fallY });
-    const up = until(g, () => g.abyss.core.at === 'carried', B.hero.reviveSeconds + 1);
-    expect(ofType(up, 'heroEnter')[0]).toMatchObject({ role: 'offense', revive: true });
+    const up = until(g, () => g.abyss.core.at === 'carried', 30);
     expect(ofType(up, 'corePick')[0]).toMatchObject({ first: false });
-    expect(g.heroUnitOf('offense')!.y).toBeCloseTo(fallY, 6);
+    expect(g.abyss.carrier!.chain).toBe('nui');
+    expect(g.heroUnit('sapsal')).toBeNull();
     expect(g.stats.coreDrops).toBe(1);
+  });
+
+  it('팀이 하나뿐이면 운반자 쓰러짐 = 낮 실패 (dayFall)', () => {
+    const g = fresh(noEnemies);
+    setOut(g);
+    g.debugKillGuardian();
+    g.tick(FIXED_DT);
+    g.abyss.carrier!.hp = 0;
+    const es = g.tick(FIXED_DT);
+    expect(ofType(es, 'attemptFail')[0]).toMatchObject({ reason: 'dayFall' });
   });
 
   it('가는 길 시간 초과 → 핵 못 가져옴 → 밤 없이 같은 스테이지 낮 다시 (dayTime)', () => {
@@ -133,17 +147,23 @@ describe('낮 — 핵 찾아 돌아오기 (§5.19-2)', () => {
     expect(ofType(es, 'bossReward')[0].rewards).toHaveLength(B.guardian.bossWildcards);
   });
 
-  it('낮 적 능력치 = base × 종류 배수, HP × hpGrowthPerStage^(스테이지−1)', () => {
+  it('적 능력치 = base × 종류 배수, HP × hpGrowthPerStage^(스테이지−1) × 떼 hpMult (보스는 × 1, §5.20-13)', () => {
     const s = enemyStats(base, 'wildcat', 3);
-    expect(s.hp).toBeCloseTo(base.monsters.base.hp * 0.6 * Math.pow(B.enemy.hpGrowthPerStage, 2), 9);
+    expect(s.hp).toBeCloseTo(base.monsters.base.hp * 0.6 * Math.pow(B.enemy.hpGrowthPerStage, 2) * B.swarm.hpMult, 9);
     expect(s.speed).toBeCloseTo(base.monsters.base.speed * 1.6, 9);
+    expect(enemyStats(base, 'wildcat', 3, false).hp).toBeCloseTo(base.monsters.base.hp * 0.6 * Math.pow(B.enemy.hpGrowthPerStage, 2), 9);
   });
 });
 
 describe('Expedition 레인 규칙 (§5.19-2)', () => {
   const geo = GEO.abyss;
-  const cfg = { advanceSpeed: 30, carry: { speedMult: 0.7, atkIntervalMult: 1.3, chaseInterval: 1.5, pickupRange: 8 }, escort: { range: 80, speed: 60, contact: 8 } };
-  const shadow = { type: 'shadow', hp: 1000, speed: 40, atk: 0, atkInterval: 1, joyReward: 0 };
+  const cfg = {
+    advanceSpeed: 30,
+    carry: { speedMult: 0.7, atkIntervalMult: 1.3, chaseInterval: 1.5, pickupRange: 8, chaseSpeedMult: 1.3 },
+    escort: { range: 80, speed: 60, contact: 8 },
+    maxEnemies: 30,
+  };
+  const shadow = { type: 'shadow', hp: 1000, speed: 40, atk: 0, atkInterval: 1 };
   const guardian = { type: 'shadow', hp: 0, atk: 0, atkInterval: 1, range: 0, boss: false };
   const heroStats = { hp: 100, atk: 0, atkInterval: 1, range: 10 };
 
@@ -238,7 +258,12 @@ describe('밤 — 핵 지키기 (§5.19-3)', () => {
 
   it('밤 웨이브는 낮 결과와 무관하게 같다 (D-055)', () => {
     const nightSpawns = (fastDay: boolean) => {
-      const g = fresh();
+      // 낮이 길어도 실패하지 않게 (적 없음·guardian 안 쓰러짐·반격 없음)
+      const g = fresh((d) => {
+        noEnemies(d);
+        d.stages.stages[0].day.guardianHp = 1e9;
+        d.balance.guardian.counterAtk = 0;
+      });
       g.confirmDay();
       if (!fastDay) for (let k = 0; k < 60 * 30; k++) g.tick(FIXED_DT);
       g.debugToNight();
@@ -270,22 +295,22 @@ describe('밤 — 핵 지키기 (§5.19-3)', () => {
 });
 
 describe('스테이지 진행·재도전 (§5.19-1)', () => {
-  it('실패해도 영웅 강화·그리드 조각·기쁨은 그대로 (D-054)', () => {
+  it('실패해도 영웅 레벨·그리드 조각은 그대로 (D-054, 기쁨은 §5.20-13에서 삭제)', () => {
     const g = fresh();
     g.confirmDay();
     g.grid.cells[0] = g.newPiece(DOG, 2);
     g.grid.cells[1] = g.newPiece(DOG, 3);
-    expect(g.feed(1, 'offense').ok).toBe(true);
-    const joy = g.joy;
-    const points = structuredClone(g.heroes);
+    const p = g.progressOf('sapsal');
+    p.level = 3;
+    p.exp = 5;
     const grid = structuredClone(g.grid.cells);
     g.debugFail();
     expect(g.phase).toBe('dayStart');
-    expect(g.heroes.offense.points).toEqual(points.offense.points);
+    expect(g.progressOf('sapsal')).toMatchObject({ level: 3, exp: 5 });
     expect(g.grid.cells).toEqual(grid);
-    expect(g.joy).toBe(joy);
     g.confirmDay();
-    expect(g.heroUnitOf('offense')!.maxHp).toBe(g.heroStats('offense').hp);
+    expect(g.heroUnit('sapsal')!.maxHp).toBe(g.heroStats('sapsal').hp);
+    expect(g.heroStats('sapsal').hp).toBeGreaterThan(base.heroes.heroes.find((h) => h.id === 'sapsal')!.hp);
   });
 
   it('시도 수: 판 통산·스테이지별, 횟수 제한 없음', () => {
@@ -300,26 +325,17 @@ describe('스테이지 진행·재도전 (§5.19-1)', () => {
     expect(g.phase).toBe('dayStart');
   });
 
-  it('1-5 성공 → 다음 장면 카드에 갈림길 (선택해야 시작, face = guardian HP −30% + 처치 때 조각 +1)', () => {
+  it('1-5 성공 → 다음 장면 카드에 갈림길 없음, 바로 1-6 낮 (D-063)', () => {
     const g = fresh(noEnemies);
     for (let k = 0; k < 5; k++) {
       clearStage(g);
       g.nextStage();
     }
     expect(g.stage).toBe(6);
-    expect(g.crossroad?.id).toBe(base.chapter.crossroad);
-    expect(g.confirmDay()).toEqual({ ok: false, reason: 'needChoice' });
-    const face = base.events.milestones[0].choices.find((c) => c.flag === 'face')!;
-    expect(g.confirmDay(face.id).ok).toBe(true);
-    expect(g.flags).toEqual(['face']);
-    expect(g.abyss.guardian.hp).toBeCloseTo(base.stages.stages[5].day.guardianHp * (1 - (face.faceLayerHpReduce ?? 0)), 6);
-    g.debugKillGuardian();
-    const [found] = ofType(g.tick(FIXED_DT), 'coreFound');
-    expect(found.bonus).toHaveLength(1);
-    // 실패해도 갈림길은 다시 나오지 않는다
-    g.debugFail();
-    expect(g.crossroad).toBeNull();
-    expect(g.confirmDay().ok).toBe(true);
+    expect(g.confirmDay()).toEqual({ ok: true });
+    expect(g.abyss.guardian.hp).toBe(base.stages.stages[5].day.guardianHp);
+    expect('crossroad' in base.chapter).toBe(false);
+    expect(base.events.milestones).toEqual([]);
   });
 
   it('1-10 낮 성공 → 밤 없이 챕터 완성 (이야기 한 장 = 누이는 해가, 오라비는 달이…)', () => {
@@ -338,17 +354,18 @@ describe('스테이지 진행·재도전 (§5.19-1)', () => {
     expect(base.stages.stages[9].page).toContain('누이와 오라비가 이야기 모험대에 합류했다');
     // 보상 영웅(reward = 챕터 id)이 합류 (D-057)
     expect(ofType(es, 'heroesJoined')[0].ids).toEqual(['nui', 'orabi']);
-    expect(g.joinedHeroes).toEqual(['nui', 'orabi']);
+    expect(g.owned).toEqual(['sapsal', 'haetae', 'nui', 'orabi']);
   });
 
   it('시작 명단 = 모험대 삽살·해태, 누이·오라비는 1챕터 보상 (reward ch01), 디버그 지급은 한 번만', () => {
     const g = fresh();
-    expect([g.heroes.offense.id, g.heroes.defense.id]).toEqual(['sapsal', 'haetae']);
+    expect(g.owned).toEqual(['sapsal', 'haetae']);
+    expect(g.formation).toEqual({ offense: [['sapsal']], defense: [['haetae']] });
     expect(g.rewardHeroes.map((h) => h.id)).toEqual(['nui', 'orabi']);
-    expect(g.assignHeroes('nui')).toBe(false); // 보상 영웅은 배정 대상 아님
-    g.debugGrantRewardHeroes();
-    g.debugGrantRewardHeroes();
-    expect(g.joinedHeroes).toEqual(['nui', 'orabi']);
+    expect(g.setFormation({ offense: [['nui']], defense: [['haetae']] }).ok).toBe(false); // 보상 영웅은 아직 편성 불가
+    g.debugGrantAllHeroes();
+    g.debugGrantAllHeroes();
+    expect(g.owned).toEqual(['sapsal', 'haetae', 'nui', 'orabi']);
     expect(ofType(g.tick(0), 'heroesJoined')).toHaveLength(1);
   });
 

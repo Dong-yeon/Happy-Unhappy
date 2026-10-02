@@ -1,17 +1,19 @@
-// 저장 데이터 (스펙 §5.19-7, §7). Phaser·브라우저 의존 없음 (localStorage는 platform/storage.ts).
+// 저장 데이터 (스펙 §5.19-7, §5.20-11, §7). Phaser·브라우저 의존 없음 (localStorage는 platform/storage.ts).
 // 경계(장면 카드 = 스테이지 시작·실패 직후 / 이야기 한 장 / 챕터 완성)에서만 게임을 저장한다.
 // 낮·밤 진행 중 상태(레인 유닛·적·웨이브 타이머)는 저장하지 않는다.
 // 파싱은 알 수 없는 키도 오류로 본다 (data/validate.ts의 Checker 재사용) → 일차(day)·gating 필드가 남아 있으면 오류.
 // v4 (hau_save_v4): 스테이지·시도 수·핵 상태·펼친 장, 일차·gating·그림자 제거.
+// v5 (hau_save_v5): 보유 영웅(경험치·레벨·스킬 게이지)·편성·장마다 덧붙인 문장. 먹이기 점수·영웅 배정·갈림길 필드 삭제.
 
 import type { GameData } from '../data/types';
 import { Checker } from '../data/validate';
 import { ATTEMPT_RESULTS, type AttemptStats, type FailReason } from './day';
-import { ROLES, type CoreState, type FeedRecord, type GameState, type HeroState, type Role } from './game';
+import type { CoreState, GameState } from './game';
+import type { Formation, HeroProgress } from './roster';
 import { WILDCARD, WILDCARD_TIER, type GridSize, type Piece } from './grid';
-import { GAME_STATS_KEYS, type GameStats } from './stats';
+import { GAME_STATS_KEYS, RECORD_STATS_KEYS, type GameStats } from './stats';
 
-export const SAVE_VERSION = 4;
+export const SAVE_VERSION = 5;
 
 export type SavePhase = 'dayStart' | 'diary' | 'chapterComplete';
 const SAVE_PHASES: readonly SavePhase[] = ['dayStart', 'diary', 'chapterComplete'];
@@ -33,9 +35,8 @@ export interface SaveGame {
   tickCount: number;
   nextPieceId: number;
   nextUnitId: number;
-  /** 이번 시도 생성 횟수 (이야기 한 장 단계의 생성 비용 표시. confirmDay에서 0) */
-  spawnedAttempt: number;
-  joy: number;
+  /** 스킬 자동 발동 (§5.20-13, HUD [자동]) */
+  autoSkill: boolean;
   grid: (Piece | null)[];
   lostReturns: number;
   /** 핵: 상태(없음/운반 중 위치/이야기책) + HP (§5.19-7). 경계에서는 항상 none */
@@ -47,24 +48,22 @@ export interface SaveGame {
   stats: GameStats;
   /** 이야기책: 펼친 장 (스테이지 번호) */
   pages: number[];
-  flags: string[];
+  /** 장마다 덧붙인 플레이 문장 (key = 스테이지 번호) */
+  pageNotes: Record<string, string[]>;
   /** 끝난 시도 전부 */
   attemptLog: AttemptStats[];
-  feedLog: FeedRecord[];
-  /** 영웅 두 명 (낮덱 = offense / 밤덱 = defense): 점수 누계·기세 (§5.17-8) */
-  heroes: Record<Role, HeroState>;
-  /** 판 시작 영웅 배정을 마쳤는지 ([11]-3) */
-  assignmentDone: boolean;
-  /** 합류한 보상 영웅 id (D-057) */
-  joinedHeroes: string[];
+  /** 보유 영웅: 경험치·레벨·스킬 게이지 (§5.20-7) */
+  roster: HeroProgress[];
+  /** 편성: 공격대·수비대 팀별 순서 (§5.20-2) */
+  formation: Formation;
+  /** 판 시작 편성 화면을 지났는지 */
+  formationSeen: boolean;
   /** chapterComplete일 때만 true */
   completed: true | null;
-  /** 갈림길 대기: 1-turningPoint 성공 → 다음 장면 카드에 갈림길 */
-  pendingCrossroad: boolean;
 }
 
 export interface SaveData {
-  version: 4;
+  version: 5;
   /** ISO 시각 (디버그 표시용) */
   savedAt: string;
   gridSize: GridSize;
@@ -94,8 +93,7 @@ export function serializeGame(s: GameState): SaveGame {
     tickCount: s.tickCount,
     nextPieceId: s.nextPieceId,
     nextUnitId: s.nextUnitId,
-    spawnedAttempt: s.spawnedAttempt,
-    joy: s.joy,
+    autoSkill: s.autoSkill,
     grid: s.grid.cells,
     lostReturns: s.lostReturns,
     core: { state: core.state, y: core.state === 'carrying' ? core.y : null, hp: s.coreHp },
@@ -103,14 +101,12 @@ export function serializeGame(s: GameState): SaveGame {
     nextWorryId: s.defense.nextWorryId,
     stats: s.stats,
     pages: s.pages,
-    flags: s.flags,
+    pageNotes: s.pageNotes,
     attemptLog: s.attemptLog,
-    feedLog: s.feedLog,
-    heroes: s.heroes,
-    assignmentDone: s.assignmentDone,
-    joinedHeroes: s.joinedHeroes,
+    roster: s.roster,
+    formation: s.formation,
+    formationSeen: s.formationSeen,
     completed: s.phase === 'chapterComplete' ? s.completed : null,
-    pendingCrossroad: s.pendingCrossroad,
   });
 }
 
@@ -131,14 +127,13 @@ type Obj = Record<string, unknown>;
 const PIECE_KEYS = ['id', 'chain', 'tier', 'bornAt'];
 export const ATTEMPT_KEYS: (keyof AttemptStats)[] = [
   'stage', 'attempt', 'result', 'guardianDown', 'carrySeconds', 'drops', 'coreReturns', 'carryFalls', 'coreHpEnd', 'sunk',
-  'defenseFalls', 'defeated', 'joyStart', 'joyEnd', 'realSeconds', 'offenseSeconds', 'defenseSeconds', 'spawns', 'merges',
-  'battleMerges', 'feeds', 'feedPoints', 'soldiers', 'soldiersCapped', 'releases', 'releaseTiers', 'lostReturns', 'gridFullSeconds',
+  'defenseFalls', 'defeated', 'realSeconds', 'offenseSeconds', 'defenseSeconds', 'spawns', 'discarded', 'merges',
+  'battleMerges', 'teamSwaps', 'skills', 'soldiers', 'soldiersCapped', 'releases', 'releaseTiers', 'lostReturns', 'gridFullSeconds',
 ];
-const FEED_KEYS: (keyof FeedRecord)[] = ['t', 'attempt', 'stage', 'role', 'hero', 'chain', 'tier', 'points', 'cell', 'heldFor'];
 const GAME_KEYS: (keyof SaveGame)[] = [
   'seed', 'rngState', 'phase', 'stage', 'attempt', 'attempts', 'retry', 'playTime', 'tickCount', 'nextPieceId', 'nextUnitId',
-  'spawnedAttempt', 'joy', 'grid', 'lostReturns', 'core', 'happyCd', 'nextWorryId', 'stats', 'pages', 'flags', 'attemptLog',
-  'feedLog', 'heroes', 'assignmentDone', 'joinedHeroes', 'completed', 'pendingCrossroad',
+  'autoSkill', 'grid', 'lostReturns', 'core', 'happyCd', 'nextWorryId', 'stats', 'pages', 'pageNotes', 'attemptLog',
+  'roster', 'formation', 'formationSeen', 'completed',
 ];
 
 class SaveChecker extends Checker {
@@ -206,20 +201,16 @@ class SaveChecker extends Checker {
     }
   }
 
-  hero(v: unknown, path: string): string | undefined {
-    const o = this.obj(v, path, ['id', 'points', 'momentum']);
+  /** 보유 영웅 하나: id·경험치·레벨·게이지 */
+  progress(v: unknown, path: string): string | undefined {
+    const o = this.obj(v, path, ['id', 'exp', 'level', 'gauge']);
     if (!o) return undefined;
     const id = this.str(o.id, `${path}.id`);
-    if (id !== undefined && !this.data.heroes.heroes.some((h) => h.id === id)) this.fail(`${path}.id`, `heroes.json에 없는 영웅: "${id}"`);
-    const pts = this.map(o.points, `${path}.points`);
-    if (pts) {
-      for (const [k, x] of Object.entries(pts)) {
-        if (!this.chainIds.includes(k)) this.fail(`${path}.points.${k}`, `chains.json에 없는 체인: "${k}"`);
-        this.num(x, `${path}.points.${k}`, { min: 0 });
-      }
-    }
-    const m = this.nums(o.momentum, `${path}.momentum`, ['stacks', 'bonus', 'timer'], { min: 0 });
-    if (m) this.num(m.stacks, `${path}.momentum.stacks`, { int: true, min: 0, max: this.data.balance.buff.momentumMaxStacks });
+    const def = this.data.heroes.heroes.find((h) => h.id === id);
+    if (id !== undefined && !def) this.fail(`${path}.id`, `heroes.json에 없는 영웅: "${id}"`);
+    this.num(o.exp, `${path}.exp`, { min: 0 });
+    this.num(o.level, `${path}.level`, { int: true, min: 1, max: this.data.balance.exp.maxLevel });
+    this.num(o.gauge, `${path}.gauge`, { min: 0, max: def?.skill.gauge });
     return id;
   }
 
@@ -227,13 +218,14 @@ class SaveChecker extends Checker {
     const o = this.obj(v, path, GAME_KEYS);
     if (!o) return;
     const p = (k: string) => `${path}.${k}`;
-    for (const k of ['seed', 'rngState', 'tickCount', 'nextPieceId', 'nextUnitId', 'spawnedAttempt', 'lostReturns', 'nextWorryId', 'attempt']) {
+    for (const k of ['seed', 'rngState', 'tickCount', 'nextPieceId', 'nextUnitId', 'lostReturns', 'nextWorryId', 'attempt']) {
       this.num(o[k], p(k), { int: true, min: 0 });
     }
     this.num(o.stage, p('stage'), { int: true, min: 1, max: this.length });
     this.oneOf(o.phase, p('phase'), SAVE_PHASES);
     if (o.retry !== null) this.oneOf(o.retry, p('retry'), FAIL_REASONS);
-    for (const k of ['playTime', 'joy']) this.num(o[k], p(k), { min: 0 });
+    this.num(o.playTime, p('playTime'), { min: 0 });
+    this.bool(o.autoSkill, p('autoSkill'));
     this.num(o.happyCd, p('happyCd')); // 쿨다운은 틱 오차로 음수일 수 있다
     const att = this.arr(o.attempts, p('attempts'));
     if (att) {
@@ -255,7 +247,7 @@ class SaveChecker extends Checker {
       this.num(core.hp, `${p('core')}.hp`, { min: 0 });
     }
 
-    const st = this.obj(o.stats, p('stats'), [...GAME_STATS_KEYS, 'tier3ByChain', 'soldiersByKind']);
+    const st = this.obj(o.stats, p('stats'), [...GAME_STATS_KEYS, ...RECORD_STATS_KEYS]);
     if (st) {
       for (const k of GAME_STATS_KEYS) this.num(st[k], `${p('stats')}.${k}`, { min: 0 });
       this.counts(st.tier3ByChain, `${p('stats')}.tier3ByChain`, (k) => this.chainIds.includes(k), '체인');
@@ -269,36 +261,44 @@ class SaveChecker extends Checker {
         },
         '병사 키',
       );
+      this.counts(st.skillCasts, `${p('stats')}.skillCasts`, (k) => this.data.heroes.heroes.some((h) => h.id === k), '영웅');
+      this.counts(st.chainSpawns, `${p('stats')}.chainSpawns`, (k) => this.chainIds.includes(k), '체인');
     }
 
     this.list(o.pages, p('pages'), (it, pp) => this.num(it, pp, { int: true, min: 1, max: this.length }));
-    this.list(o.flags, p('flags'), (it, pp) => this.oneOf(it, pp, ['avoid', 'face']));
-    this.list(o.attemptLog, p('attemptLog'), (it, pp) => this.attemptStats(it, pp));
-    this.list(o.feedLog, p('feedLog'), (it, pp) => {
-      const r = this.obj(it, pp, FEED_KEYS);
-      if (!r) return;
-      for (const k of ['t', 'points', 'heldFor']) this.num(r[k], `${pp}.${k}`, { min: 0 });
-      this.num(r.attempt, `${pp}.attempt`, { int: true, min: 1 });
-      this.num(r.stage, `${pp}.stage`, { int: true, min: 1, max: this.length });
-      this.num(r.tier, `${pp}.tier`, { int: true, min: 1, max: this.data.balance.grid.maxTier });
-      this.oneOf(r.role, `${pp}.role`, ROLES);
-      this.str(r.hero, `${pp}.hero`);
-      this.oneOf(r.chain, `${pp}.chain`, this.chainIds);
-      this.nums(r.cell, `${pp}.cell`, ['col', 'row'], { int: true, min: 0 });
-    });
-
-    const heroes = this.obj(o.heroes, p('heroes'), [...ROLES]);
-    if (heroes) {
-      const off = this.hero(heroes.offense, `${p('heroes')}.offense`);
-      const def = this.hero(heroes.defense, `${p('heroes')}.defense`);
-      if (off !== undefined && off === def) this.fail(`${p('heroes')}.defense`, '낮덱과 다른 영웅이어야 함 (양쪽 최소 1명)');
+    const notes = this.map(o.pageNotes, p('pageNotes'));
+    if (notes) {
+      for (const [k, v2] of Object.entries(notes)) {
+        const n = Number(k);
+        if (!Number.isInteger(n) || n < 1 || n > this.length) this.fail(`${p('pageNotes')}.${k}`, '스테이지 번호여야 함');
+        this.strList(v2, `${p('pageNotes')}.${k}`, 0);
+      }
     }
-    this.bool(o.assignmentDone, p('assignmentDone'));
-    this.list(o.joinedHeroes, p('joinedHeroes'), (it, pp) => {
-      const h = this.data.heroes.heroes.find((x) => x.id === it);
-      if (!h || h.reward === undefined) this.fail(pp, `보상 영웅이 아님: "${String(it)}"`);
-    });
-    this.bool(o.pendingCrossroad, p('pendingCrossroad'));
+    this.list(o.attemptLog, p('attemptLog'), (it, pp) => this.attemptStats(it, pp));
+    const roster = (this.arr(o.roster, p('roster'), 1) ?? []).map((it, i) => this.progress(it, `${p('roster')}[${i}]`));
+    this.unique(roster, p('roster'), '영웅');
+    const owned = roster.filter((x): x is string => x !== undefined);
+    const f = this.obj(o.formation, p('formation'), ['offense', 'defense']);
+    if (f) {
+      const seen = new Set<string>();
+      for (const side of ['offense', 'defense'] as const) {
+        const teams = this.arr(f[side], `${p('formation')}.${side}`, 1) ?? [];
+        if (teams.length > this.data.balance.team.maxTeams) this.fail(`${p('formation')}.${side}`, `팀은 ${this.data.balance.team.maxTeams}개까지`);
+        let n = 0;
+        teams.forEach((t, i) => {
+          const ids = this.strList(t, `${p('formation')}.${side}[${i}]`, 0);
+          if (ids.length > this.data.balance.team.teamSize) this.fail(`${p('formation')}.${side}[${i}]`, `한 팀은 ${this.data.balance.team.teamSize}명까지`);
+          for (const id of ids) {
+            if (!owned.includes(id)) this.fail(`${p('formation')}.${side}[${i}]`, `보유하지 않은 영웅: "${id}"`);
+            if (seen.has(id)) this.fail(`${p('formation')}.${side}[${i}]`, `같은 영웅은 한 곳에만: "${id}"`);
+            seen.add(id);
+            n += 1;
+          }
+        });
+        if (n === 0) this.fail(`${p('formation')}.${side}`, '최소 1명');
+      }
+    }
+    this.bool(o.formationSeen, p('formationSeen'));
     if (o.phase === 'chapterComplete') {
       if (o.completed !== true) this.fail(p('completed'), 'chapterComplete인데 완성 표시가 없음');
     } else if (o.completed !== null) this.fail(p('completed'), 'chapterComplete가 아니면 null이어야 함');

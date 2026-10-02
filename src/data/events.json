@@ -1,24 +1,52 @@
 {
-  "milestones": [
-    {
-      "id": "first_tooth",
-      "world": "tale_sun_moon",
-      "archetypeId": "first_loss",
-      "title": "문틈의 목소리",
-      "text": "\"얘들아, 엄마 왔다. 문 좀 열어다오.\" 문틈으로 털복숭이 손이 보인다. 이 일은 누가 맡을까?",
-      "choices": [
-        { "id": "happy",   "label": "해가 맡는다 — 등불을 켜고 문을 지킨다", "flag": "avoid", "joy": 25,  "shadow": 20 },
-        { "id": "unhappy", "label": "달이 맡는다 — 문 너머의 목소리에게 다가간다", "flag": "face",  "joy": -10, "shadow": 0, "faceLayerHpReduce": 0.3, "bonusReturnPiece": true }
-      ],
-      "diaryLine": "문틈으로 낯선 목소리가 들려왔다."
-    }
-  ],
+  "milestones": [],
   "seasonal": [],
   "daily": [
-    { "id": "scraped_knee", "world": "tale_sun_moon", "title": "비 내리는 고갯길", "effects": { "worryMultiplier": 1.4 }, "diaryLine": "비에 젖은 고갯길로 그림자가 몰려왔다." },
-    { "id": "favorite_lunch", "world": "tale_sun_moon", "title": "떡 찌는 냄새", "effects": { "joy": 15 }, "diaryLine": "부엌에서 떡 찌는 냄새가 퍼졌다." },
-    { "id": "rainy_day", "world": "tale_sun_moon", "title": "새끼줄 꼬는 밤", "effects": { "chainWeight": { "comfort_object": 2 } }, "diaryLine": "오누이가 등잔 아래서 새끼줄을 꼬았다." },
-    { "id": "dog_walk", "world": "tale_sun_moon", "title": "떡 광주리 나르기", "effects": { "chainWeight": { "companion_animal": 2 } }, "diaryLine": "엄마가 떡 광주리를 이고 고개를 넘었다." }
+    {
+      "id": "scraped_knee",
+      "world": "tale_sun_moon",
+      "title": "비 내리는 고갯길",
+      "effects": {
+        "worryMultiplier": 1.4
+      },
+      "diaryLine": "비에 젖은 고갯길로 그림자가 몰려왔다."
+    },
+    {
+      "id": "favorite_lunch",
+      "world": "tale_sun_moon",
+      "title": "떡 찌는 냄새",
+      "effects": {},
+      "diaryLine": "부엌에서 떡 찌는 냄새가 퍼졌다."
+    },
+    {
+      "id": "rainy_day",
+      "world": "tale_sun_moon",
+      "title": "새끼줄 꼬는 밤",
+      "effects": {
+        "chainWeight": {
+          "comfort_object": 2
+        }
+      },
+      "diaryLine": "오누이가 등잔 아래서 새끼줄을 꼬았다."
+    },
+    {
+      "id": "dog_walk",
+      "world": "tale_sun_moon",
+      "title": "떡 광주리 나르기",
+      "effects": {
+        "chainWeight": {
+          "companion_animal": 2
+        }
+      },
+      "diaryLine": "엄마가 떡 광주리를 이고 고개를 넘었다."
+    }
   ],
-  "plainDay": { "title": "고요한 고갯길", "diaryLines": ["고갯길은 조용했다.", "바람이 숲을 쓰다듬고 지나갔다.", "오누이가 엄마를 기다렸다."] }
+  "plainDay": {
+    "title": "고요한 고갯길",
+    "diaryLines": [
+      "고갯길은 조용했다.",
+      "바람이 숲을 쓰다듬고 지나갔다.",
+      "오누이가 엄마를 기다렸다."
+    ]
+  }
 }

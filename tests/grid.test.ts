@@ -8,18 +8,15 @@ import {
   pickChain,
   pickEmpty,
   releaseAt,
-  releaseValue,
   resolveDrop,
   resolveGridSize,
-  spawnBlock,
-  spawnCost,
   toCell,
   toIndex,
   type Grid,
   type Piece,
 } from '../src/core/grid';
 import { mulberry32 } from '../src/core/rng';
-import { HERO_SLOT, REGION, cellAt, dropTarget } from '../src/scenes/layout';
+import { REGION, RELEASE_ZONE, cellAt, dropTarget } from '../src/scenes/layout';
 
 const MAX = 3;
 const presets: [number, number][] = [[4, 4], [5, 4], [6, 4]];
@@ -204,14 +201,13 @@ describe('resolveDrop / applyDrop — §4.1.1 결과표', () => {
     expect(g.cells).toEqual([a, null]);
   });
 
-  it('영웅 슬롯·레인: 그리드 칸이 아니므로 그리드에서는 원위치(none). 슬롯은 먹이기, 레인은 무효 (§5.17-9)', () => {
+  it('놓아주기 칸·레인: 그리드 칸이 아니므로 그리드에서는 원위치(none). 놓아주기 칸은 release, 레인은 무효 (먹이기 슬롯 삭제)', () => {
     const g = createGrid({ cols: 5, rows: 4 }, MAX);
     const a = pc(DOG, 1);
     g.cells[0] = a;
     const mid = (r: { x: number; y: number; w: number; h: number }) => [r.x + r.w / 2, r.y + r.h / 2];
     for (const [x, y, kind] of [
-      [...mid(HERO_SLOT.offense), 'feed'],
-      [...mid(HERO_SLOT.defense), 'feed'],
+      [...mid(RELEASE_ZONE), 'release'],
       [20, REGION.ground.y + 50, 'none'],
       [340, REGION.ground.y + 50, 'none'],
     ] as [number, number, string][]) {
@@ -267,24 +263,6 @@ describe('bornAt 규칙', () => {
 });
 
 describe('조각 생성 규칙', () => {
-  it('spawnCost = base + step × 오늘 생성 횟수', () => {
-    const cfg = { spawnCostBase: 10, spawnCostStep: 2 };
-    expect(spawnCost(cfg, 0)).toBe(10);
-    expect(spawnCost(cfg, 3)).toBe(16);
-  });
-
-  it('비활성 조건 1: 기쁨 < 비용 → noJoy', () => {
-    const g = row(null, null);
-    expect(spawnBlock(g, 9, 10)).toBe('noJoy');
-    expect(spawnBlock(g, 10, 10)).toBeNull();
-  });
-
-  it('비활성 조건 2: 빈 칸 0 → full (기쁨이 부족해도 full 우선)', () => {
-    const g = row(pc(DOG, 1), pc(DOG, 2));
-    expect(spawnBlock(g, 100, 10)).toBe('full');
-    expect(spawnBlock(g, 0, 10)).toBe('full');
-  });
-
   it('pickEmpty: 빈 칸 중에서만, 시드 고정이면 재현', () => {
     const g = row(pc(DOG, 1), null, pc(DOG, 1), null, null);
     const picks = Array.from({ length: 50 }, () => pickEmpty(mulberry32(7), g));
@@ -313,24 +291,20 @@ describe('조각 생성 규칙', () => {
 });
 
 describe('놓아주기', () => {
-  it('환급 = releaseRefund × 단계, 칸 비움', () => {
-    const g = row(pc(DOG, 1), pc(DOG, 2), pc(BLANKET, 3));
-    expect(releaseAt(g, 0, 4)?.refund).toBe(4);
-    expect(releaseAt(g, 1, 4)?.refund).toBe(8);
-    expect(releaseAt(g, 2, 4)?.refund).toBe(12);
+  it('조각 제거만 (환급 없음, §5.20-13), 칸 비움', () => {
+    const a = pc(DOG, 1);
+    const g = row(a, pc(DOG, 2), pc(BLANKET, 3));
+    expect(releaseAt(g, 0)).toBe(a);
+    expect(releaseAt(g, 1)?.tier).toBe(2);
+    expect(releaseAt(g, 2)?.tier).toBe(3);
     expect(emptyIndices(g)).toEqual([0, 1, 2]);
-  });
-
-  it('releaseValue: 미리보기 환급액, 와일드카드는 null', () => {
-    expect(releaseValue(pc(DOG, 2), 4)).toBe(8);
-    expect(releaseValue(wild(), 4)).toBeNull();
   });
 
   it('와일드카드·빈 칸은 무시', () => {
     const w = wild();
     const g = row(w, null);
-    expect(releaseAt(g, 0, 4)).toBeNull();
-    expect(releaseAt(g, 1, 4)).toBeNull();
+    expect(releaseAt(g, 0)).toBeNull();
+    expect(releaseAt(g, 1)).toBeNull();
     expect(g.cells[0]).toBe(w);
   });
 });

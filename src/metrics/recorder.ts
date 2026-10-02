@@ -91,7 +91,7 @@ export class MetricsRecorder {
     if (fail) this.dropFails[fail] += 1;
   }
 
-  /** 장면 카드를 닫음 (dayBegin 이벤트): 카운터 초기화 + inProgress 기록 + 갈림길 선택 */
+  /** 장면 카드를 닫음 (dayBegin 이벤트): 카운터 초기화 + inProgress 기록 */
   beginAttempt(): void {
     const s = this.state;
     this.active = true;
@@ -100,11 +100,6 @@ export class MetricsRecorder {
     this.dayRealSeconds = 0;
     this.nightRealSeconds = 0;
     this.speedUsed = 0;
-    const crossroad = s.flags.length > this.life.milestoneChoices.length;
-    if (crossroad) {
-      const flag = s.flags[s.flags.length - 1];
-      this.life.milestoneChoices.push({ stage: s.stage, eventId: 'crossroad', choiceId: flag });
-    }
     this.data.inProgress = { lifeId: this.life.lifeId, attempt: s.attempt };
     this.write();
   }
@@ -118,7 +113,7 @@ export class MetricsRecorder {
       result: record.result,
       realDate: realToday(),
       record: structuredClone(record),
-      feeds: s.feedLog.filter((r) => r.attempt === record.attempt).map((r) => ({ ...r, cell: { ...r.cell } })),
+      formation: structuredClone(s.formation),
       dropFails: { ...this.dropFails },
       dragDistance: this.dragDistance,
       realSeconds: this.dayRealSeconds + this.nightRealSeconds,

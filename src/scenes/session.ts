@@ -35,7 +35,7 @@ export class SaveSession {
       if (r.save.game) {
         try {
           const g = r.save.game;
-          state = GameState.fromSave(this.data, g, mulberry32(g.seed), gameGeometry(this.data.balance.merge.soldierCap + 1), this.size);
+          state = GameState.fromSave(this.data, g, mulberry32(g.seed), gameGeometry(this.data.balance.merge.soldierCap + this.data.balance.team.teamSize), this.size);
           this.game = g;
         } catch (e) {
           console.warn(`[save] 복원 실패, 새 판 — ${(e as Error).message}`);
@@ -52,7 +52,7 @@ export class SaveSession {
   /** ?seed= 가 있으면 그 시드, 없으면 새 시드로 새 판 */
   private newState(): GameState {
     const seed = parseSeed(new URLSearchParams(window.location.search).get('seed')) ?? randomSeed(Math.random);
-    return new GameState(this.data, this.size, mulberry32(seed), gameGeometry(this.data.balance.merge.soldierCap + 1), seed);
+    return new GameState(this.data, this.size, mulberry32(seed), gameGeometry(this.data.balance.merge.soldierCap + this.data.balance.team.teamSize), seed);
   }
 
   /** 경계(장면 카드·이야기 한 장·실패 직후·챕터 완성) 진입: game 저장 */
