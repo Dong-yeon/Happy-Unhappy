@@ -513,9 +513,18 @@ export function checkM812Goals(reports: PolicyReport[], g: SimConfig['m812Goals'
     const n = ni.summary.attempts.median;
     out.push({ id: 'noInk', label: `noInk: 총 시도가 balanced보다 ${Math.round((g.noInkAttemptsMult - 1) * 100)}% 이상 많음 (잉크가 의미 있음)`, pass: a > 0 ? n >= a * g.noInkAttemptsMult : null, detail: `noInk ${fmt(n, 1)} vs balanced ${fmt(a, 1)} (완성 ${pctOf(ni.completedRate)} vs ${pctOf(b.completedRate)})` });
   }
+  // (b) §5.22-10: 시도 상한 50에서는 다 완성되므로 "완성률 < balanced" 대신 "총 시도 ≥ balanced × heavyAttemptsMult"
   for (const name of ['dayHeavy', 'nightHeavy']) {
     const h = by(name);
-    if (b && h) out.push({ id: name, label: `${name}: 완성률 < balanced (한쪽만 키우면 막힘)`, pass: h.completedRate < b.completedRate, detail: `${name} ${pctOf(h.completedRate)} vs balanced ${pctOf(b.completedRate)}` });
+    if (!b || !h) continue;
+    const a = b.summary.attempts.median;
+    const n = h.summary.attempts.median;
+    out.push({
+      id: name,
+      label: `${name}: 총 시도 ≥ balanced × ${g.heavyAttemptsMult} (한쪽만 키우면 오래 걸림)`,
+      pass: a > 0 ? n >= a * g.heavyAttemptsMult : null,
+      detail: `${name} ${fmt(n, 1)} vs balanced ${fmt(a, 1)} × ${g.heavyAttemptsMult} = ${fmt(a * g.heavyAttemptsMult, 1)} (완성 ${pctOf(h.completedRate)})`,
+    });
   }
   return out;
 }

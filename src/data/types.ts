@@ -66,6 +66,8 @@ export interface Balance {
     pickupRange: number;
     /** 추격 무리 이동 속도 배수 (운반자보다 빨라야 함, §5.20-9) */
     chaseSpeedMult: number;
+    /** 운반자가 맞으면 이 초 동안 멈칫 (§5.22-10 4a) */
+    staggerSeconds: number;
   };
   /** 밤: 핵 HP (§5.19-3) */
   core: { hp: number; sinkDamage: number; bossSinkDamage: number };

@@ -195,7 +195,7 @@ function checkBalance(c: Checker, v: unknown): { maxTier?: number; chapterLength
     c.num(gd.counterAtkInterval, `${p}.guardian.counterAtkInterval`, { min: 0.01 });
     c.num(gd.bossWildcards, `${p}.guardian.bossWildcards`, { int: true });
   }
-  const cr = c.nums(b.carry, `${p}.carry`, ['speedMult', 'atkIntervalMult', 'chaseInterval', 'pickupRange', 'chaseSpeedMult'], { min: 0 });
+  const cr = c.nums(b.carry, `${p}.carry`, ['speedMult', 'atkIntervalMult', 'chaseInterval', 'pickupRange', 'chaseSpeedMult', 'staggerSeconds'], { min: 0 });
   if (cr) {
     c.num(cr.speedMult, `${p}.carry.speedMult`, { min: 0.01 });
     c.num(cr.atkIntervalMult, `${p}.carry.atkIntervalMult`, { min: 0.01 });

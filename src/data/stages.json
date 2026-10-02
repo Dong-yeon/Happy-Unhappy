@@ -10,11 +10,11 @@
       "retryIntro": "해가 다시 떴다. 오누이는 첫째 고개 그늘로 다시 나선다.",
       "day": {
         "guardian": "shadow",
-        "guardianHp": 120,
+        "guardianHp": 100,
         "enemies": [
           {
             "type": "shadow",
-            "count": 6
+            "count": 3
           }
         ],
         "chase": [
@@ -29,13 +29,13 @@
           [
             {
               "type": "shadow",
-              "count": 6
+              "count": 5
             }
           ],
           [
             {
               "type": "shadow",
-              "count": 6
+              "count": 5
             }
           ]
         ]
@@ -51,25 +51,17 @@
       "retryIntro": "둘째 고개의 목소리가 또 묻는다. 오누이는 다시 고개를 오른다.",
       "day": {
         "guardian": "shadow",
-        "guardianHp": 160,
+        "guardianHp": 138,
         "enemies": [
           {
             "type": "shadow",
-            "count": 6
-          },
-          {
-            "type": "wildcat",
-            "count": 3
+            "count": 4
           }
         ],
         "chase": [
           {
             "type": "shadow",
-            "count": 3
-          },
-          {
-            "type": "wildcat",
-            "count": 2
+            "count": 4
           }
         ]
       },
@@ -78,21 +70,21 @@
           [
             {
               "type": "shadow",
-              "count": 3
+              "count": 6
             },
             {
               "type": "wildcat",
-              "count": 5
+              "count": 1
             }
           ],
           [
             {
               "type": "shadow",
-              "count": 3
+              "count": 6
             },
             {
               "type": "wildcat",
-              "count": 5
+              "count": 1
             }
           ]
         ]
@@ -109,17 +101,25 @@
       "retryIntro": "안개가 다시 짙어진다. 오누이는 발자국을 다시 찾아 나선다.",
       "day": {
         "guardian": "shadow",
-        "guardianHp": 210,
+        "guardianHp": 176,
         "enemies": [
           {
+            "type": "shadow",
+            "count": 4
+          },
+          {
             "type": "wildcat",
-            "count": 8
+            "count": 1
           }
         ],
         "chase": [
           {
-            "type": "wildcat",
+            "type": "shadow",
             "count": 4
+          },
+          {
+            "type": "wildcat",
+            "count": 1
           }
         ]
       },
@@ -128,19 +128,31 @@
           [
             {
               "type": "shadow",
-              "count": 10
+              "count": 7
+            },
+            {
+              "type": "wildcat",
+              "count": 1
             }
           ],
           [
             {
               "type": "shadow",
-              "count": 10
+              "count": 7
+            },
+            {
+              "type": "wildcat",
+              "count": 1
             }
           ],
           [
             {
               "type": "shadow",
-              "count": 10
+              "count": 7
+            },
+            {
+              "type": "wildcat",
+              "count": 1
             }
           ]
         ]
@@ -156,21 +168,21 @@
       "retryIntro": "숲은 아직 어둡다. 오누이는 등불을 다시 찾으러 간다.",
       "day": {
         "guardian": "shadow",
-        "guardianHp": 270,
+        "guardianHp": 214,
         "enemies": [
           {
             "type": "shadow",
-            "count": 8
+            "count": 5
           },
           {
             "type": "wildcat",
-            "count": 4
+            "count": 2
           }
         ],
         "chase": [
           {
             "type": "shadow",
-            "count": 4
+            "count": 5
           },
           {
             "type": "wildcat",
@@ -183,31 +195,31 @@
           [
             {
               "type": "shadow",
-              "count": 6
+              "count": 8
             },
             {
               "type": "wildcat",
-              "count": 6
+              "count": 2
             }
           ],
           [
             {
               "type": "shadow",
-              "count": 6
+              "count": 8
             },
             {
               "type": "wildcat",
-              "count": 6
+              "count": 2
             }
           ],
           [
             {
               "type": "shadow",
-              "count": 6
+              "count": 8
             },
             {
               "type": "wildcat",
-              "count": 6
+              "count": 2
             }
           ]
         ]
@@ -224,26 +236,26 @@
       "retryIntro": "털복숭이 손이 다시 문틈을 두드린다. 오누이는 진짜 목소리를 다시 떠올린다.",
       "day": {
         "guardian": "mitten",
-        "guardianHp": 510,
+        "guardianHp": 315,
         "boss": true,
         "enemies": [
           {
-            "type": "mitten",
-            "count": 2
+            "type": "shadow",
+            "count": 5
           },
           {
-            "type": "shadow",
-            "count": 6
+            "type": "wildcat",
+            "count": 2
           }
         ],
         "chase": [
           {
-            "type": "mitten",
-            "count": 1
+            "type": "shadow",
+            "count": 5
           },
           {
-            "type": "shadow",
-            "count": 3
+            "type": "wildcat",
+            "count": 2
           }
         ]
       },
@@ -256,7 +268,7 @@
             },
             {
               "type": "wildcat",
-              "count": 6
+              "count": 3
             }
           ],
           [
@@ -266,7 +278,7 @@
             },
             {
               "type": "wildcat",
-              "count": 6
+              "count": 3
             }
           ],
           [
@@ -276,7 +288,7 @@
             },
             {
               "type": "wildcat",
-              "count": 6
+              "count": 3
             }
           ]
         ],
@@ -298,74 +310,7 @@
       "retryIntro": "오누이는 장독대 뒤로 다시 숨는다. 달그림자를 다시 찾는다.",
       "day": {
         "guardian": "shadow",
-        "guardianHp": 420,
-        "enemies": [
-          {
-            "type": "mitten",
-            "count": 3
-          },
-          {
-            "type": "wildcat",
-            "count": 4
-          }
-        ],
-        "chase": [
-          {
-            "type": "mitten",
-            "count": 2
-          },
-          {
-            "type": "wildcat",
-            "count": 2
-          }
-        ]
-      },
-      "night": {
-        "waves": [
-          [
-            {
-              "type": "shadow",
-              "count": 10
-            },
-            {
-              "type": "wildcat",
-              "count": 6
-            }
-          ],
-          [
-            {
-              "type": "shadow",
-              "count": 10
-            },
-            {
-              "type": "wildcat",
-              "count": 6
-            }
-          ],
-          [
-            {
-              "type": "shadow",
-              "count": 10
-            },
-            {
-              "type": "wildcat",
-              "count": 6
-            }
-          ]
-        ]
-      },
-      "cores": 1
-    },
-    {
-      "stage": 7,
-      "title": "미끄러운 나무",
-      "intro": "우물가 큰 나무. 오누이는 나무 위로 올라간다.",
-      "coreName": "우물에 비친 달",
-      "page": "우물에 비친 건 오누이가 아니라 달이었다. 호랑이 그림자는 한참을 헤맸다.",
-      "retryIntro": "오누이는 우물가 큰 나무로 다시 간다.",
-      "day": {
-        "guardian": "shadow",
-        "guardianHp": 500,
+        "guardianHp": 290,
         "enemies": [
           {
             "type": "shadow",
@@ -373,17 +318,17 @@
           },
           {
             "type": "wildcat",
-            "count": 4
+            "count": 2
           },
           {
             "type": "mitten",
-            "count": 2
+            "count": 1
           }
         ],
         "chase": [
           {
             "type": "shadow",
-            "count": 3
+            "count": 6
           },
           {
             "type": "wildcat",
@@ -400,11 +345,90 @@
           [
             {
               "type": "shadow",
+              "count": 9
+            },
+            {
+              "type": "wildcat",
+              "count": 4
+            }
+          ],
+          [
+            {
+              "type": "shadow",
+              "count": 9
+            },
+            {
+              "type": "wildcat",
+              "count": 4
+            }
+          ],
+          [
+            {
+              "type": "shadow",
+              "count": 9
+            },
+            {
+              "type": "wildcat",
+              "count": 4
+            }
+          ]
+        ]
+      },
+      "cores": 1
+    },
+    {
+      "stage": 7,
+      "title": "미끄러운 나무",
+      "intro": "우물가 큰 나무. 오누이는 나무 위로 올라간다.",
+      "coreName": "우물에 비친 달",
+      "page": "우물에 비친 건 오누이가 아니라 달이었다. 호랑이 그림자는 한참을 헤맸다.",
+      "retryIntro": "오누이는 우물가 큰 나무로 다시 간다.",
+      "day": {
+        "guardian": "shadow",
+        "guardianHp": 328,
+        "enemies": [
+          {
+            "type": "shadow",
+            "count": 6
+          },
+          {
+            "type": "wildcat",
+            "count": 3
+          },
+          {
+            "type": "mitten",
+            "count": 1
+          }
+        ],
+        "chase": [
+          {
+            "type": "shadow",
+            "count": 6
+          },
+          {
+            "type": "wildcat",
+            "count": 3
+          },
+          {
+            "type": "mitten",
+            "count": 1
+          }
+        ]
+      },
+      "night": {
+        "waves": [
+          [
+            {
+              "type": "shadow",
               "count": 10
             },
             {
               "type": "wildcat",
-              "count": 8
+              "count": 4
+            },
+            {
+              "type": "mitten",
+              "count": 1
             }
           ],
           [
@@ -414,7 +438,11 @@
             },
             {
               "type": "wildcat",
-              "count": 8
+              "count": 4
+            },
+            {
+              "type": "mitten",
+              "count": 1
             }
           ],
           [
@@ -424,7 +452,25 @@
             },
             {
               "type": "wildcat",
-              "count": 8
+              "count": 4
+            },
+            {
+              "type": "mitten",
+              "count": 1
+            }
+          ],
+          [
+            {
+              "type": "shadow",
+              "count": 10
+            },
+            {
+              "type": "wildcat",
+              "count": 4
+            },
+            {
+              "type": "mitten",
+              "count": 1
             }
           ]
         ]
@@ -441,25 +487,33 @@
       "retryIntro": "그림자가 또 나무를 기어오른다. 오누이는 둥지를 다시 지키러 간다.",
       "day": {
         "guardian": "shadow",
-        "guardianHp": 590,
+        "guardianHp": 366,
         "enemies": [
           {
-            "type": "mitten",
-            "count": 5
+            "type": "shadow",
+            "count": 7
           },
           {
-            "type": "shadow",
-            "count": 6
+            "type": "wildcat",
+            "count": 4
+          },
+          {
+            "type": "mitten",
+            "count": 1
           }
         ],
         "chase": [
           {
-            "type": "mitten",
-            "count": 3
+            "type": "shadow",
+            "count": 7
           },
           {
-            "type": "shadow",
-            "count": 3
+            "type": "wildcat",
+            "count": 4
+          },
+          {
+            "type": "mitten",
+            "count": 1
           }
         ]
       },
@@ -468,57 +522,57 @@
           [
             {
               "type": "shadow",
-              "count": 8
-            },
-            {
-              "type": "mitten",
-              "count": 4
+              "count": 11
             },
             {
               "type": "wildcat",
-              "count": 8
+              "count": 5
+            },
+            {
+              "type": "mitten",
+              "count": 1
             }
           ],
           [
             {
               "type": "shadow",
-              "count": 8
-            },
-            {
-              "type": "mitten",
-              "count": 4
+              "count": 11
             },
             {
               "type": "wildcat",
-              "count": 8
+              "count": 5
+            },
+            {
+              "type": "mitten",
+              "count": 1
             }
           ],
           [
             {
               "type": "shadow",
-              "count": 8
-            },
-            {
-              "type": "mitten",
-              "count": 4
+              "count": 11
             },
             {
               "type": "wildcat",
-              "count": 8
+              "count": 5
+            },
+            {
+              "type": "mitten",
+              "count": 1
             }
           ],
           [
             {
               "type": "shadow",
-              "count": 8
-            },
-            {
-              "type": "mitten",
-              "count": 4
+              "count": 11
             },
             {
               "type": "wildcat",
-              "count": 8
+              "count": 5
+            },
+            {
+              "type": "mitten",
+              "count": 1
             }
           ]
         ],
@@ -540,29 +594,29 @@
       "retryIntro": "오누이는 다시 하늘에 빈다. 동아줄이 다시 내려오기를.",
       "day": {
         "guardian": "shadow",
-        "guardianHp": 690,
+        "guardianHp": 404,
         "enemies": [
           {
             "type": "shadow",
-            "count": 8
+            "count": 7
           },
           {
             "type": "wildcat",
-            "count": 5
+            "count": 4
           },
           {
             "type": "mitten",
-            "count": 3
+            "count": 2
           }
         ],
         "chase": [
           {
             "type": "shadow",
-            "count": 4
+            "count": 7
           },
           {
             "type": "wildcat",
-            "count": 3
+            "count": 4
           },
           {
             "type": "mitten",
@@ -579,7 +633,11 @@
             },
             {
               "type": "wildcat",
-              "count": 10
+              "count": 6
+            },
+            {
+              "type": "mitten",
+              "count": 1
             }
           ],
           [
@@ -589,7 +647,11 @@
             },
             {
               "type": "wildcat",
-              "count": 10
+              "count": 6
+            },
+            {
+              "type": "mitten",
+              "count": 1
             }
           ],
           [
@@ -599,7 +661,11 @@
             },
             {
               "type": "wildcat",
-              "count": 10
+              "count": 6
+            },
+            {
+              "type": "mitten",
+              "count": 1
             }
           ],
           [
@@ -609,7 +675,11 @@
             },
             {
               "type": "wildcat",
-              "count": 10
+              "count": 6
+            },
+            {
+              "type": "mitten",
+              "count": 1
             }
           ]
         ]
@@ -626,18 +696,18 @@
       "retryIntro": "호랑이 그림자가 다시 동아줄을 잡는다. 오누이는 한 번 더 손을 맞잡는다.",
       "day": {
         "guardian": "boss",
-        "guardianHp": 900,
+        "guardianHp": 3200,
         "boss": true,
         "enemies": [
           {
             "type": "mitten",
-            "count": 4
+            "count": 5
           }
         ],
         "chase": [
           {
             "type": "mitten",
-            "count": 2
+            "count": 5
           }
         ]
       },

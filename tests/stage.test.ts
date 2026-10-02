@@ -159,7 +159,7 @@ describe('Expedition 레인 규칙 (§5.19-2)', () => {
   const geo = GEO.abyss;
   const cfg = {
     advanceSpeed: 30,
-    carry: { speedMult: 0.7, atkIntervalMult: 1.3, chaseInterval: 1.5, pickupRange: 8, chaseSpeedMult: 1.3 },
+    carry: { speedMult: 0.7, atkIntervalMult: 1.3, chaseInterval: 1.5, pickupRange: 8, chaseSpeedMult: 1.3, staggerSeconds: 0.2 },
     escort: { range: 80, speed: 60, contact: 8 },
     maxEnemies: 30,
   };
@@ -213,6 +213,27 @@ describe('Expedition 레인 규칙 (§5.19-2)', () => {
     const es = step(ex, Math.round(cfg.carry.chaseInterval * 60) * 2 + 2);
     const spawned = es.filter((e) => e.type === 'enemySpawn');
     expect(spawned.map((e) => (e as { chaser: boolean }).chaser)).toEqual([true, true]);
+  });
+
+  it('추격 무리는 호위·병사에 막히지 않고 운반자만 친다, 운반자가 맞으면 staggerSeconds 멈칫 (§5.22-10 4a)', () => {
+    const ex = new Expedition(geo, cfg);
+    const chaser = { ...shadow, atk: 5, speed: 40 };
+    ex.reset({ ...guardian, hp: 1 }, [], [chaser], mulberry32(1));
+    const hero = ex.addUnit(1, 'unhappy', 'sapsal', 0, { ...heroStats, hp: 1000 }, { role: 'hero', y: geo.wallY + 120 })!;
+    const s = ex.addUnit(2, 'unhappy', DOG, 1, { ...heroStats, hp: 1000 }, { role: 'soldier', soldier: 'shield', y: geo.wallY + 60 })!;
+    ex.guardianDown = true;
+    ex.guardian.hp = 0;
+    ex.core = { at: 'carried', unitId: hero.id };
+    const es = step(ex, 60 * 6);
+    const hits = es.filter((e) => e.type === 'enemyAttack') as { unitId: number }[];
+    expect(hits.length).toBeGreaterThan(0);
+    expect(hits.every((h) => h.unitId === hero.id)).toBe(true); // 방패병은 맞지 않음
+    expect(s.hp).toBe(1000);
+    // 멈칫: 맞은 직후 0.2초 동안 운반자가 제자리
+    ex.stagger = cfg.carry.staggerSeconds;
+    const y0 = hero.y;
+    step(ex, 6);
+    expect(hero.y).toBe(y0);
   });
 
   it('운반 중 다른 유닛은 운반자 뒤에서 막는다 (호위: 기준선 = 운반자 y)', () => {

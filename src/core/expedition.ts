@@ -6,6 +6,7 @@
 // guardian HP 0 → 핵 획득: 맨 앞 영웅이 든다 (운반자, 병사는 들 수 없음).
 // 돌아오는 길: 운반자는 공격하지 않고 speedMult로 이야기책까지 걷는다. 운반이 시작되는 순간부터 레인 끝에서 추격 무리가
 //   chaseInterval마다 나와 운반자를 향해 chaseSpeedMult로 쫓는다. 다른 팀원·병사는 운반자 뒤(anchor)에서 막는다
+//   (§5.22-10 4a: 추격 무리는 호위·병사에 막히지 않고 운반자만 친다. 운반자가 맞으면 staggerSeconds 동안 멈칫)
 //   (근접 = 디펜스 제한 이동 §4.3.3, 원거리 = 운반자 곁에서 쏨).
 // 운반자가 쓰러지면 핵을 그 자리에 떨어뜨린다. 같은 팀 영웅이 닿으면 다시 든다. 적이 떨어진 핵에 닿으면 레인 끝으로 되가져간다
 // (guardian은 부활하지 않음). 운반자가 이야기책에 닿으면 그 핵 성공.
@@ -75,7 +76,7 @@ export type CoreSpot = { at: 'guardian' } | { at: 'carried'; unitId: number } | 
 export interface ExpeditionConfig {
   /** 영웅·병사 이동 속도 (가는 길) */
   advanceSpeed: number;
-  carry: { speedMult: number; atkIntervalMult: number; chaseInterval: number; pickupRange: number; chaseSpeedMult: number };
+  carry: { speedMult: number; atkIntervalMult: number; chaseInterval: number; pickupRange: number; chaseSpeedMult: number; staggerSeconds: number };
   /** 운반자 뒤 호위 = 디펜스 제한 이동 규칙 (§4.3.3) */
   escort: InterceptConfig;
   /** 레인 동시 적 최대 (§5.20-13). 넘는 가는 길 무리·추격 무리는 대기열에서 자리가 나면 레인 끝에서 나온다 */
@@ -123,6 +124,8 @@ export class Expedition extends UnitHost<AbyssGeometry> {
   /** 동시 적 상한을 넘어 아직 나오지 않은 가는 길 무리 (자리가 나면 레인 끝에서) */
   readonly roadQueue: EnemyStats[] = [];
   private chaseTimer = 0;
+  /** 운반자 멈칫 남은 초 (맞으면 staggerSeconds) */
+  stagger = 0;
   /** 핵을 든 채 보낸 시간(초) */
   carryTime = 0;
   /** 핵을 떨어뜨린 수 */
@@ -163,6 +166,7 @@ export class Expedition extends UnitHost<AbyssGeometry> {
     this.enemies.length = 0;
     this.chaseQueue.splice(0, this.chaseQueue.length, ...chase);
     this.chaseTimer = 0; // 운반이 시작되는 순간 첫 추격 (§5.20-9)
+    this.stagger = 0;
     this.core = { at: 'guardian' };
     this.guardianDown = false;
     this.carryTime = 0;
@@ -308,7 +312,8 @@ export class Expedition extends UnitHost<AbyssGeometry> {
     for (const u of this.units) {
       if (u.hp <= 0) continue;
       if (u === carrier) {
-        u.y = Math.min(geo.startY, u.y + cfg.advanceSpeed * cfg.carry.speedMult * dt);
+        if (this.stagger > EPS) this.stagger = Math.max(0, this.stagger - dt);
+        else u.y = Math.min(geo.startY, u.y + cfg.advanceSpeed * cfg.carry.speedMult * dt);
         u.arrived = false;
         u.returning = false;
       } else if (anchor !== null && !(u.role === 'hero' && this.core.at === 'dropped')) {
@@ -327,11 +332,13 @@ export class Expedition extends UnitHost<AbyssGeometry> {
       const speed = slowedStep(e, dt) * (e.chaser ? cfg.carry.chaseSpeedMult : 1);
       let goal = target ? target.y : geo.startY;
       if (target) goal += target.y > e.y ? -contact : contact; // 붙을 자리
-      // 가는 길의 막는 유닛에 먼저 닿으면 거기서 멈춘다
+      // 가는 길의 막는 유닛에 먼저 닿으면 거기서 멈춘다 (추격 무리는 운반자 말고는 막히지 않는다)
       const dir = Math.sign(goal - e.y);
+      const ignoreEscort = e.chaser && carrier !== null;
       if (dir !== 0) {
         let ny = e.y + dir * Math.min(speed, Math.abs(goal - e.y));
         for (const u of this.units) {
+          if (ignoreEscort && u !== carrier) continue;
           if (u.hp <= 0 || !blocks(u)) continue;
           const edge = u.y - dir * contact;
           if (dir > 0 && u.y > e.y && ny > edge) ny = Math.max(e.y, edge);
@@ -364,10 +371,12 @@ export class Expedition extends UnitHost<AbyssGeometry> {
     // 4: 붙은 적이 가장 가까운 우리 편을 친다 (쿨다운은 따라붙는 동안에도 이어진다)
     for (const e of this.enemies) {
       if (e.hp <= 0) continue;
-      const b = this.contactFor(e);
+      // 추격 무리는 운반자만 친다 (호위 무시)
+      const b = e.chaser && carrier ? (Math.abs(carrier.y - e.y) <= contact + EPS ? carrier : null) : this.contactFor(e);
       if (stepAttack(e, dt, b !== null && !(e.slowTimer > EPS && e.slowMult >= 1))) {
         const dmg = damageUnit(b!, e.atk);
         out.push({ type: 'enemyAttack', enemyId: e.id, unitId: b!.id, damage: dmg });
+        if (b === carrier) this.stagger = cfg.carry.staggerSeconds;
       }
     }
 
