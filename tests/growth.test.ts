@@ -99,7 +99,7 @@ describe('잉크 (§5.22-2)', () => {
 });
 
 describe('성급 (§5.22-3)', () => {
-  it(`진급 비용 ${B.star.cost.join('/')}, ★은 고유 스킬만 (perStar), 3★ 게이지 18 · 5★ 16`, () => {
+  it(`진급 비용 ${B.star.cost.join('/')}, ★은 고유 스킬만 (perStar, §5.23-0 보정), 게이지 20/17/14/12/10`, () => {
     const g = fresh();
     g.stardust = 1000;
     const hp1 = g.heroStats('sapsal').hp;
@@ -113,11 +113,12 @@ describe('성급 (§5.22-3)', () => {
     expect(g.promote('sapsal')).toBe(false);
     expect(g.stardust).toBe(1000 - costs.reduce((a, b) => a + b, 0));
     expect(g.heroStats('sapsal').hp).toBe(hp1); // 능력치는 그대로
-    expect(g.skillOf('sapsal')).toMatchObject({ kind: 'strike', mult: 5.5, pierce: 4, gauge: 16 });
-    expect([1, 2, 3, 4, 5].map((s) => skillAtStar(hero('sapsal'), s).gauge)).toEqual([20, 20, 18, 18, 16]);
-    expect(skillAtStar(hero('haetae'), 3)).toMatchObject({ stunSeconds: 2.1, shieldPct: 0.25 });
-    expect(skillAtStar(hero('nui'), 2)).toMatchObject({ mult: 2.4 });
-    expect(skillAtStar(hero('orabi'), 4)).toMatchObject({ healPct: 0.35, revive: 2 });
+    expect(g.skillOf('sapsal')).toMatchObject({ kind: 'strike', mult: 8, pierce: 4, gauge: 10 });
+    expect([1, 2, 3, 4, 5].map((s) => skillAtStar(hero('sapsal'), s).gauge)).toEqual([20, 17, 14, 12, 10]);
+    expect(skillAtStar(hero('haetae'), 3)).toMatchObject({ stunSeconds: 2.5, shieldPct: 0.3 });
+    expect(skillAtStar(hero('nui'), 2)).toMatchObject({ mult: 2.7 });
+    expect(skillAtStar(hero('orabi'), 4)).toMatchObject({ healPct: 0.45, revive: 2 });
+    expect(skillAtStar(hero('orabi'), 5)).toMatchObject({ healPct: 0.55, revive: 3 });
   });
 
   it('별가루가 모자라면·전투 중이면 진급 안 됨, ★ 게이지가 실제 발동에 쓰인다', () => {
@@ -129,10 +130,10 @@ describe('성급 (§5.22-3)', () => {
     g.confirmDay();
     expect(g.promote('haetae')).toBe(false);
     g.tick(0);
-    g.progressOf('sapsal').gauge = 15;
+    g.progressOf('sapsal').gauge = 7;
     g.grid.cells[0] = g.newPiece('bone', 1);
     g.grid.cells[1] = g.newPiece('bone', 1);
-    g.drop(0, 1); // +3 → 18 ≥ 16 → 발동
+    g.drop(0, 1); // +3 → 10 ≥ 10 (5★) → 발동
     expect(ofType(g.tick(0), 'skill')).toHaveLength(1);
   });
 });
