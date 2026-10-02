@@ -45,8 +45,8 @@ describe('applyOverrides', () => {
   });
 
   it('배열 원소·배열 값도 바꿀 수 있다', () => {
-    const out = applyOverrides(data, [parseSet('chains.1.hero.atk=16'), parseSet('shadow.weatherThresholds=[20,40,60]')]);
-    expect(out.chains[1].hero.atk).toBe(16);
+    const out = applyOverrides(data, [parseSet('chains.1.growth.atk=1.5'), parseSet('shadow.weatherThresholds=[20,40,60]')]);
+    expect(out.chains[1].growth.atk).toBe(1.5);
     expect(out.balance.shadow.weatherThresholds).toEqual([20, 40, 60]);
   });
 
@@ -72,7 +72,7 @@ describe('applyOverrides', () => {
     const cfg = simJson as SimConfig;
     const opt = { seed: 1, grid: { cols: 5, rows: 4 } };
     const plain = runOne(data, cfg, POLICIES.idle, opt);
-    const calm = runOne(applyOverrides(data, [parseSet('night.stallShadowPerSec=0'), parseSet('shadow.sinkShadow=0')]), cfg, POLICIES.idle, opt);
+    const calm = runOne(applyOverrides(data, [parseSet('offense.stallShadowPerSec=0'), parseSet('abyss.abyssDeathShadow=0'), parseSet('shadow.sinkShadow=0')]), cfg, POLICIES.idle, opt);
     expect(plain.backflows).toBeGreaterThan(0);
     expect(calm.backflows).toBe(0); // 그림자 증가원을 끄면 역류 없음
   });

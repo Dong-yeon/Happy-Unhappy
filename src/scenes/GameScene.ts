@@ -9,24 +9,21 @@ import { AbyssLaneView } from './AbyssLaneView';
 import { DayUi } from './DayUi';
 import { DefenseLaneView } from './DefenseLaneView';
 import { GridView, type DragHover } from './GridView';
-import { PartyView, partySlot } from './PartyView';
-import { PortalView } from './PortalView';
+import { HeroSlotView } from './HeroSlotView';
 import { ReleaseZoneView } from './ReleaseZoneView';
 import { SaveSession } from './session';
 import { SkyView } from './SkyView';
-import { stageLabel } from './growthText';
-import { PORTAL, PORTAL_RADIUS, REGION, VIEW_W, gridLayout, type PortalId, type Rect } from './layout';
+import { stageLabel } from './labels';
+import { REGION, VIEW_W, gridLayout, skyArc, type Rect } from './layout';
 import { Button, COLOR, setupCamera, text } from './ui';
-
-/** HUD 시간대 이름 (표시 텍스트) */
-/** HUD 시간대 이름 (표시 텍스트). v0.8에서 "낮"은 낮 전체를 뜻하므로 가운데 칸은 "점심" */
+import type { Role } from '../core/game';
 
 /** 한 프레임에 넘기는 시간 상한 (백그라운드 복귀 직후 몰아서 처리하지 않도록) */
 const MAX_FRAME_MS = 100;
 
 /**
- * M8: 하루 = 낮(방어 레인, ☀ 창문 즉시 소환 / ◐ 손거울 맡기기) → 밤(심연 레인, ◐ 손거울 즉시 소환) (§5.11, D-027).
- * 화면은 가로 레인 하나 + 하늘 띠(해/달). + C안 gating·하루 경계 저장/복원·결말 (§5.8), metrics (§5.10).
+ * M8.9: 하루 = 낮(오펜스: 낮덱 영웅이 심연 층을 친다) → 밤(디펜스: 밤덱 영웅이 집을 지킨다) (§5.17-10, D-046).
+ * 화면은 가로 레인 하나 + 하늘 띠(해/달) + 영웅 슬롯 두 칸(먹이기). + C안 gating·하루 경계 저장/복원 (§5.8), metrics (§5.10).
  * 게임 규칙은 core(GameState)에서, 이 씬은 표시·입력만.
  */
 export class GameScene extends Phaser.Scene {
@@ -45,11 +42,8 @@ export class GameScene extends Phaser.Scene {
   private shadowFrame!: Phaser.GameObjects.Rectangle;
   private shadowBarW = 0;
   private shadowMax = 1;
-  private portals!: Record<'happy' | 'unhappy', PortalView>;
+  private slots!: Record<Role, HeroSlotView>;
   private sky!: SkyView;
-  private party!: PartyView;
-  private sleepBtn!: Button;
-  private queueLabel!: Phaser.GameObjects.Text;
   /** 땅 띠가 지금 보여주는 단계 (전환 연출 중에는 core 단계와 다를 수 있다) */
   private groundShown: 'day' | 'night' = 'day';
   private phaseText!: Phaser.GameObjects.Text;
@@ -72,23 +66,20 @@ export class GameScene extends Phaser.Scene {
 
     this.drawHud(data);
     this.sky = new SkyView(this, this.state);
-    this.drawPortalBase();
+    this.fill(REGION.portalBase, COLOR.grid);
     this.drawGrid(size);
-    this.drawPortals();
+    this.slots = {
+      offense: new HeroSlotView(this, this.state, data, 'offense'),
+      defense: new HeroSlotView(this, this.state, data, 'defense'),
+    };
     this.drawBottomBar(data);
-    this.laneView = new DefenseLaneView(this, this.state, data.chains, { x: this.joyText.x, y: this.joyText.y }, data.monsters.worry.name);
-    this.abyssView = new AbyssLaneView(this, this.state, data.chains, partySlot, data.balance.abyss, (n) => stageLabel(data, n, 'night'));
-    this.party = new PartyView(this, this.state, data.chains, data.balance.lane.laneCap);
-    this.drawSleepButton();
+    this.laneView = new DefenseLaneView(this, this.state, data, { x: this.joyText.x, y: this.joyText.y });
+    this.abyssView = new AbyssLaneView(this, this.state, data, data.balance.abyss, (n) => stageLabel(data, n, 'night'));
     this.drawRecipeButton();
-    this.gridView = new GridView(this, this.state, data.chains, {
+    this.gridView = new GridView(this, this.state, data, {
       onChange: () => this.syncUi(),
       onHover: (hover) => this.onDragHover(hover),
-      onSummon: (r, x, y) => {
-        if (r.unit === null) this.party.onReserve(r.reserved, x, y);
-        else (r.unit.side === 'happy' ? this.laneView : this.abyssView).onSummon(r.unit, x, y);
-      },
-      groundPortal: () => this.groundPortal(),
+      onFeed: (role, piece, points, x, y) => this.slots[role].onFeed(x, y, this.gridView.colorOf(piece), points),
       canInteract: () => this.canAct(),
       onDropResult: (fail, distance) => this.metrics.drop(fail, distance),
     });
@@ -103,6 +94,7 @@ export class GameScene extends Phaser.Scene {
       rate: (day, key, value) => this.metrics.rate(day, key, value),
       endingAgree: () => this.metrics.endingAgree,
       setEndingAgree: (v) => this.metrics.setEndingAgree(v),
+      persist: () => this.session.saveGame(this.state),
     });
     // 지급 확인: 앱이 다시 보일 때 (§5.8-1) / metrics 세션 시간 쓰기: 숨겨질 때 (§5.10-3)
     const onVisible = () => {
@@ -163,16 +155,44 @@ export class GameScene extends Phaser.Scene {
     this.onPhaseEvents(events);
     this.laneView.handle(events);
     this.abyssView.handle(events);
-    // 층 돌파 귀환 조각은 core에서 이미 그리드에 들어가 있다
-    // 층 돌파·하루 끝 귀환·선물 조각은 core에서 이미 그리드에 들어가 있다
-    const gridEvents = ['layerClear', 'dayReturn', 'freePiece', 'injured', 'bossFloorClear', 'combine', 'growth'];
+    this.onMergeEvents(events);
+    // 지급 조각(선물·보너스·와일드카드)은 core에서 이미 그리드에 들어가 있다
+    const gridEvents = ['layerClear', 'freePiece', 'bossFloorClear'];
     if (events.some((e) => gridEvents.includes(e.type))) this.gridView.refresh();
     this.laneView.sync();
     this.abyssView.sync();
-    this.party.sync();
+    this.slots.offense.sync();
+    this.slots.defense.sync();
     this.sky.sync();
     this.dayUi.sync();
     this.syncUi();
+  }
+
+  /**
+   * 전투 중 머지 (§5.17-3, [11]-5): 때 맞춤이면 해(낮)/달(밤) 반짝임 + "+50%" 1초.
+   * 버프·병사 이벤트가 같은 머지에서 둘 다 오므로 머지 칸 기준으로 한 번만.
+   */
+  private onMergeEvents(events: CoreEvent[]): void {
+    const cells = new Set<number>();
+    for (const e of events) {
+      if ((e.type === 'buff' || e.type === 'soldier') && e.affinity && !cells.has(e.cell)) {
+        cells.add(e.cell);
+        this.affinityFlash(e.role);
+      }
+    }
+  }
+
+  private affinityFlash(role: Role): void {
+    const data = this.registry.get('data') as GameData;
+    const pct = Math.round((data.balance.merge.affinityMult - 1) * 100);
+    const p = skyArc(0.5);
+    const at = { x: p.x, y: REGION.sky.y + 26 };
+    const ring = this.add.circle(at.x, at.y, 14, role === 'offense' ? COLOR.happy : 0xe6e9f5, 0.5).setDepth(30);
+    this.tweens.add({ targets: ring, scale: 2, alpha: 0, duration: 600, onComplete: () => ring.destroy() });
+    const t = text(this, at.x, at.y + 18, `+${pct}%`, { fontSize: '12px', color: role === 'offense' ? '#ffe08a' : '#dfe6ff', fontStyle: 'bold' })
+      .setOrigin(0.5)
+      .setDepth(31);
+    this.tweens.add({ targets: t, y: at.y + 8, alpha: 0, delay: 600, duration: 400, onComplete: () => t.destroy() });
   }
 
   /** 낮/밤 전환: 해질녘 → 1.5초 연출 (절반에서 땅 띠 교체) / 새 하루(dayStart) → 낮 */
@@ -193,20 +213,12 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
-  /** 땅 띠 내용 교체 (낮 = 방어 레인 + 맡긴 추억 줄, 밤 = 심연 레인) */
+  /** 땅 띠 내용 교체 (낮 = 심연 레인 오펜스, 밤 = 방어 레인 디펜스, §5.17-10) */
   private showGround(which: 'day' | 'night'): void {
     this.groundShown = which;
-    this.laneView.setShown(which === 'day');
-    this.abyssView.setShown(which === 'night');
-    this.party.setShown(which === 'day');
+    this.abyssView.setShown(which === 'day');
+    this.laneView.setShown(which === 'night');
     if (which === 'night' && !this.sky.transitioning) this.sky.setMode('night');
-  }
-
-  /** 지금 땅 띠가 맡는 포탈 (드롭 판정): 낮 = 창문, 밤 = 손거울 */
-  private groundPortal(): PortalId | null {
-    if (this.state.phase === 'day') return 'happy';
-    if (this.state.phase === 'night') return 'unhappy';
-    return null;
   }
 
   /** 그리드·버튼 입력 가능: 낮·밤 + 모달 없음 + 전환 연출 아님 */
@@ -216,8 +228,8 @@ export class GameScene extends Phaser.Scene {
 
   private onDragHover(hover: DragHover): void {
     this.releaseZone.setHover(hover?.kind === 'release' ? hover.hover : null);
-    for (const id of ['happy', 'unhappy'] as const) {
-      this.portals[id].setHovered(hover?.kind === 'summon' && hover.portal === id && hover.block === null);
+    for (const role of ['offense', 'defense'] as const) {
+      this.slots[role].setHovered(hover?.kind === 'feed' && hover.role === role && hover.block === null);
     }
   }
 
@@ -232,27 +244,20 @@ export class GameScene extends Phaser.Scene {
     const joy = `기쁨 ${s.joy}`;
     if (this.joyText.text !== joy) this.joyText.setText(joy);
     const w = s.wave;
-    // HUD (§5.15-2): "1-3 고갯마루 들꽃 · 낮" / "1-3 셋째 고개 · 밤" (보스 웨이브면 뒤에 "역류")
+    // HUD (§5.15-2, §5.17-10): 낮 = 오펜스 층 "1-3 셋째 고개 · 낮" / 밤 = 디펜스 배경 "1-3 고갯마루 들꽃 · 밤" (보스 웨이브면 "역류")
     const night = s.phase === 'night';
     const when = night ? '밤' : s.phase === 'diary' ? '새벽' : s.phase === 'chapterComplete' ? '끝' : '낮';
     const tag = s.bossActive ? ' 역류' : w.inBossPrep ? ' 역류 준비' : s.pendingBackflow ? ' · 역류 예약' : w.paused ? ' (정지)' : '';
-    const phase = `${stageLabel(this.registry.get('data') as GameData, s.stage, night ? 'night' : 'day')} · ${when}${tag}`;
+    const phase = `${stageLabel(this.registry.get('data') as GameData, s.stage, night ? 'day' : 'night')} · ${when}${tag}`;
     if (this.phaseText.text !== phase) this.phaseText.setText(phase).setColor(s.shadowLocked ? '#ff9e9e' : '#e8e8e8');
     const weather = `마음 날씨 ${s.weather}`;
     if (this.weatherText.text !== weather) this.weatherText.setText(weather);
     this.shadowFill.width = this.shadowBarW * (s.shadow / this.shadowMax);
     this.shadowFill.setFillStyle(s.shadowLocked ? 0xd0607a : COLOR.unhappy);
     this.shadowFrame.setStrokeStyle(1, s.shadowLocked ? 0xff9e9e : COLOR.cellLine);
-    // 포탈: 낮 = 창문(즉시)·손거울(맡기기, 줄이 차면 닫힘) / 밤 = 창문 닫힘·손거울(즉시) (§5.11-2)
-    const cap = this.state.defense.cap;
-    this.portals.happy.setClosed(!s.portalOpen('happy') || s.defense.isFull);
-    this.portals.unhappy.setClosed(!s.portalOpen('unhappy') || (s.isReserve('unhappy') ? s.nightParty.length >= cap : s.abyss.isFull));
-    this.portals.happy.setLabel(s.phase === 'night' ? '닫힘' : '창문');
-    this.portals.unhappy.setLabel(s.phase === 'day' ? '맡기기' : '손거울');
-    const q = s.returnQueue.length;
-    this.queueLabel.setVisible(q > 0);
-    if (q > 0) this.queueLabel.setText(`대기 ${q}`);
-    this.sleepBtn.setShown(s.canSleep && this.canAct());
+    // 영웅 슬롯: 낮·밤 언제든 양쪽 먹이기 (§5.17-2)
+    this.slots.offense.setClosed(!s.feedOpen);
+    this.slots.defense.setClosed(!s.feedOpen);
     const block = s.spawnBlock;
     const canAct = this.canAct();
     this.spawnBtn
@@ -280,47 +285,11 @@ export class GameScene extends Phaser.Scene {
     this.weatherText = text(this, VIEW_W - 8, midY, '', { fontSize: '12px', color: '#9fb4e0' }).setOrigin(1, 0.5);
   }
 
-  /** 포탈 받침 + 귀환 대기 표시 (창문 왼쪽) */
-  private drawPortalBase(): void {
-    const base = REGION.portalBase;
-    this.fill(base, COLOR.grid);
-    const pedestalW = PORTAL.unhappy.x - PORTAL.happy.x + PORTAL_RADIUS * 2 + 16;
-    this.add.rectangle(VIEW_W / 2, base.y, pedestalW, 10, COLOR.mirror).setOrigin(0.5, 0);
-    this.queueLabel = text(this, PORTAL.happy.x - PORTAL_RADIUS - 6, PORTAL.happy.y, '', {
-      fontSize: '9px',
-      color: '#cfd6ea',
-      backgroundColor: '#1b1d24',
-      padding: { x: 3, y: 1 },
-    })
-      .setOrigin(1, 0.5)
-      .setDepth(6)
-      .setVisible(false);
-  }
-
   /** [추억 조합] 도감 (§5.13-5): 하늘 띠 오른쪽 위, 언제나 */
   private drawRecipeButton(): void {
     const sky = REGION.sky;
     const b = new Button(this, sky.x + sky.w - 40, sky.y + 14, 72, 20, '추억 조합', () => this.dayUi.showRecipes(), '10px');
     b.container.setDepth(8);
-  }
-
-  /** [잠들기]: 밤 + 심연 유닛 0기 + 맡긴 추억 0일 때 (남은 시간 × 멈춤 그림자를 한 번에, §5.11-4) */
-  private drawSleepButton(): void {
-    const sky = REGION.sky;
-    this.sleepBtn = new Button(this, sky.x + sky.w - 52, sky.y + sky.h - 16, 88, 24, '잠들기', () => {
-      if (!this.canAct()) return;
-      this.state.sleep();
-      this.syncUi();
-    }, '11px');
-    this.sleepBtn.container.setDepth(8);
-    this.sleepBtn.setShown(false);
-  }
-
-  private drawPortals(): void {
-    this.portals = {
-      happy: new PortalView(this, PORTAL.happy.x, PORTAL.happy.y, COLOR.portalHappy, '☀', '창문', '#3b3526'),
-      unhappy: new PortalView(this, PORTAL.unhappy.x, PORTAL.unhappy.y, COLOR.portalUnhappy, '◐', '손거울', '#10131c'),
-    };
   }
 
   /** 그리드는 중립 색 (좌우를 양/음 색으로 칠하지 않음, D-018) */

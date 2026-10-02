@@ -1,20 +1,18 @@
-// 저장 데이터 (스펙 §5.8-2, §7). Phaser·브라우저 의존 없음 (localStorage는 platform/storage.ts).
-// 하루 경계(dayStart·diary·chapterComplete)에서만 게임을 저장한다. 웨이브 진행 중 상태(레인 유닛·걱정·웨이브 타이머)는 저장하지 않는다.
-// 파싱은 알 수 없는 키도 오류로 본다 (data/validate.ts의 Checker 재사용).
+// 저장 데이터 (스펙 §5.8-2, §7, §5.17-8). Phaser·브라우저 의존 없음 (localStorage는 platform/storage.ts).
+// 하루 경계(dayStart·diary·chapterComplete)에서만 게임을 저장한다. 낮·밤 진행 중 상태(레인 유닛·걱정·웨이브 타이머)는 저장하지 않는다.
+// 파싱은 알 수 없는 키도 오류로 본다 (data/validate.ts의 Checker 재사용). v3 (hau_save_v3): 영웅 두 명·먹이기, 귀환 큐·자라기·부상 제거.
 
 import type { GameData } from '../data/types';
 import { Checker } from '../data/validate';
 import type { DailyUse, DayStats } from './day';
 import { eventById } from './day';
 import type { DiaryCategory, DiaryEntry, NightCategory } from './diary';
-import type { BossRecord, GameState, SummonRecord } from './game';
+import { ROLES, type BossRecord, type FeedRecord, type GameState, type HeroState, type Role } from './game';
 import { isValidDate, type GatingState } from './gating';
-import { BRANCHES, type GrowthResult, type GrowthState, type Traits } from './growth';
 import { WILDCARD, WILDCARD_TIER, type GridSize, type Piece } from './grid';
-import { LEGEND_TIER } from './recipes';
 import { GAME_STATS_KEYS, type GameStats } from './stats';
 
-export const SAVE_VERSION = 2;
+export const SAVE_VERSION = 3;
 
 export type SavePhase = 'dayStart' | 'diary' | 'chapterComplete';
 const SAVE_PHASES: readonly SavePhase[] = ['dayStart', 'diary', 'chapterComplete'];
@@ -37,7 +35,6 @@ export interface SaveGame {
   pendingBackflow: boolean;
   carryBackflow: boolean;
   grid: (Piece | null)[];
-  returnQueue: Piece[];
   lostReturns: number;
   /** 심연 벽 (현재 층). maxHp = 층 기본 HP + extraHp, cd = 반격 쿨다운 */
   abyss: { layer: number; hp: number; maxHp: number; extraHp: number; cd: number };
@@ -47,30 +44,26 @@ export interface SaveGame {
   nextWorryId: number;
   waveDay: number;
   stats: GameStats;
-  heroFirstPurify: string[];
-  /** 전설 정화 도감 (§5.13-3) */
-  legendPurified: string[];
   diary: DiaryEntry[];
   flags: string[];
   dailyUsed: DailyUse[];
   lastDayStats: DayStats | null;
   bossLog: BossRecord[];
-  summonLog: SummonRecord[];
+  feedLog: FeedRecord[];
+  /** 영웅 두 명 (낮덱 = offense / 밤덱 = defense): 점수 누계·기세 (§5.17-8) */
+  heroes: Record<Role, HeroState>;
+  /** 판 시작 영웅 배정을 마쳤는지 ([11]-3) */
+  assignmentDone: boolean;
   /** chapterComplete일 때만: 완성 true / 미완성 false (§5.15-7) */
   completed: boolean | null;
-  /** 갈림길 대기: 1-turningPoint를 정화함 → 다음 dayStart에 자라기 + 갈림길 */
+  /** 갈림길 대기: 1-turningPoint를 정화함 → 다음 dayStart에 갈림길 */
   pendingCrossroad: boolean;
-  /** 1-length를 정화함 → [다음] = 자라기 + 챕터 완성 */
+  /** 1-length를 정화함 (챕터 완성) */
   chapterCleared: boolean;
-  /** 자라기 누적 (§5.14-6) */
-  growth: GrowthState;
-  traits: Traits;
-  /** 자라기마다의 결과 (리포트·metrics) */
-  growthLog: GrowthResult[];
 }
 
 export interface SaveData {
-  version: 2;
+  version: 3;
   /** ISO 시각 (디버그 표시용) */
   savedAt: string;
   gridSize: GridSize;
@@ -85,8 +78,8 @@ function isSavePhase(p: string): p is SavePhase {
 /** 하루 경계 상태 → SaveGame. 경계가 아니거나 레인이 비어 있지 않으면 예외 */
 export function serializeGame(s: GameState): SaveGame {
   if (!isSavePhase(s.phase)) throw new Error(`하루 경계가 아니라 저장할 수 없음: ${s.phase}`);
-  if (s.defense.units.length || s.defense.worries.length || s.abyss.units.length || s.nightParty.length) {
-    throw new Error('레인·맡긴 추억이 비어 있지 않아 저장할 수 없음');
+  if (s.defense.units.length || s.defense.worries.length || s.abyss.units.length) {
+    throw new Error('레인이 비어 있지 않아 저장할 수 없음');
   }
   const w = s.abyss.wall;
   return structuredClone({
@@ -105,27 +98,23 @@ export function serializeGame(s: GameState): SaveGame {
     pendingBackflow: s.pendingBackflow,
     carryBackflow: s.carryBackflow,
     grid: s.grid.cells,
-    returnQueue: s.returnQueue,
     lostReturns: s.lostReturns,
     abyss: { layer: w.layer, hp: w.hp, maxHp: w.maxHp, extraHp: w.extraHp, cd: w.cd },
     happyCd: s.defense.happy.cd,
     nextWorryId: s.defense.nextWorryId,
     waveDay: s.wave.day,
     stats: s.stats,
-    heroFirstPurify: s.heroFirstPurify,
-    legendPurified: s.legendPurified,
     diary: s.diary,
     flags: s.flags,
     dailyUsed: s.dailyUsed,
     lastDayStats: s.lastDayStats,
     bossLog: s.bossLog,
-    summonLog: s.summonLog,
+    feedLog: s.feedLog,
+    heroes: s.heroes,
+    assignmentDone: s.assignmentDone,
     completed: s.phase === 'chapterComplete' ? s.completed : null,
     pendingCrossroad: s.pendingCrossroad,
     chapterCleared: s.chapterCleared,
-    growth: s.growth,
-    traits: s.traits,
-    growthLog: s.growthLog,
   });
 }
 
@@ -145,21 +134,20 @@ type Obj = Record<string, unknown>;
 
 const PIECE_KEYS = ['id', 'chain', 'tier', 'bornAt'];
 const DAY_STATS_KEYS: (keyof DayStats)[] = [
-  'sunk', 'defeated', 'layersCleared', 'backflow', 'bossWin', 'sentUp', 'sentDown', 'joyStart', 'joyEnd', 'realSeconds',
-  'daySeconds', 'nightSeconds', 'reserved', 'injuries', 'combines', 'spawns', 'merges', 'releases', 'releaseTiers', 'lostReturns', 'abyssDeaths', 'stallSeconds', 'gridFullSeconds', 'layerClearTimes',
+  'sunk', 'defeated', 'backflow', 'bossWin', 'layersCleared', 'offenseFell', 'defenseFalls', 'joyStart', 'joyEnd', 'realSeconds',
+  'offenseSeconds', 'defenseSeconds', 'spawns', 'merges', 'battleMerges', 'feeds', 'feedPoints', 'soldiers', 'soldiersCapped',
+  'releases', 'releaseTiers', 'lostReturns', 'stallSeconds', 'gridFullSeconds', 'layerClearTimes',
 ];
 const DIARY_KEYS: (keyof DiaryEntry)[] = ['day', 'eventTitle', 'line', 'eventLine', 'resultLine', 'category', 'nightLine', 'nightCategory'];
 const DIARY_CATEGORIES: DiaryCategory[] = ['backflow', 'manySunk', 'default'];
 const NIGHT_CATEGORIES: NightCategory[] = ['layerCleared', 'tried', 'none'];
-const BOSS_KEYS: (keyof BossRecord)[] = [
-  'day', 'slot', 'prep', 'defenseUnits', 'defenseAvgTier', 'abyssUnits', 'gridPieces', 'joy', 'shadowBefore', 'win',
-];
-const SUMMON_KEYS: (keyof SummonRecord)[] = ['t', 'day', 'side', 'chain', 'tier', 'cell', 'heldFor', 'reserved'];
+const BOSS_KEYS: (keyof BossRecord)[] = ['day', 'slot', 'prep', 'defenseUnits', 'heroUp', 'gridPieces', 'joy', 'shadowBefore', 'win'];
+const FEED_KEYS: (keyof FeedRecord)[] = ['t', 'day', 'role', 'hero', 'chain', 'tier', 'points', 'cell', 'heldFor'];
 const GAME_KEYS: (keyof SaveGame)[] = [
   'seed', 'rngState', 'day', 'phase', 'todayId', 'playTime', 'tickCount', 'nextPieceId', 'nextUnitId', 'spawnedToday',
-  'joy', 'shadow', 'pendingBackflow', 'carryBackflow', 'grid', 'returnQueue', 'lostReturns', 'abyss', 'happyCd',
-  'nextWorryId', 'waveDay', 'stats', 'heroFirstPurify', 'legendPurified', 'diary', 'flags', 'dailyUsed', 'lastDayStats', 'bossLog',
-  'summonLog', 'completed', 'pendingCrossroad', 'chapterCleared', 'growth', 'traits', 'growthLog',
+  'joy', 'shadow', 'pendingBackflow', 'carryBackflow', 'grid', 'lostReturns', 'abyss', 'happyCd', 'nextWorryId', 'waveDay',
+  'stats', 'diary', 'flags', 'dailyUsed', 'lastDayStats', 'bossLog', 'feedLog', 'heroes', 'assignmentDone',
+  'completed', 'pendingCrossroad', 'chapterCleared',
 ];
 
 class SaveChecker extends Checker {
@@ -171,24 +159,17 @@ class SaveChecker extends Checker {
     if (!allowed.includes(v)) this.fail(path, `다음 중 하나여야 함: ${allowed.join(', ')}`);
   }
 
-  numOrNull(v: unknown, path: string): void {
-    if (v !== null) this.num(v, path);
-  }
-
   list<T>(v: unknown, path: string, each: (item: unknown, p: string) => T): void {
     (this.arr(v, path) ?? []).forEach((it, i) => each(it, `${path}[${i}]`));
   }
 
+  get chainIds(): string[] {
+    return this.data.chains.map((c) => c.archetypeId);
+  }
+
   piece(v: unknown, path: string): void {
-    const o = this.obj(v, path, PIECE_KEYS, ['shining', 'restUntil', 'legend']);
+    const o = this.obj(v, path, PIECE_KEYS);
     if (!o) return;
-    if ('shining' in o) this.bool(o.shining, `${path}.shining`);
-    if ('restUntil' in o) this.oneOf(o.restUntil, `${path}.restUntil`, ['dawn', 'dusk', null]);
-    if ('legend' in o) {
-      this.oneOf(o.legend, `${path}.legend`, this.data.recipes.recipes.map((r) => r.id));
-      // 전설은 tier 4 (§5.13-5)
-      if (o.tier !== LEGEND_TIER) this.fail(`${path}.tier`, `전설은 ${LEGEND_TIER}이어야 함`);
-    }
     this.num(o.id, `${path}.id`, { int: true, min: 1 });
     this.num(o.bornAt, `${path}.bornAt`, { min: 0 });
     const chain = this.str(o.chain, `${path}.chain`);
@@ -197,8 +178,8 @@ class SaveChecker extends Checker {
       if (o.tier !== WILDCARD_TIER) this.fail(`${path}.tier`, `와일드카드는 ${WILDCARD_TIER}이어야 함`);
       return;
     }
-    if (!this.data.chains.some((c) => c.archetypeId === chain)) this.fail(`${path}.chain`, `chains.json에 없는 체인: "${chain}"`);
-    if (!('legend' in o)) this.num(o.tier, `${path}.tier`, { int: true, min: 1, max: this.data.balance.grid.maxTier });
+    if (!this.chainIds.includes(chain)) this.fail(`${path}.chain`, `chains.json에 없는 체인: "${chain}"`);
+    this.num(o.tier, `${path}.tier`, { int: true, min: 1, max: this.data.balance.grid.maxTier });
   }
 
   gating(v: unknown, path: string): void {
@@ -216,12 +197,12 @@ class SaveChecker extends Checker {
     });
   }
 
-  /** 체인 id → 0 이상 정수 */
-  chainCounts(v: unknown, path: string): void {
+  /** 키 → 0 이상 정수. keyOk가 false면 오류 */
+  counts(v: unknown, path: string, keyOk: (k: string) => boolean, what: string): void {
     const m = this.map(v, path);
     if (!m) return;
     for (const [k, x] of Object.entries(m)) {
-      if (!this.data.chains.some((c) => c.archetypeId === k)) this.fail(`${path}.${k}`, `chains.json에 없는 체인: "${k}"`);
+      if (!keyOk(k)) this.fail(`${path}.${k}`, `알 수 없는 ${what}: "${k}"`);
       this.num(x, `${path}.${k}`, { int: true, min: 0 });
     }
   }
@@ -234,82 +215,37 @@ class SaveChecker extends Checker {
     const o = this.obj(v, path, DAY_STATS_KEYS);
     if (!o) return;
     for (const k of DAY_STATS_KEYS) {
-      if (k === 'backflow') this.oneOf(o[k], `${path}.${k}`, [0, 1]);
+      if (k === 'backflow' || k === 'offenseFell') this.oneOf(o[k], `${path}.${k}`, [0, 1]);
       else if (k === 'bossWin') this.oneOf(o[k], `${path}.${k}`, [0, 1, null]);
       else if (k === 'releaseTiers') {
         const a = this.arr(o[k], `${path}.${k}`);
         if (a && a.length !== this.data.balance.grid.maxTier + 1) this.fail(`${path}.${k}`, `길이 ${a.length} ≠ maxTier+1`);
         a?.forEach((x, i) => this.num(x, `${path}.${k}[${i}]`, { int: true, min: 0 }));
       } else if (k === 'layerClearTimes') this.list(o[k], `${path}.${k}`, (x, pp) => this.num(x, pp, { min: 0 }));
-      else if (k === 'combines') {
-        this.list(o[k], `${path}.${k}`, (x, pp) => {
-          const cb = this.obj(x, pp, ['t', 'recipe', 'inputs']);
-          if (!cb) return;
-          this.num(cb.t, `${pp}.t`, { min: 0 });
-          this.oneOf(cb.recipe, `${pp}.recipe`, this.data.recipes.recipes.map((r) => r.id));
-          this.strList(cb.inputs, `${pp}.inputs`);
-        });
-      }
       else this.num(o[k], `${path}.${k}`);
     }
   }
 
-  recipeId(v: unknown, path: string): void {
-    this.oneOf(v, path, this.data.recipes.recipes.map((r) => r.id));
-  }
-
-  growth(v: unknown, path: string): void {
-    const o = this.obj(v, path, ['happy', 'unhappy', 'memories', 'branches', 'album', 'given']);
-    if (!o) return;
-    for (const k of ['happy', 'unhappy']) this.num(o[k], `${path}.${k}`, { min: 0 });
-    this.num(o.memories, `${path}.memories`, { int: true, min: 0 });
-    this.list(o.branches, `${path}.branches`, (it, pp) => this.oneOf(it, pp, BRANCHES));
-    this.list(o.album, `${path}.album`, (it, pp) => {
-      const a = this.obj(it, pp, ['day', 'happy', 'purified']);
-      if (!a) return;
-      this.num(a.day, `${pp}.day`, { int: true, min: 1 });
-      this.recipeId(a.happy, `${pp}.happy`);
-      this.recipeId(a.purified, `${pp}.purified`);
-    });
-    this.nums(o.given, `${path}.given`, ['happy', 'purified'], { int: true, min: 0 });
-  }
-
-  traits(v: unknown, path: string): void {
-    const m = this.map(v, path);
-    if (!m) return;
-    const chainIds = this.data.chains.map((c) => c.archetypeId);
-    for (const [k, x] of Object.entries(m)) {
-      const [chain, kind] = k.split(':');
-      if (!chainIds.includes(chain) || (kind !== 'happy' && kind !== 'purified')) this.fail(`${path}.${k}`, '알 수 없는 특성 키');
-      this.num(x, `${path}.${k}`, { int: true, min: 0, max: this.data.balance.growth.traitMaxStacks });
+  hero(v: unknown, path: string): string | undefined {
+    const o = this.obj(v, path, ['id', 'points', 'momentum']);
+    if (!o) return undefined;
+    const id = this.str(o.id, `${path}.id`);
+    if (id !== undefined && !this.data.heroes.heroes.some((h) => h.id === id)) this.fail(`${path}.id`, `heroes.json에 없는 영웅: "${id}"`);
+    const pts = this.map(o.points, `${path}.points`);
+    if (pts) {
+      for (const [k, x] of Object.entries(pts)) {
+        if (!this.chainIds.includes(k)) this.fail(`${path}.points.${k}`, `chains.json에 없는 체인: "${k}"`);
+        this.num(x, `${path}.points.${k}`, { min: 0 });
+      }
     }
-  }
-
-  growthResult(v: unknown, path: string): void {
-    const keys = ['day', 'index', 'consumed', 'happyCount', 'purifiedCount', 'pairs', 'branch', 'gained', 'traitsUp', 'traits'];
-    const o = this.obj(v, path, keys);
-    if (!o) return;
-    for (const k of ['day', 'index', 'happyCount', 'purifiedCount', 'pairs']) this.num(o[k], `${path}.${k}`, { int: true, min: 0 });
-    this.oneOf(o.branch, `${path}.branch`, BRANCHES);
-    this.nums(o.gained, `${path}.gained`, ['happy', 'unhappy'], { min: 0 });
-    this.traits(o.traitsUp, `${path}.traitsUp`);
-    this.traits(o.traits, `${path}.traits`);
-    this.list(o.consumed, `${path}.consumed`, (it, pp) => {
-      const c = this.obj(it, pp, ['recipe', 'kind', 'chain', 'cell']);
-      if (!c) return;
-      this.recipeId(c.recipe, `${pp}.recipe`);
-      this.oneOf(c.kind, `${pp}.kind`, ['happy', 'purified']);
-      this.str(c.chain, `${pp}.chain`);
-      if (c.cell !== null) this.num(c.cell, `${pp}.cell`, { int: true, min: 0 });
-    });
+    const m = this.nums(o.momentum, `${path}.momentum`, ['stacks', 'bonus', 'timer'], { min: 0 });
+    if (m) this.num(m.stacks, `${path}.momentum.stacks`, { int: true, min: 0, max: this.data.balance.buff.momentumMaxStacks });
+    return id;
   }
 
   game(v: unknown, path: string, size: GridSize): void {
     const o = this.obj(v, path, GAME_KEYS);
     if (!o) return;
-    this.growth(o.growth, `${path}.growth`);
-    this.traits(o.traits, `${path}.traits`);
-    this.list(o.growthLog, `${path}.growthLog`, (it, pp) => this.growthResult(it, pp));
     const lifeDays = this.data.balance.chapter.maxDays;
     const p = (k: string) => `${path}.${k}`;
     for (const k of ['seed', 'rngState', 'tickCount', 'nextPieceId', 'nextUnitId', 'spawnedToday', 'lostReturns', 'nextWorryId']) {
@@ -330,26 +266,25 @@ class SaveChecker extends Checker {
       if (grid.length !== size.cols * size.rows) this.fail(p('grid'), `길이 ${grid.length} ≠ ${size.cols}×${size.rows}`);
       grid.forEach((c, i) => c !== null && this.piece(c, `${p('grid')}[${i}]`));
     }
-    this.list(o.returnQueue, p('returnQueue'), (it, pp) => this.piece(it, pp));
 
     const abyss = this.nums(o.abyss, p('abyss'), ['layer', 'hp', 'maxHp', 'extraHp', 'cd']);
     if (abyss) this.num(abyss.layer, `${p('abyss')}.layer`, { int: true, min: 1 });
-    const st = this.obj(o.stats, p('stats'), [...GAME_STATS_KEYS, 'tier3ByChain', 'heroFirstSummonDay', 'legendsByRecipe']);
+    const st = this.obj(o.stats, p('stats'), [...GAME_STATS_KEYS, 'tier3ByChain', 'soldiersByKind']);
     if (st) {
       for (const k of GAME_STATS_KEYS) this.num(st[k], `${p('stats')}.${k}`, { min: 0 });
-      for (const k of ['tier3ByChain', 'heroFirstSummonDay']) this.chainCounts(st[k], `${p('stats')}.${k}`);
-      const lr = this.map(st.legendsByRecipe, `${p('stats')}.legendsByRecipe`);
-      if (lr) {
-        for (const [k, x] of Object.entries(lr)) {
-          this.oneOf(k, `${p('stats')}.legendsByRecipe.${k}`, this.data.recipes.recipes.map((r) => r.id));
-          this.num(x, `${p('stats')}.legendsByRecipe.${k}`, { int: true, min: 0 });
-        }
-      }
+      this.counts(st.tier3ByChain, `${p('stats')}.tier3ByChain`, (k) => this.chainIds.includes(k), '체인');
+      this.counts(
+        st.soldiersByKind,
+        `${p('stats')}.soldiersByKind`,
+        (k) => {
+          const [chain, lv] = k.split(':');
+          const c = this.data.chains.find((x) => x.archetypeId === chain);
+          return !!c && Number.isInteger(Number(lv)) && Number(lv) >= 1 && Number(lv) <= c.soldier.levels.length;
+        },
+        '병사 키',
+      );
     }
-    this.list(o.legendPurified, p('legendPurified'), (it, pp) => this.oneOf(it, pp, this.data.recipes.recipes.map((r) => r.id)));
 
-    const chainIds = this.data.chains.map((c) => c.archetypeId);
-    this.list(o.heroFirstPurify, p('heroFirstPurify'), (it, pp) => this.oneOf(it, pp, chainIds));
     this.list(o.flags, p('flags'), (it, pp) => this.oneOf(it, pp, ['avoid', 'face']));
     this.list(o.dailyUsed, p('dailyUsed'), (it, pp) => {
       const d = this.obj(it, pp, ['id', 'day']);
@@ -358,11 +293,12 @@ class SaveChecker extends Checker {
       this.num(d.day, `${pp}.day`, { int: true, min: 1 });
     });
     this.list(o.diary, p('diary'), (it, pp) => {
-      const d = this.obj(it, pp, DIARY_KEYS, ['growthLine']);
+      const d = this.obj(it, pp, DIARY_KEYS);
       if (!d) return;
       this.num(d.day, `${pp}.day`, { int: true, min: 1 });
-      for (const k of ['eventTitle', 'line', 'eventLine', 'resultLine', 'nightLine']) this.str(d[k], `${pp}.${k}`);
-      if ('growthLine' in d) this.str(d.growthLine, `${pp}.growthLine`);
+      for (const k of ['eventTitle', 'line', 'eventLine', 'resultLine', 'nightLine']) {
+        if (typeof d[k] !== 'string') this.fail(`${pp}.${k}`, '문자열이어야 함');
+      }
       this.oneOf(d.category, `${pp}.category`, DIARY_CATEGORIES);
       this.oneOf(d.nightCategory, `${pp}.nightCategory`, NIGHT_CATEGORIES);
     });
@@ -370,23 +306,31 @@ class SaveChecker extends Checker {
     this.list(o.bossLog, p('bossLog'), (it, pp) => {
       const b = this.obj(it, pp, BOSS_KEYS);
       if (!b) return;
-      for (const k of ['day', 'defenseUnits', 'abyssUnits', 'gridPieces', 'joy', 'shadowBefore']) this.num(b[k], `${pp}.${k}`);
+      for (const k of ['day', 'defenseUnits', 'gridPieces', 'joy', 'shadowBefore']) this.num(b[k], `${pp}.${k}`);
       this.oneOf(b.slot, `${pp}.slot`, ['morning', 'noon', 'evening']);
       this.bool(b.prep, `${pp}.prep`);
-      this.numOrNull(b.defenseAvgTier, `${pp}.defenseAvgTier`);
+      this.bool(b.heroUp, `${pp}.heroUp`);
       this.oneOf(b.win, `${pp}.win`, [true, false, null]);
     });
-    this.list(o.summonLog, p('summonLog'), (it, pp) => {
-      const r = this.obj(it, pp, SUMMON_KEYS);
+    this.list(o.feedLog, p('feedLog'), (it, pp) => {
+      const r = this.obj(it, pp, FEED_KEYS);
       if (!r) return;
-      for (const k of ['t', 'tier', 'heldFor']) this.num(r[k], `${pp}.${k}`);
+      for (const k of ['t', 'points', 'heldFor']) this.num(r[k], `${pp}.${k}`, { min: 0 });
       this.num(r.day, `${pp}.day`, { int: true, min: 1 });
-      this.bool(r.reserved, `${pp}.reserved`);
-      this.oneOf(r.side, `${pp}.side`, ['happy', 'unhappy']);
-      this.str(r.chain, `${pp}.chain`);
+      this.num(r.tier, `${pp}.tier`, { int: true, min: 1, max: this.data.balance.grid.maxTier });
+      this.oneOf(r.role, `${pp}.role`, ROLES);
+      this.str(r.hero, `${pp}.hero`);
+      this.oneOf(r.chain, `${pp}.chain`, this.chainIds);
       this.nums(r.cell, `${pp}.cell`, ['col', 'row'], { int: true, min: 0 });
     });
 
+    const heroes = this.obj(o.heroes, p('heroes'), [...ROLES]);
+    if (heroes) {
+      const off = this.hero(heroes.offense, `${p('heroes')}.offense`);
+      const def = this.hero(heroes.defense, `${p('heroes')}.defense`);
+      if (off !== undefined && off === def) this.fail(`${p('heroes')}.defense`, '낮덱과 다른 영웅이어야 함 (양쪽 최소 1명)');
+    }
+    this.bool(o.assignmentDone, p('assignmentDone'));
     this.bool(o.pendingCrossroad, p('pendingCrossroad'));
     this.bool(o.chapterCleared, p('chapterCleared'));
     if (o.phase === 'chapterComplete') {
@@ -398,7 +342,7 @@ class SaveChecker extends Checker {
 
 /**
  * localStorage 원문 → SaveData (§5.8-2 초기화 규칙).
- * - 키 없음(null) / JSON 파싱 실패 / version ≠ 2 / 스키마 불일치 → { ok: false, reason } (호출부가 키 삭제 + 새 일생 + 첫 실행 gating)
+ * - 키 없음(null) / JSON 파싱 실패 / version ≠ 3 / 스키마 불일치 → { ok: false, reason } (호출부가 키 삭제 + 새 판 + 첫 실행 gating)
  * - 저장된 gridSize ≠ 현재 프리셋 → game만 null로 (gating 유지), gameReset에 사유
  */
 export function parseSave(raw: string | null, data: GameData, size: GridSize): ParseResult {

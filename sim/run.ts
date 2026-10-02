@@ -1,7 +1,8 @@
 // 자동 플레이 시뮬레이터 CLI (스펙 §8.1). Node 전용: core + data + layout 좌표만 import (Phaser 없음).
 //
 //   npm run sim -- --policy balanced --seeds 200 --grid 5x4 [--until life] [--out 파일]   (실제 하루 구조, 한 판 = 1챕터)
-//   npm run sim -- --policy idle,random,alwaysHappy,hoarder,balanced ...   (여러 정책 + 비교 표)
+//   npm run sim -- --policy idle,random,balanced,lazy,dayOnly,nightOnly,hoarder,noFeed ...   (여러 정책 + 비교 표)
+//   먹이기 배분 r(낮덱 몫, balanced·lazy): --sweep feedRatio=0,0.25,0.5,0.75,1 (sim.json feedRatio, 데이터 수치가 아님)
 //   npm run sim -- --compare a.json b.json
 //   (--until wave:N · --dayReset · --dayMode m5는 M5에서 없어짐: 무한 웨이브가 하루 3웨이브로 바뀌었다)
 //
@@ -22,9 +23,8 @@ import { POLICIES, POLICY_ALIASES } from './policies';
 import {
   buildReport,
   checkM3Goals,
-  checkM4Goals,
   checkM5Goals,
-  checkM88Goals,
+  checkM89Goals,
   formatComparison,
   formatCompare,
   formatGoals,
@@ -149,7 +149,8 @@ function runPolicies(args: Args, data: GameData, sets: Override[], cfg: SimConfi
         grid: `${args.grid.cols}x${args.grid.rows}`,
         mode: 'life',
         days: data.balance.chapter.maxDays,
-        wavesPerDay: data.balance.wave.wavesPerDay,
+        wavesPerNight: data.balance.wave.wavesPerNight,
+        feedRatio: cfg.feedRatio,
         ...(sets.length ? { overrides: overridesRecord(sets) } : {}),
       },
       cfg,
@@ -216,19 +217,19 @@ function main(): void {
     if (!args.policyGiven) console.log('(--policy가 없어 전 정책으로 돌립니다)');
 
     const rows: SweepRow[] = [];
+    // feedRatio는 데이터가 아니라 봇 설정 (sim.json): 데이터는 그대로, cfg만 바꾼다
+    const isRatio = key === 'feedRatio';
     for (const v of values) {
-      const sets = [...fixed, v];
+      if (isRatio && typeof v.value !== 'number') fail('--sweep feedRatio=값은 숫자');
+      const sets = isRatio ? fixed : [...fixed, v];
+      const runCfg: SimConfig = isRatio ? { ...cfg, feedRatio: v.value as number } : cfg;
       const data = attempt(() => applyOverrides(base, sets));
       const started = Date.now();
-      const reports = runPolicies(args, data, sets, cfg, false);
+      const reports = runPolicies(args, data, sets, runCfg, false);
       rows.push({
         value: v.value,
         reports,
-        goals: [
-          ...checkM88Goals(reports, cfg.m88Goals, null).filter((g) => g.id && g.id !== 'roundTrip'),
-          ...checkM5Goals(reports, cfg.m5Goals),
-          ...checkM4Goals(reports, cfg.m4Goals),
-        ],
+        goals: [...checkM89Goals(reports, runCfg.m89Goals, null).filter((g) => g.id && g.id !== 'roundTrip'), ...checkM5Goals(reports, runCfg.m5Goals)],
       });
       console.log(`  ${key}=${JSON.stringify(v.value)} 완료 (${((Date.now() - started) / 1000).toFixed(1)}초)`);
     }
@@ -245,7 +246,7 @@ function main(): void {
     const compact = rows.map((r) => ({
       value: r.value,
       goals: r.goals.map(({ id, label, pass, detail }) => ({ id, label, pass, detail })),
-      policies: Object.fromEntries(r.reports.map((p) => [p.policy, { summary: p.summary, tierShare: p.tierShare, chapter: p.chapter }])),
+      policies: Object.fromEntries(r.reports.map((p) => [p.policy, { summary: p.summary, feedTierShare: p.feedTierShare, chapter: p.chapter, soldiersByKind: p.soldiersByKind }])),
     }));
     writeFileSync(
       file,
@@ -273,8 +274,6 @@ function main(): void {
   }
   console.log(formatGoals(checkM3Goals(reports, cfg.m3Goals)));
   console.log();
-  console.log(formatGoals(checkM4Goals(reports, cfg.m4Goals), '§8.2 M4 부분 목표'));
-  console.log();
   console.log(formatGoals(checkM5Goals(reports, cfg.m5Goals), '§8.2 M5 부분 목표'));
   console.log();
 
@@ -288,7 +287,7 @@ function main(): void {
     );
     console.log();
   }
-  console.log(formatGoals(checkM88Goals(reports, cfg.m88Goals, roundTrip), '§8.2 M8.8 진행 목표 (판정 출력만, 통과는 M8.7 (b))'));
+  console.log(formatGoals(checkM89Goals(reports, cfg.m89Goals, roundTrip), '§8.2 M8.9 진행 목표 (판정 출력만, 통과는 (b) 튜닝)'));
 }
 
 main();

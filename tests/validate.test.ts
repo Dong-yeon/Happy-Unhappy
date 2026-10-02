@@ -106,11 +106,10 @@ describe('validateGameData', () => {
     expectIssue(issues, 'chains[0].tierNames', /maxTier/);
   });
 
-  it('공용 정령 단계 누락', () => {
-    const issues = issuesAfter((d) => {
-      d.units.commonSpirit.pop();
-    });
-    expectIssue(issues, 'units.commonSpirit', /2단계/);
+  it('heroes.json: offense = defense면 오류 (양쪽 최소 1명), 없는 영웅 id 오류 (§5.17-1, [11]-3)', () => {
+    expectIssue(issuesAfter((d) => (d.heroes.defense = d.heroes.offense)), 'heroes.defense', /다른 영웅/);
+    expectIssue(issuesAfter((d) => (d.heroes.offense = 'nobody')), 'heroes.offense', /없는 영웅/);
+    expectIssue(issuesAfter((d) => d.heroes.heroes.pop()), 'heroes.heroes', /2개 이상/);
   });
 
   it('spawnWeight 합이 0이면 오류', () => {
@@ -217,8 +216,31 @@ describe('validateGameData', () => {
     for (const r of rawGameData.chapterComplete.learnedRecipes) expect(recipeIds).not.toContain(r.id);
   });
 
-  it('M8.7: balance.growth 필수, recipes kind', () => {
-    expectIssue(issuesAfter((d) => delete (d.balance as Record<string, unknown>).growth), 'balance.growth', /필수 키/);
+  it('M8.9: 삭제된 키가 남아 있으면 오류 (growth·night·hero.shineMult·laneCap·returnQueueCap·wavesPerDay·chains.hero, §5.17-5)', () => {
+    const b = (d: Raw) => d.balance as unknown as Record<string, Record<string, unknown>>;
+    expectIssue(issuesAfter((d) => (b(d).growth = { ageWorryMult: 1.15 } as never)), 'balance.growth', /알 수 없는 키/);
+    expectIssue(issuesAfter((d) => (b(d).night = { nightSeconds: 60 } as never)), 'balance.night', /알 수 없는 키/);
+    expectIssue(issuesAfter((d) => (b(d).hero.shineMult = 1.2)), 'balance.hero.shineMult', /알 수 없는 키/);
+    expectIssue(issuesAfter((d) => (b(d).lane.laneCap = 5)), 'balance.lane.laneCap', /알 수 없는 키/);
+    expectIssue(issuesAfter((d) => (b(d).grid.returnQueueCap = 6)), 'balance.grid.returnQueueCap', /알 수 없는 키/);
+    expectIssue(issuesAfter((d) => (b(d).wave.wavesPerDay = 3)), 'balance.wave.wavesPerDay', /알 수 없는 키/);
+    expectIssue(
+      issuesAfter((d) => ((d.chains[0] as unknown as Record<string, unknown>).hero = { hp: 1, atk: 1, atkInterval: 1, range: 1 })),
+      'chains[0].hero',
+      /알 수 없는 키/,
+    );
+    expectIssue(issuesAfter((d) => delete (d.balance as Record<string, unknown>).offense), 'balance.offense', /필수 키/);
+  });
+
+  it('M8.9: 먹이기 tierScore는 maxTier개, 병사 단은 maxTier − 1개, side·buff 값 ([11])', () => {
+    expectIssue(issuesAfter((d) => d.balance.feed.tierScore.pop()), 'balance.feed.tierScore', /maxTier/);
+    expectIssue(issuesAfter((d) => d.chains[0].soldier.levels.pop()), 'chains[0].soldier.levels', /maxTier − 1/);
+    expectIssue(issuesAfter((d) => ((d.chains[0] as unknown as Record<string, unknown>).side = 'noon')), 'chains[0].side', /sun 또는 moon/);
+    expectIssue(issuesAfter((d) => ((d.chains[1] as unknown as Record<string, unknown>).buff = 'shield')), 'chains[1].buff', /heal 또는 momentum/);
+    expectIssue(issuesAfter((d) => ((d.balance.merge as unknown as Record<string, unknown>).soldiers = 'yes')), 'balance.merge.soldiers', /.+/);
+  });
+
+  it('M8.7→: recipes kind (조합 제작은 꺼도 검증은 유지, §5.17-6)', () => {
     expectIssue(issuesAfter((d) => ((d.recipes.recipes[0] as Record<string, unknown>).kind = 'sad')), 'recipes.recipes[0].kind', /.+/);
   });
 

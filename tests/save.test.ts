@@ -16,23 +16,24 @@ import type { SimConfig } from '../sim/types';
 
 const data = structuredClone(rawGameData) as unknown as GameData;
 const SIZE: GridSize = { cols: 5, rows: 4 };
-const geo = () => gameGeometry(data.balance.lane.laneCap);
+const geo = () => gameGeometry(data.balance.merge.soldierCap + 1);
 const GATING: GatingState = grant(emptyGating(), '2026-10-01', 1, { dailyLimit: 2, storeCap: 4 }).next;
 
 function fresh(seed = 5): GameState {
   return new GameState(data, SIZE, mulberry32(seed), geo(), seed);
 }
 
-/** 간단한 입력으로 phase에 도달할 때까지 (생성·위/아래 소환). 하루 경계를 넘을 때마다 1일 */
+/** 간단한 입력으로 phase에 도달할 때까지 (생성·머지·먹이기). 하루 경계를 넘을 때마다 1일 */
 function playUntil(g: GameState, day: number, phase: 'dayStart' | 'diary'): GameState {
   let k = 0;
   while (!(g.day === day && g.phase === phase)) {
+    if (g.phase === 'chapterComplete' || k > 60 * 60 * 60) throw new Error(`playUntil: ${day}일 ${phase} 전에 판이 끝남 (${g.day}일 ${g.phase})`);
     if (g.phase === 'dayStart') g.confirmDay(g.today.kind === 'milestone' ? 'unhappy' : undefined);
     else if (g.phase === 'diary') g.nextDay();
     else {
       if (k % 90 === 0) {
         const s = g.spawn();
-        if (s) g.summon(s.index, k % 180 === 0 ? 'happy' : 'unhappy');
+        if (s && k % 180 === 0) g.feed(s.index, k % 360 === 0 ? 'offense' : 'defense'); // 절반은 그리드에 남긴다
       }
       g.tick(FIXED_DT);
       k++;
@@ -57,14 +58,14 @@ function roundTripJson(g: GameState): { before: string; after: string } {
 
 describe('serializeGame / fromSave round-trip (경계 3종)', () => {
   it('dayStart', () => {
-    const g = playUntil(fresh(), 4, 'dayStart');
+    const g = playUntil(fresh(), 3, 'dayStart');
     expect(g.grid.cells.some((c) => c !== null)).toBe(true);
     const { before, after } = roundTripJson(g);
     expect(after).toBe(before);
   });
 
   it('diary (lastDayStats 포함)', () => {
-    const g = playUntil(fresh(), 7, 'diary');
+    const g = playUntil(fresh(), 3, 'diary');
     const { before, after } = roundTripJson(g);
     expect(after).toBe(before);
     expect(restore(serializeGame(g)).lastDayStats).toEqual(g.lastDayStats);
@@ -82,7 +83,7 @@ describe('serializeGame / fromSave round-trip (경계 3종)', () => {
   });
 
   it('갈림길 대기·1-10 정화 플래그도 저장된다, 옛 저장(ending 키)은 초기화', () => {
-    const g = playUntil(fresh(), 4, 'diary');
+    const g = playUntil(fresh(), 2, 'diary');
     g.pendingCrossroad = true;
     g.chapterCleared = true;
     const back = restore(serializeGame(g));
@@ -98,20 +99,19 @@ describe('serializeGame / fromSave round-trip (경계 3종)', () => {
   });
 
   it('복원한 dayStart는 오늘 이벤트를 다시 뽑지 않고, 이후 진행이 원본과 같다', () => {
-    const a = playUntil(fresh(9), 3, 'dayStart');
+    const a = playUntil(fresh(9), 2, 'dayStart');
     const b = restore(JSON.parse(JSON.stringify(serializeGame(a))) as SaveGame);
     expect(b.today).toEqual(a.today);
-    for (const g of [a, b]) playUntil(g, 6, 'diary');
+    for (const g of [a, b]) playUntil(g, 3, 'diary');
     expect(JSON.stringify(serializeGame(b))).toBe(JSON.stringify(serializeGame(a)));
   });
 
-  it('웨이브 중(waves)에는 예외 / 레인이 비어 있지 않으면 예외', () => {
+  it('낮·밤에는 예외 / 레인이 비어 있지 않으면 예외', () => {
     const g = fresh();
     g.debugForceEvent('plain');
     g.confirmDay();
     expect(() => serializeGame(g)).toThrow(/경계/);
-    g.summon(g.debugGrant('companion_animal', 1)!, 'happy');
-    g.phase = 'diary'; // 인위적으로 경계로 바꿔도 레인에 유닛이 있으면 거부
+    g.phase = 'diary'; // 인위적으로 경계로 바꿔도 레인에 영웅이 있으면 거부
     expect(() => serializeGame(g)).toThrow(/레인/);
   });
 });
@@ -186,7 +186,7 @@ describe('parseSave (초기화 규칙)', () => {
 
 describe('결정성: 끊김 없이 한 판 vs 매 경계 round-trip (§5.8-5)', () => {
   const cfg = simJson as SimConfig;
-  it.each(['balanced', 'alwaysHappy'].flatMap((p) => [11, 22, 33].map((seed) => [p, seed] as const)))(
+  it.each(['balanced', 'nightOnly', 'lazy'].flatMap((p) => [11, 22, 33].map((seed) => [p, seed] as const)))(
     '%s 시드 %i: 최종 stats·diary·completed 동일',
     (policy, seed) => {
       const a = runLife(data, cfg, POLICIES[policy], { seed, grid: SIZE });

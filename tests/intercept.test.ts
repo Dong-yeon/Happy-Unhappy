@@ -1,21 +1,12 @@
-// M8.5 (a): 방어 유닛 제한 이동 (§4.3.3, D-026) · 봇 밤 규칙 (§5.12-1, D-028) · 영웅 경고 (§5.12-2)
+// 디펜스 영웅·병사 제한 이동 (§4.3.3, D-026: v0.13에서 방어 유닛 → 디펜스 영웅·병사, 레인 규칙 그대로)
 import { describe, expect, it } from 'vitest';
 import { rawGameData } from '../src/data';
 import type { GameData } from '../src/data/types';
-import { GameState } from '../src/core/game';
-import { WILDCARD } from '../src/core/grid';
 import { FIXED_DT, Lane, type InterceptConfig, type LaneEvent, type Worry } from '../src/core/lane';
-import { mulberry32 } from '../src/core/rng';
-import { serializeGame } from '../src/core/save';
-import { portalBubble } from '../src/scenes/portalBubble';
 import { gameGeometry } from '../src/scenes/layout';
-import { POLICIES } from '../sim/policies';
-import { runLife } from '../sim/runner';
-import simJson from '../sim/sim.json';
-import type { SimConfig } from '../sim/types';
 
 const base = structuredClone(rawGameData) as unknown as GameData;
-const GEO = gameGeometry(base.balance.lane.laneCap).defense;
+const GEO = gameGeometry(base.balance.merge.soldierCap + 1).defense;
 const LINE = GEO.lineY;
 const HAPPY = { atk: 0, atkInterval: 1, range: 0 }; // Happy는 끼어들지 않게
 const SPIRIT = { hp: 1000, atk: 1, atkInterval: 1, range: 20 };
@@ -190,126 +181,5 @@ describe('§4.3.3: 유닛 사거리는 자기 y 기준 (Happy는 방어선 기�
     u2.y = LINE - 70;
     worryAt(l2, 10, LINE - 5, { ...WORRY, speed: 0 }); // 방어선에는 가깝지만 유닛에서 |Δy| 65
     expect(step(l2, 1).filter((e) => e.type === 'attack' && e.attacker.kind === 'unit')).toHaveLength(0);
-  });
-});
-
-// ── GameState·결정성 ──
-
-function withRange(range: number): GameData {
-  const d = structuredClone(base);
-  d.balance.lane.defenseInterceptRange = range;
-  return d;
-}
-
-describe('결정성 (제한 이동 켬)', () => {
-  it.each([11, 22])('balanced 시드 %i, range 80: 끊김 없이 vs 매 경계 round-trip → 동일', (seed) => {
-    const d = withRange(80);
-    const cfg = simJson as SimConfig;
-    const a = runLife(d, cfg, POLICIES.balanced, { seed, grid: { cols: 5, rows: 4 } });
-    const b = runLife(d, cfg, POLICIES.balanced, { seed, grid: { cols: 5, rows: 4 }, saveRoundTrip: true });
-    expect(b.result).toEqual(a.result);
-    expect(JSON.stringify(serializeGame(b.state))).toBe(JSON.stringify(serializeGame(a.state)));
-  });
-
-  it('range > 0이면 실제로 결과가 달라진다 (설정이 core에 전달됨)', () => {
-    const cfg = simJson as SimConfig;
-    const a = runLife(withRange(0), cfg, POLICIES.balanced, { seed: 3, grid: { cols: 5, rows: 4 } });
-    const b = runLife(withRange(120), cfg, POLICIES.balanced, { seed: 3, grid: { cols: 5, rows: 4 } });
-    expect(b.result).not.toEqual(a.result);
-  });
-});
-
-// ── 봇 balanced 규칙 (v0.9 §5.13-7, D-028 대체) ──
-
-describe('봇 balanced: 밤에 빛나지 않은 영웅을 정화, 조합 우선', () => {
-  const cfg = simJson as SimConfig;
-  const DOG = 'companion_animal';
-  const BLANKET = 'comfort_object';
-  function night(): GameState {
-    const g = new GameState(structuredClone(base), { cols: 5, rows: 4 }, mulberry32(1), gameGeometry(5), 1);
-    g.debugForceEvent('plain');
-    g.confirmDay();
-    g.debugToNight();
-    g.grid.cells.fill(null);
-    return g;
-  }
-  const decide = (g: GameState) => POLICIES.balanced.decide({ state: g, rng: mulberry32(1), cfg });
-
-  it('밤: 빛나지 않은 영웅(같은 체인 2개 이상)이 2단계보다 먼저 손거울로', () => {
-    const g = night();
-    g.grid.cells[3] = g.newPiece(DOG, 2);
-    g.grid.cells[0] = g.newPiece(DOG, 3);
-    g.grid.cells[1] = g.newPiece(DOG, 3);
-    const a = decide(g);
-    expect(a).toMatchObject({ type: 'summon', side: 'unhappy' });
-    if (a?.type !== 'summon') return;
-    expect([0, 1]).toContain(a.cell);
-  });
-
-  it('밤 (§5.14-5): 빛나지 않은 영웅이 그 체인에 1개뿐이면 보내지 않는다 (행복한 추억 재료로 남김)', () => {
-    const g = night();
-    g.grid.cells[0] = g.newPiece(DOG, 3);
-    g.grid.cells[1] = g.newPiece(DOG, 4, { legend: 'park_walk' });
-    expect(decide(g)).toBeNull();
-    g.grid.cells[3] = g.newPiece(DOG, 2);
-    expect(decide(g)).toEqual({ type: 'summon', cell: 3, side: 'unhappy' });
-  });
-
-  it('밤: 빛나는 영웅·전설·쉬는 영웅은 보내지 않는다 (남은 2단계를 보냄)', () => {
-    const g = night();
-    g.grid.cells[0] = g.newPiece(DOG, 3, { shining: true });
-    g.grid.cells[1] = g.newPiece(DOG, 4, { legend: 'park_walk' });
-    g.grid.cells[2] = g.newPiece(DOG, 3, { restUntil: 'dusk' });
-    expect(decide(g)).toBeNull();
-    g.grid.cells[6] = g.newPiece(BLANKET, 1);
-    g.grid.cells[7] = g.newPiece(DOG, 2);
-    expect(decide(g)).toEqual({ type: 'summon', cell: 7, side: 'unhappy' });
-  });
-
-  it('조합 가능하면 즉시 조합 (머지보다 먼저)', () => {
-    const g = night();
-    g.grid.cells[0] = g.newPiece(DOG, 3, { shining: true });
-    g.grid.cells[1] = g.newPiece(BLANKET, 2);
-    g.grid.cells[5] = g.newPiece(DOG, 1);
-    g.grid.cells[6] = g.newPiece(DOG, 1);
-    const a = decide(g);
-    expect(a).toMatchObject({ type: 'drop' });
-    if (a?.type !== 'drop') return;
-    expect(g.combinePreview(a.from, a.to)?.id).toBe('park_walk');
-  });
-
-  it('와일드카드는 머지에만', () => {
-    const g = night();
-    g.grid.cells[0] = g.newPiece(WILDCARD, 0);
-    expect(decide(g)).toBeNull();
-    g.grid.cells[1] = g.newPiece(DOG, 2);
-    expect(decide(g)).toMatchObject({ type: 'drop' });
-  });
-});
-
-// ── 포탈 말풍선 (v0.9: 쉬는 중이에요, 영웅 경고는 제거) ──
-
-describe('포탈 말풍선', () => {
-  function day(): GameState {
-    const g = new GameState(structuredClone(base), { cols: 5, rows: 4 }, mulberry32(1), gameGeometry(5), 1);
-    g.debugForceEvent('plain');
-    g.confirmDay();
-    g.grid.cells.fill(null);
-    return g;
-  }
-
-  it('쉬는 조각을 창문·손거울에 올리면 "쉬는 중이에요"', () => {
-    const g = day();
-    g.grid.cells[0] = g.newPiece('companion_animal', 3, { restUntil: 'dawn' });
-    expect(portalBubble(g, 0, 'happy')).toBe('쉬는 중이에요');
-    expect(portalBubble(g, 0, 'unhappy')).toBe('쉬는 중이에요');
-  });
-
-  it('영웅을 손거울에 올려도 경고 없음 (D-028 말풍선 제거), 쉬지 않는 조각·포탈 밖은 미표시', () => {
-    const g = day();
-    g.grid.cells[0] = g.newPiece('companion_animal', 3);
-    expect(portalBubble(g, 0, 'unhappy')).toBeNull();
-    expect(portalBubble(g, 0, 'happy')).toBeNull();
-    expect(portalBubble(g, 0, null)).toBeNull();
   });
 });

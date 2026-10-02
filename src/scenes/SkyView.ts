@@ -1,4 +1,4 @@
-// 하늘 띠 (§5.11-2): 낮에는 해가 왼쪽에서 떠서 오른쪽으로 지며 웨이브 진행도를, 밤에는 달이 같은 궤적으로 남은 시간을 보여준다.
+// 하늘 띠 (§5.11-2, §5.17-10): 낮(오펜스)에는 해가 왼쪽에서 떠서 오른쪽으로 지며 남은 시간을, 밤(디펜스)에는 달이 같은 궤적으로 웨이브 진행도를 보여준다.
 // 낮 → 밤 전환 연출 1.5초: 하늘색 보간(따뜻 → 남색), 해가 지고 달이 뜸. HUD에 별도 진행 막대는 두지 않는다.
 import Phaser from 'phaser';
 import type { GameState } from '../core/game';
@@ -16,22 +16,22 @@ const SET_DROP = 40;
 
 export type SkyMode = 'day' | 'night';
 
-/** 낮 진행도: 웨이브 칸 + 칸 안 진행 (저녁 웨이브가 끝나면 1 = 해가 짐) */
+/** 낮 진행도: 지난 시간 / offense.seconds (낮 영웅이 쓰러지면 바로 1) */
 export function dayProgress(s: GameState): number {
-  const w = s.wave;
-  const n = w.wavesPerDay;
   if (s.phase !== 'day') return s.phase === 'dayStart' ? 0 : 1;
+  return 1 - Math.max(0, s.offenseTimer) / s.offenseSeconds;
+}
+
+/** 밤 진행도: 웨이브 칸 + 칸 안 진행 (마지막 웨이브가 끝나면 1 = 달이 짐) */
+export function nightProgress(s: GameState): number {
+  if (s.phase !== 'night') return s.phase === 'diary' || s.phase === 'chapterComplete' ? 1 : 0;
+  const w = s.wave;
+  const n = w.wavesPerNight;
   let inner = 0;
   if (w.phase === 'spawning') inner = w.count > 0 ? (w.spawned / w.count) * 0.8 : 0;
   else if (w.phase === 'clearing') inner = 0.9;
   else if (w.phase === 'done') return 1;
   return Math.min(1, (w.slot + inner) / n);
-}
-
-/** 밤 진행도: 지난 시간 / nightSeconds */
-export function nightProgress(s: GameState): number {
-  if (s.phase !== 'night') return s.phase === 'diary' || s.phase === 'chapterComplete' ? 1 : 0;
-  return 1 - Math.max(0, s.nightTimer) / s.nightSeconds;
 }
 
 export class SkyView {
@@ -111,11 +111,11 @@ export class SkyView {
     if (this.mode === 'day') {
       const p = skyArc(dayProgress(s));
       this.sun.setPosition(p.x, p.y);
-      this.setLabel('');
+      this.setLabel(s.phase === 'day' ? `해가 지기까지 ${Math.ceil(Math.max(0, s.offenseTimer))}초` : '');
     } else {
       const p = skyArc(nightProgress(s));
       this.moon.setPosition(p.x, p.y);
-      this.setLabel(s.phase === 'night' ? `달이 지기까지 ${Math.ceil(Math.max(0, s.nightTimer))}초` : '');
+      this.setLabel(s.phase === 'night' ? `밤 ${Math.min(s.wave.slot + 1, s.wave.wavesPerNight)}/${s.wave.wavesPerNight}웨이브` : '');
     }
   }
 

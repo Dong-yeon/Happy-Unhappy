@@ -1,4 +1,4 @@
-// 앱 층의 메타 상태: gating(C안) + 저장 키 hau_save_v2 (스펙 §5.8-1, §5.8-2).
+// 앱 층의 메타 상태: gating(C안) + 저장 키 hau_save_v3 (스펙 §5.8-1, §5.8-2).
 // core(GameState)는 gating·저장을 모른다. 이 모듈이 core(gating·save)와 platform(clock·storage)을 잇는다.
 // 저장 키 하나에 gating과 game이 함께 들어 있으므로, "gating만 저장"은 마지막으로 저장한 game을 그대로 두고 다시 쓴다.
 
@@ -9,7 +9,7 @@ import type { GridSize } from '../core/grid';
 import { mulberry32, parseSeed, randomSeed } from '../core/rng';
 import { makeSaveData, parseSave, serializeGame, type SaveGame } from '../core/save';
 import { nowIso, today } from '../platform/clock';
-import { SAVE_KEY, readKey, removeKey, writeKey } from '../platform/storage';
+import { LEGACY_SAVE_KEYS, SAVE_KEY, readKey, removeKey, writeKey } from '../platform/storage';
 import { gameGeometry } from './layout';
 
 export class SaveSession {
@@ -29,6 +29,8 @@ export class SaveSession {
    * 새 일생이면 즉시 dayStart 저장. 그 뒤 gating 지급 확인.
    */
   boot(): GameState {
+    // v2 이하 저장은 스키마가 달라 읽지 않고 지운다 (§5.17-8, hau_save_v3)
+    for (const k of LEGACY_SAVE_KEYS) if (readKey(k) !== null) removeKey(k);
     const r = parseSave(readKey(SAVE_KEY), this.data, this.size);
     let state: GameState | null = null;
     if (!r.ok) {
@@ -43,7 +45,7 @@ export class SaveSession {
       if (r.save.game) {
         try {
           const g = r.save.game;
-          state = GameState.fromSave(this.data, g, mulberry32(g.seed), gameGeometry(this.data.balance.lane.laneCap), this.size);
+          state = GameState.fromSave(this.data, g, mulberry32(g.seed), gameGeometry(this.data.balance.merge.soldierCap + 1), this.size);
           this.game = g;
         } catch (e) {
           console.warn(`[save] 복원 실패, 새 일생 — ${(e as Error).message}`);
@@ -61,7 +63,7 @@ export class SaveSession {
   /** ?seed= 가 있으면 그 시드, 없으면 새 시드로 새 일생 */
   private newState(): GameState {
     const seed = parseSeed(new URLSearchParams(window.location.search).get('seed')) ?? randomSeed(Math.random);
-    return new GameState(this.data, this.size, mulberry32(seed), gameGeometry(this.data.balance.lane.laneCap), seed);
+    return new GameState(this.data, this.size, mulberry32(seed), gameGeometry(this.data.balance.merge.soldierCap + 1), seed);
   }
 
   /** 날을 시작할 수 있는지 (dayStart에서 카드 / "내일 또 만나요") */

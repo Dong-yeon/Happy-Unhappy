@@ -1,5 +1,5 @@
 // metrics 수집·저장 (스펙 §5.10-2·3). 씬 층에서 쓴다: core 상태는 읽기만 하고, 입력·실제 시간은 씬이 넘겨준다.
-// 저장 키 hau_metrics_v2는 게임 저장(hau_save_v2)과 분리. 새 일생·저장 초기화에도 지워지지 않는다.
+// 저장 키 hau_metrics_v3는 게임 저장(hau_save_v3)과 분리. 새 일생·저장 초기화에도 지워지지 않는다.
 // localStorage 예외는 무시하고 게임을 계속한다 (platform/storage가 console.warn).
 
 import type { GameState } from '../core/game';
@@ -123,13 +123,12 @@ export class MetricsRecorder {
       realDate: realToday(),
       eventId: s.today.id,
       dayStats: structuredClone(st),
-      summons: s.summonLog.filter((r) => r.day === s.day).map((r) => ({ ...r, cell: { ...r.cell } })),
+      feeds: s.feedLog.filter((r) => r.day === s.day).map((r) => ({ ...r, cell: { ...r.cell } })),
       dropFails: { ...this.dropFails },
       dragDistance: this.dragDistance,
       realSeconds: this.dayRealSeconds + this.nightRealSeconds,
       dayRealSeconds: this.dayRealSeconds,
       nightRealSeconds: this.nightRealSeconds,
-      reserved: st.reserved,
       speedUsed: this.speedUsed,
       bypass: this.bypass,
       rating: null,
@@ -138,7 +137,6 @@ export class MetricsRecorder {
     const i = this.life.days.findIndex((d) => d.day === m.day);
     if (i >= 0) this.life.days[i] = m;
     else this.life.days.push(m);
-    this.life.growths = structuredClone(s.growthLog);
     this.data.inProgress = null;
     this.session.daysCompleted += 1;
     this.active = false;
@@ -150,7 +148,6 @@ export class MetricsRecorder {
     const s = this.state;
     this.life.chapter = s.completed === null ? null : { completed: s.completed, day: s.day, stage: s.stage };
     this.life.stats = structuredClone(s.stats);
-    this.life.growths = structuredClone(s.growthLog);
     this.life.endedAt = nowIso();
     this.data.inProgress = null;
     this.write();

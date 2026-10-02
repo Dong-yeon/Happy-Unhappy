@@ -1,26 +1,45 @@
 {
-  "version": 2,
-  "start": { "joy": 60, "shadow": 0 },
+  "version": 3,
+  "start": {
+    "joy": 60,
+    "shadow": 0,
+    "swapHeroes": false
+  },
   "grid": {
     "gridCols": 5,
     "gridRows": 4,
-    "gridPresets": [[4, 4], [5, 4], [6, 4]],
+    "gridPresets": [
+      [
+        4,
+        4
+      ],
+      [
+        5,
+        4
+      ],
+      [
+        6,
+        4
+      ]
+    ],
     "spawnCostBase": 10,
     "spawnCostStep": 2,
     "maxTier": 3,
-    "releaseRefund": 4,
-    "returnQueueCap": 6
+    "releaseRefund": 4
   },
   "lane": {
-    "laneCap": 5,
     "abyssAdvanceSpeed": 30,
     "defenseInterceptRange": 80,
     "defenseMoveSpeed": 60,
     "defenseContact": 8
   },
-  "happy": { "atk": 2, "atkInterval": 1.0, "range": 60 },
+  "happy": {
+    "atk": 2,
+    "atkInterval": 1.0,
+    "range": 60
+  },
   "wave": {
-    "wavesPerDay": 3,
+    "wavesPerNight": 3,
     "countBase": 6,
     "countStep": 2,
     "spawnInterval": 1.5,
@@ -42,16 +61,34 @@
     "bossFloorCounterMult": 1.5,
     "bossFloorWildcards": 1
   },
-  "hero": { "shineMult": 1.2 },
-  "growth": {
-    "growthPerLegend": 100,
-    "memoryBonus": 50,
-    "traitPerStack": 0.1,
-    "traitMaxStacks": 5,
-    "ageWorryMult": 1.15
+  "hero": {
+    "dmgReduceMax": 0.4,
+    "atkIntervalMin": 0.45,
+    "reviveSeconds": 8,
+    "reviveHpRatio": 0.5
   },
-  "night": {
-    "nightSeconds": 60,
+  "feed": {
+    "tierScore": [
+      1,
+      3,
+      7
+    ]
+  },
+  "buff": {
+    "healPct": 0.03,
+    "momentumAtkPct": 0.05,
+    "momentumSeconds": 6,
+    "momentumMaxStacks": 8,
+    "tier3Mult": 2
+  },
+  "merge": {
+    "soldiers": true,
+    "soldierCap": 6,
+    "soldierLifetime": 12,
+    "affinityMult": 1.5
+  },
+  "offense": {
+    "seconds": 60,
     "stallShadowPerSec": 0.3
   },
   "shadow": {
@@ -60,13 +97,24 @@
     "sinkLayerHp": 15,
     "shadowAfterBossWin": 50,
     "shadowAfterBossLose": 40,
-    "weatherThresholds": [25, 50, 75]
+    "weatherThresholds": [
+      25,
+      50,
+      75
+    ]
   },
-  "chapter": { "length": 10, "turningPoint": 5, "turningPointHpMult": 1.5, "maxDays": 20 },
+  "chapter": {
+    "length": 10,
+    "turningPoint": 5,
+    "turningPointHpMult": 1.5,
+    "maxDays": 20
+  },
   "days": {
     "dailyLimit": 2,
     "storeCap": 4,
     "morningJoyFloor": 20
   },
-  "diary": { "diarySinkThreshold": 3 }
+  "diary": {
+    "diarySinkThreshold": 3
+  }
 }

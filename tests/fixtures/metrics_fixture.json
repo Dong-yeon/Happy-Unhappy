@@ -1,5 +1,5 @@
 {
-  "version": 2,
+  "version": 3,
   "firstSeen": "2026-10-01T10:00:00.000Z",
   "sessions": [
     {
@@ -68,44 +68,6 @@
               15
             ]
           },
-          "summons": [
-            {
-              "t": 10,
-              "day": 1,
-              "side": "happy",
-              "chain": "companion_animal",
-              "tier": 1,
-              "cell": {
-                "col": 0,
-                "row": 0
-              },
-              "heldFor": 1
-            },
-            {
-              "t": 20,
-              "day": 1,
-              "side": "unhappy",
-              "chain": "comfort_object",
-              "tier": 2,
-              "cell": {
-                "col": 4,
-                "row": 1
-              },
-              "heldFor": 1
-            },
-            {
-              "t": 40,
-              "day": 1,
-              "side": "unhappy",
-              "chain": "companion_animal",
-              "tier": 3,
-              "cell": {
-                "col": 4,
-                "row": 2
-              },
-              "heldFor": 1
-            }
-          ],
           "dropFails": {
             "invalid": 2,
             "laneFull": 1,
@@ -118,7 +80,51 @@
           "rating": {
             "day": "good",
             "backflow": null
-          }
+          },
+          "feeds": [
+            {
+              "t": 10,
+              "day": 1,
+              "role": "offense",
+              "hero": "nui",
+              "chain": "companion_animal",
+              "tier": 1,
+              "points": 1,
+              "cell": {
+                "col": 0,
+                "row": 0
+              },
+              "heldFor": 1
+            },
+            {
+              "t": 20,
+              "day": 1,
+              "role": "defense",
+              "hero": "orabi",
+              "chain": "comfort_object",
+              "tier": 2,
+              "points": 3,
+              "cell": {
+                "col": 4,
+                "row": 1
+              },
+              "heldFor": 1
+            },
+            {
+              "t": 40,
+              "day": 1,
+              "role": "defense",
+              "hero": "orabi",
+              "chain": "companion_animal",
+              "tier": 3,
+              "points": 7,
+              "cell": {
+                "col": 4,
+                "row": 2
+              },
+              "heldFor": 1
+            }
+          ]
         },
         {
           "day": 2,
@@ -153,32 +159,6 @@
               140
             ]
           },
-          "summons": [
-            {
-              "t": 130,
-              "day": 2,
-              "side": "happy",
-              "chain": "companion_animal",
-              "tier": 2,
-              "cell": {
-                "col": 1,
-                "row": 0
-              },
-              "heldFor": 1
-            },
-            {
-              "t": 150,
-              "day": 2,
-              "side": "happy",
-              "chain": "comfort_object",
-              "tier": 3,
-              "cell": {
-                "col": 1,
-                "row": 1
-              },
-              "heldFor": 1
-            }
-          ],
           "dropFails": {
             "invalid": 0,
             "laneFull": 0,
@@ -191,7 +171,37 @@
           "rating": {
             "day": "meh",
             "backflow": "tense"
-          }
+          },
+          "feeds": [
+            {
+              "t": 130,
+              "day": 2,
+              "role": "offense",
+              "hero": "nui",
+              "chain": "companion_animal",
+              "tier": 2,
+              "points": 3,
+              "cell": {
+                "col": 1,
+                "row": 0
+              },
+              "heldFor": 1
+            },
+            {
+              "t": 150,
+              "day": 2,
+              "role": "offense",
+              "hero": "nui",
+              "chain": "comfort_object",
+              "tier": 3,
+              "points": 7,
+              "cell": {
+                "col": 1,
+                "row": 1
+              },
+              "heldFor": 1
+            }
+          ]
         }
       ],
       "milestoneChoices": [
@@ -203,7 +213,11 @@
       ],
       "midDayRestores": 0,
       "gatingBypassUsed": false,
-      "chapter": { "completed": true, "day": 2, "stage": 10 },
+      "chapter": {
+        "completed": true,
+        "day": 2,
+        "stage": 10
+      },
       "endingAgree": true,
       "stats": {
         "sentUpTierSum": 6,
@@ -269,20 +283,6 @@
             "gridFullSeconds": 40,
             "layerClearTimes": []
           },
-          "summons": [
-            {
-              "t": 5,
-              "day": 1,
-              "side": "unhappy",
-              "chain": "companion_animal",
-              "tier": 1,
-              "cell": {
-                "col": 0,
-                "row": 3
-              },
-              "heldFor": 1
-            }
-          ],
           "dropFails": {
             "invalid": 1,
             "laneFull": 0,
@@ -292,7 +292,23 @@
           "realSeconds": 90,
           "speedUsed": 30,
           "bypass": true,
-          "rating": null
+          "rating": null,
+          "feeds": [
+            {
+              "t": 5,
+              "day": 1,
+              "role": "defense",
+              "hero": "orabi",
+              "chain": "companion_animal",
+              "tier": 1,
+              "points": 1,
+              "cell": {
+                "col": 0,
+                "row": 3
+              },
+              "heldFor": 1
+            }
+          ]
         }
       ],
       "milestoneChoices": [],

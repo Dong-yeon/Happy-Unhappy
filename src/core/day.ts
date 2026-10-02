@@ -1,6 +1,7 @@
 // 하루 구조 (스펙 §5.1~5.3, §5.7, §5.11). Phaser 의존 없음.
-// 상태 흐름 (v0.8, D-027): dayStart ──(카드 닫기/이정표 선택)──▶ day(낮: 방어) ──(저녁 종료 → 해질녘)──▶ night(밤: 심연)
-//                          ──(달이 짐·잠들기 → 새벽)──▶ diary ──([다음 날])──▶ 다음 dayStart   1-10 정화·maxDays일째 diary 후 → chapterComplete (§5.15-1)
+// 상태 흐름 (v0.13, D-046): dayStart ──(카드 닫기/갈림길 선택)──▶ day(낮: 오펜스, 심연) ──(시간 끝·영웅 쓰러짐 → 해질녘)──▶ night(밤: 디펜스, 웨이브)
+//                          ──(마지막 웨이브 끝 → 새벽)──▶ diary ──([다음 날])──▶ 다음 dayStart
+//   1-10 정화 → 그날 밤 없이 chapterComplete / maxDays일째 diary 후 → chapterComplete(미완성) (§5.15-1, §5.17-10)
 
 import type { DailyEvent, EventEffects, GameData, Milestone, SeasonalEvent } from '../data/types';
 import { weightedPick, type Rng } from './rng';
@@ -15,75 +16,78 @@ export type DayEvent =
   | { kind: 'daily'; id: string; title: string; text: string; effects: EventEffects; diaryLine: string }
   | { kind: 'plain'; id: 'plain'; title: string; text: string; effects: EventEffects };
 
-/** 그날 기록 (그림일기·metrics). 하루 끝에 초기화, 일생 stats는 따로 누적 */
+/** 그날 기록 (이야기 한 장·metrics). 하루 끝에 초기화, 판 stats는 따로 누적 */
 export interface DayStats {
+  /** 밤(디펜스) 결과 */
   sunk: number;
   defeated: number;
-  layersCleared: number;
   /** 역류 보스가 등장한 날 1 */
   backflow: 0 | 1;
   /** 보스 결과: 처치 1 / 가라앉음 0 / 보스 없음 null */
   bossWin: 0 | 1 | null;
-  sentUp: number;
-  sentDown: number;
+  /** 낮(오펜스) 결과 */
+  layersCleared: number;
+  /** 낮 영웅이 쓰러져 낮이 일찍 끝남 1 */
+  offenseFell: 0 | 1;
+  /** 밤 영웅 쓰러짐 수 */
+  defenseFalls: number;
   joyStart: number;
   joyEnd: number;
-  /** ×1 기준 하루 길이(초) = 낮 + 밤에 흐른 게임 시간 */
+  /** ×1 기준 하루 길이(초) = 오펜스(낮) + 디펜스(밤) 게임 시간 */
   realSeconds: number;
-  /** 낮(day 단계) 게임 시간(초) */
-  daySeconds: number;
-  /** 밤(night 단계) 게임 시간(초). 잠들기로 건너뛴 시간은 들어가지 않는다 */
-  nightSeconds: number;
-  /** 낮에 손거울로 맡긴 수 (§5.11-3) */
-  reserved: number;
-  // ── M7 metrics (§5.10-1). 관찰만 한다: 게임 규칙은 이 값을 읽지 않는다 ──
-  /** 조각 생성 수 */
+  offenseSeconds: number;
+  defenseSeconds: number;
+  // ── metrics (관찰만, 규칙은 읽지 않는다) ──
   spawns: number;
   merges: number;
+  /** 전투 중 머지 (§5.17-3) */
+  battleMerges: number;
+  /** 먹이기 수·점수 (§5.17-2) */
+  feeds: number;
+  feedPoints: number;
+  /** 병사 출전 / 상한으로 막힘 ([11]-1) */
+  soldiers: number;
+  soldiersCapped: number;
   releases: number;
   /** 놓아준 조각의 단계별 개수 (길이 maxTier+1, 0 = 와일드카드) */
   releaseTiers: number[];
-  /** 귀환 대기열 상한 초과로 소실된 조각 */
+  /** 지급할 칸이 없어 사라진 조각 (선물·보너스·와일드카드) */
   lostReturns: number;
-  abyssDeaths: number;
-  /** Unhappy 멈춤 시간(초) */
+  /** 낮 영웅이 쓰러져 건너뛴 시간(초) */
   stallSeconds: number;
-  /** 낮·밤에 그리드에 빈칸이 없던 게임 시간(초) */
+  /** 그리드에 빈칸이 없던 게임 시간(초) */
   gridFullSeconds: number;
   /** 그날 층 돌파 시각 (playTime) */
   layerClearTimes: number[];
-  /** 영웅·전설 부상 (낮·밤 합, §5.13-2) */
-  injuries: number;
-  /** 조합 (§5.13-5, metrics): 시각·조합 id·재료 ("chain:tier", 빛나면 "*") */
-  combines: { t: number; recipe: string; inputs: string[] }[];
 }
 
 export function emptyDayStats(joy: number, maxTier: number): DayStats {
   return {
     sunk: 0,
     defeated: 0,
-    layersCleared: 0,
     backflow: 0,
     bossWin: null,
-    sentUp: 0,
-    sentDown: 0,
+    layersCleared: 0,
+    offenseFell: 0,
+    defenseFalls: 0,
     joyStart: joy,
     joyEnd: joy,
     realSeconds: 0,
-    daySeconds: 0,
-    nightSeconds: 0,
-    reserved: 0,
+    offenseSeconds: 0,
+    defenseSeconds: 0,
     spawns: 0,
     merges: 0,
+    battleMerges: 0,
+    feeds: 0,
+    feedPoints: 0,
+    soldiers: 0,
+    soldiersCapped: 0,
     releases: 0,
     releaseTiers: new Array<number>(maxTier + 1).fill(0),
     lostReturns: 0,
-    abyssDeaths: 0,
     stallSeconds: 0,
     gridFullSeconds: 0,
     layerClearTimes: [],
-    injuries: 0,
-    combines: [],
   };
 }
 

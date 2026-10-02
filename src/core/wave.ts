@@ -1,4 +1,4 @@
-// 하루 3웨이브 (스펙 §5.1, §5.7). M3·M4의 무한 웨이브를 대체한다.
+// 밤(디펜스) 3웨이브 (스펙 §5.1, §5.7, §5.17-10: 낮/밤 교체로 웨이브는 밤에). 클래스 이름 DayWaves는 일차 기준이라 유지.
 // 일차 d의 웨이브: 걱정 round((countBase + countStep × (d-1)) × worryMultiplier)마리(최소 1), spawnInterval 간격,
 // HP = hpBase × hpGrowthPerDay^(d-1) × worryMultiplier. 웨이브 칸 하나는 역류 보스로 교체될 수 있다 (D-021).
 //
@@ -11,7 +11,7 @@ export type SlotId = 'morning' | 'noon' | 'evening';
 export const SLOT_IDS: readonly SlotId[] = ['morning', 'noon', 'evening'];
 
 export interface WaveConfig {
-  wavesPerDay: number;
+  wavesPerNight: number;
   countBase: number;
   countStep: number;
   spawnInterval: number;
@@ -42,7 +42,7 @@ export class DayWaves {
   day = 1;
   /** 그날 걱정 수·HP 배율 (이벤트 worryMultiplier) */
   mult = 1;
-  /** 지금(또는 다음) 웨이브 칸 번호 0 ~ wavesPerDay-1 */
+  /** 지금(또는 다음) 웨이브 칸 번호 0 ~ wavesPerNight-1 */
   slot = 0;
   phase: WavePhase = 'idle';
   /** delay·gap: 다음 웨이브까지 / spawning: 다음 등장까지 남은 시간 */
@@ -57,8 +57,8 @@ export class DayWaves {
 
   constructor(private readonly cfg: WaveConfig) {}
 
-  get wavesPerDay(): number {
-    return this.cfg.wavesPerDay;
+  get wavesPerNight(): number {
+    return this.cfg.wavesPerNight;
   }
 
   /** 하루 시작: 첫 웨이브 전 대기. carriedBoss면 아침이 보스이고 대기 = 준비 시간 */
@@ -105,12 +105,12 @@ export class DayWaves {
   nextSlot(): number | null {
     if (this.phase === 'delay' || this.phase === 'gap') return this.slot;
     if (this.phase === 'spawning' || this.phase === 'clearing') {
-      return this.slot + 1 < this.cfg.wavesPerDay ? this.slot + 1 : null;
+      return this.slot + 1 < this.cfg.wavesPerNight ? this.slot + 1 : null;
     }
     return null;
   }
 
-  /** 웨이브 칸을 보스로 교체 (하루는 항상 wavesPerDay웨이브) */
+  /** 웨이브 칸을 보스로 교체 (하루는 항상 wavesPerNight웨이브) */
   markBoss(slot: number): void {
     this.bossSlots.add(slot);
   }
@@ -135,7 +135,7 @@ export class DayWaves {
     }
     if (this.phase === 'clearing') {
       if (!fieldEmpty) return 0;
-      if (this.slot + 1 < this.cfg.wavesPerDay) {
+      if (this.slot + 1 < this.cfg.wavesPerNight) {
         this.slot += 1;
         this.phase = 'gap';
         this.timer = this.cfg.waveGap;

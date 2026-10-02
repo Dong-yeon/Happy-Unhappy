@@ -1,5 +1,4 @@
 import balance from './balance.json';
-import units from './units.json';
 import chains from './chains.json';
 import monsters from './monsters.json';
 import events from './events.json';
@@ -8,9 +7,10 @@ import diary from './diary.json';
 import chapter from './chapter.json';
 import chapterComplete from './chapter_complete.json';
 import recipes from './recipes.json';
+import heroes from './heroes.json';
 import { validateGameData, type ValidationResult } from './validate';
 
-export const rawGameData = { balance, units, chains, monsters, events, days, diary, chapter, chapterComplete, recipes };
+export const rawGameData = { balance, heroes, chains, monsters, events, days, diary, chapter, chapterComplete, recipes };
 
 export function loadGameData(): ValidationResult {
   // structuredClone: 이후 디버그 오버라이드가 import된 원본을 건드리지 않도록

@@ -30,27 +30,26 @@ const data = structuredClone(rawGameData) as unknown as GameData;
 const SIZE = { cols: 5, rows: 4 };
 const NOW = '2026-10-01T00:00:00.000Z';
 
-function dayMetrics(day: number, summons = 0): DayMetrics {
+function dayMetrics(day: number, feeds = 0): DayMetrics {
   return {
     day,
     date: '2026-10-01',
     realDate: '2026-10-01',
     eventId: 'plain',
     dayStats: { ...emptyDay() },
-    summons: Array.from({ length: summons }, (_, i) => ({ t: i, day, side: 'happy' as const, chain: 'companion_animal', tier: 1, cell: { col: 0, row: 0 }, heldFor: 0, reserved: false })),
+    feeds: Array.from({ length: feeds }, (_, i) => ({ t: i, day, role: 'offense' as const, hero: 'nui', chain: 'companion_animal', tier: 1, points: 1, cell: { col: 0, row: 0 }, heldFor: 0 })),
     dropFails: { invalid: 0, laneFull: 0, wildcard: 0 },
     dragDistance: 0,
     realSeconds: 60,
     dayRealSeconds: 40,
     nightRealSeconds: 20,
-    reserved: 0,
     speedUsed: 0,
     bypass: false,
     rating: null,
   };
 }
 function emptyDay() {
-  const g = new GameState(data, SIZE, mulberry32(1), gameGeometry(data.balance.lane.laneCap));
+  const g = new GameState(data, SIZE, mulberry32(1), gameGeometry(data.balance.merge.soldierCap + 1));
   return structuredClone(g.dayStats);
 }
 
@@ -67,7 +66,7 @@ describe('상한 (500 / 20 / 1.5MB)', () => {
     expect(w).toHaveLength(2);
   });
 
-  it('직렬화 크기가 상한을 넘으면 가장 오래된 life의 summons부터 비운다', () => {
+  it('직렬화 크기가 상한을 넘으면 가장 오래된 life의 feeds부터 비운다', () => {
     expect(MAX_BYTES).toBe(1.5 * 1024 * 1024);
     const m = emptyMetrics(NOW);
     for (let l = 0; l < 3; l++) {
@@ -80,8 +79,8 @@ describe('상한 (500 / 20 / 1.5MB)', () => {
     const limit = Math.floor(full * 0.55);
     enforceLimits(m, limit);
     expect(byteLength(JSON.stringify(m))).toBeLessThanOrEqual(limit);
-    expect(m.lives[0].days.every((d) => d.summons.length === 0)).toBe(true);
-    expect(m.lives[2].days.every((d) => d.summons.length === 200)).toBe(true); // 최신 일생은 그대로
+    expect(m.lives[0].days.every((d) => d.feeds.length === 0)).toBe(true);
+    expect(m.lives[2].days.every((d) => d.feeds.length === 200)).toBe(true); // 최신 일생은 그대로
     expect(m.lives[0].days).toHaveLength(2); // 날 기록 자체는 남긴다
   });
 
@@ -95,7 +94,7 @@ describe('상한 (500 / 20 / 1.5MB)', () => {
     expect(byteLength(JSON.stringify(m))).toBeGreaterThan(MAX_BYTES);
     enforceLimits(m);
     expect(byteLength(JSON.stringify(m))).toBeLessThanOrEqual(MAX_BYTES);
-    expect(m.lives[m.lives.length - 1].days[13].summons).toHaveLength(160);
+    expect(m.lives[m.lives.length - 1].days[13].feeds).toHaveLength(160);
   });
 
   it('byteLength: UTF-8 (한글 3바이트)', () => {
@@ -164,11 +163,11 @@ describe('MetricsRecorder', () => {
   });
 
   function fresh(seed = 9): GameState {
-    return new GameState(data, SIZE, mulberry32(seed), gameGeometry(data.balance.lane.laneCap), seed);
+    return new GameState(data, SIZE, mulberry32(seed), gameGeometry(data.balance.merge.soldierCap + 1), seed);
   }
   const stored = (): MetricsData => JSON.parse(store.getItem(METRICS_KEY)!);
 
-  it('하루 끝: DayMetrics 확정 (core dayStats·그날 소환·입력 카운터), inProgress 지움, 우회일 표시', () => {
+  it('하루 끝: DayMetrics 확정 (core dayStats·그날 먹이기·입력 카운터), inProgress 지움, 우회일 표시', () => {
     const s = fresh();
     const rec = new MetricsRecorder(s, SIZE);
     s.debugForceEvent('plain');
@@ -180,7 +179,7 @@ describe('MetricsRecorder', () => {
     rec.drop(null, 5);
     rec.frame(0.5, 1);
     rec.frame(0.25, 3);
-    s.summon(s.debugGrant('companion_animal', 3)!, 'happy');
+    s.feed(s.debugGrant('companion_animal', 3)!, 'defense');
     s.debugEndDay();
     rec.endDay();
     const m = stored();
@@ -198,12 +197,12 @@ describe('MetricsRecorder', () => {
       speedUsed: 0.25,
       rating: null,
     });
-    expect(d.summons).toHaveLength(1);
+    expect(d.feeds).toHaveLength(1);
     expect(d.dayStats).toEqual(s.lastDayStats);
     expect(m.sessions[0].daysCompleted).toBe(1);
   });
 
-  it('waves가 아닐 때·하루 시작 전에는 입력·실제 시간을 세지 않는다', () => {
+  it('낮·밤이 아닐 때·하루 시작 전에는 입력·실제 시간을 세지 않는다', () => {
     const s = fresh();
     const rec = new MetricsRecorder(s, SIZE);
     rec.frame(1, 1);
@@ -226,7 +225,7 @@ describe('MetricsRecorder', () => {
     rec.beginDay(false);
     rec.drop('invalid', 10);
     // 새로고침: 저장(그날 dayStart)에서 복원 → 새 수집기
-    const restored = GameState.fromSave(data, save, mulberry32(save.seed), gameGeometry(data.balance.lane.laneCap), SIZE);
+    const restored = GameState.fromSave(data, save, mulberry32(save.seed), gameGeometry(data.balance.merge.soldierCap + 1), SIZE);
     const rec2 = new MetricsRecorder(restored, SIZE);
     expect(rec2.life.lifeId).toBe(rec.life.lifeId);
     expect(rec2.life.midDayRestores).toBe(1);
@@ -266,7 +265,7 @@ describe('MetricsRecorder', () => {
     store.setItem(METRICS_KEY, '{broken');
     const rec = new MetricsRecorder(fresh(), SIZE);
     expect(rec.data.lives).toHaveLength(1);
-    expect(stored().version).toBe(2);
+    expect(stored().version).toBe(3);
   });
 
   it('localStorage 예외가 나도 게임 진행에 영향 없음', () => {
@@ -302,7 +301,7 @@ describe('분석 스크립트 (fixture)', () => {
     expect(sections.map((s) => s.title.split(' ')[0])).toEqual(['개요', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6', '주관', '결과']);
   });
 
-  it('H1: 일생·일차·칸 열별 Unhappy 비율', () => {
+  it('H1: 일생·일차·칸 열별 밤덱 먹이기 비율 (v3: 구 Unhappy 비율)', () => {
     const s = sec('H1');
     expect(row(s, '일생 111@2026-10-01 (5x4)')).toEqual(['일생 111@2026-10-01 (5x4)', '5', '2', '40%']);
     expect(row(s, '1일차')).toEqual(['1일차', '4', '3', '75%']);
@@ -311,18 +310,18 @@ describe('분석 스크립트 (fixture)', () => {
     expect(row(s, '칸 열 4')).toEqual(['칸 열 4', '2', '2', '100%']);
   });
 
-  it('H2: 위·아래 따로 단계 분포', () => {
+  it('H2: 낮덱·밤덱 따로 먹인 단계 분포', () => {
     const s = sec('H2');
-    expect(s.header).toEqual(['쪽', '소환', '1단계', '2단계', '3단계']);
+    expect(s.header).toEqual(['덱', '먹이기', '1단계', '2단계', '3단계']);
     expect(s.rows).toEqual([
-      ['위 (창문)', '3', '33.3%', '33.3%', '33.3%'],
-      ['아래 (손거울)', '3', '33.3%', '33.3%', '33.3%'],
+      ['낮덱 (오펜스)', '3', '33.3%', '33.3%', '33.3%'],
+      ['밤덱 (디펜스)', '3', '33.3%', '33.3%', '33.3%'],
     ]);
   });
 
-  it('H3: 층 돌파 → 같은 날 다음 Unhappy 소환 (5초, 없음 1)', () => {
-    expect(sec('H3').rows).toEqual([['2', '1', '5', '5', '1']]);
-    expect(layerToNextDown(fx.data.lives[0].days)).toEqual({ gaps: [5], noNext: 1 });
+  it('H3: 층 돌파 → 같은 날 다음 낮덱 먹이기 (10초, 없음 1)', () => {
+    expect(sec('H3').rows).toEqual([['2', '1', '10', '10', '1']]);
+    expect(layerToNextDown(fx.data.lives[0].days)).toEqual({ gaps: [10], noNext: 1 });
   });
 
   it('H4: 하루 길이(배속·우회 제외), 연속 접속, 하루에 연 날 수', () => {
@@ -361,7 +360,8 @@ describe('분석 스크립트 (fixture)', () => {
       policy: 'balanced',
       options: { seeds: 2, days: 14 },
       summary: {
-        downRatio: { median: 0.5 },
+        offensePoints: { median: 10 },
+        defensePoints: { median: 10 },
         dayLength: { median: 110 },
         gridFullRatio: { mean: 0 },
         releases: { median: 0 },
@@ -375,7 +375,7 @@ describe('분석 스크립트 (fixture)', () => {
     } as unknown as PolicyReport;
     const s = compareWithBot(fx.data, bot);
     expect(s.header).toEqual(['지표', '사람', '봇']);
-    expect(s.rows.find((r) => r[0] === 'H1 Unhappy 비율')).toEqual(['H1 Unhappy 비율', '50%', '50%']);
+    expect(s.rows.find((r) => r[0].startsWith('H1 밤덱'))?.slice(1)).toEqual(['50%', '50%']);
     expect(s.rows.find((r) => r[0] === '챕터 완성률')).toEqual(['챕터 완성률', '100%', '40%']);
     expect(s.rows.find((r) => r[0] === 'H6 그리드 가득 참 비율')?.[1]).toBe('28.6%');
   });

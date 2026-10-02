@@ -1,6 +1,0 @@
-{
-  "commonSpirit": [
-    { "tier": 1, "hp": 20, "atk": 4,  "atkInterval": 1.0, "range": 40 },
-    { "tier": 2, "hp": 45, "atk": 9,  "atkInterval": 0.9, "range": 40 }
-  ]
-}

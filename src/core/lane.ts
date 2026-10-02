@@ -1,8 +1,8 @@
-// 공용 레인 전투 모듈 (스펙 §4.3, §4.3.1, §4.3.2). Phaser 의존 없음.
+// 공용 레인 전투 모듈 (스펙 §4.3, §4.3.1, §4.3.2, §5.17). Phaser 의존 없음.
 // 같은 Lane 클래스가 두 레인을 맡는다. 차이는 이동 주체와 방향, 적 종류뿐.
-//   defense (왼쪽): 적(걱정)이 위에서 내려오고, 유닛은 아래쪽 방어선에 정지
-//   abyss   (오른쪽): 적(그림자 벽)은 위쪽 끝에 고정, 유닛이 아래쪽 출발선에서 위로 전진
-//   두 레인 모두 거점 = 아래(그리드 쪽). 유닛 슬롯·쿨다운 공격(stepAttack)·사망 처리는 공용.
+//   defense (밤 디펜스): 적(걱정)이 위에서 내려오고, 영웅·병사는 방어선 근처에서 제한 이동
+//   abyss   (낮 오펜스): 적(그림자 벽)은 위쪽 끝에 고정, 영웅·병사가 출발선에서 위로 전진
+// 레인 위의 우리 편 = 그 단계의 영웅 하나 + 전투 중 머지로 나온 병사 ([11]-1). 유닛 슬롯·쿨다운 공격·사망 처리는 공용.
 //
 // 좌표: 레인 안의 논리 px. y는 아래로 증가. 전투 판정은 y축만, x는 표시와 "걱정이 누구를 때리는지"에만.
 // 한 번의 step(dt)는 고정 틱 하나. 틱 전체 순서(웨이브·그림자·역류 포함)는 GameState가 정한다.
@@ -21,7 +21,7 @@ export type Side = 'happy' | 'unhappy';
 interface SlotGeometry {
   /** 새 유닛이 설 슬롯을 고르는 기준 x (레인 가운데) */
   centerX: number;
-  /** 슬롯 x (길이 = laneCap) */
+  /** 슬롯 x (길이 = 영웅 1 + soldierCap) */
   slotXs: number[];
 }
 
@@ -131,14 +131,31 @@ export function layerBaseHp(w: WallStats, layer: number): number {
 
 // ── 레인 위의 개체 ──
 
+/** 레인 위 우리 편: 영웅 (판 내내 한 명씩, §5.17-1) / 병사 (전투 중 머지, 일회성, [11]-1) */
+export type UnitRole = 'hero' | 'soldier';
+/** shield = 걱정을 막고 층 반격을 먼저 받음 / snare = 맞힌 걱정 감속, 걱정을 막지 않음 */
+export type SoldierKind = 'shield' | 'snare';
+
 export interface Unit extends Attacker {
   id: number;
   side: Side;
+  role: UnitRole;
+  /** 영웅 id (heroes.json) / 병사의 체인 */
   chain: string;
+  /** 병사 단 (1·2). 영웅은 0 */
   tier: number;
   hp: number;
   maxHp: number;
   range: number;
+  /** 받는 피해 배율 (떡 성장 피해 감소, §5.17-2). 1 = 그대로 */
+  dmgMult: number;
+  /** 병사 종류·남은 수명(초)·수명 전체 */
+  soldier?: SoldierKind;
+  life?: number;
+  lifeMax?: number;
+  /** 올가미병: 맞힌 걱정 감속 비율·시간 */
+  slow?: number;
+  slowSeconds?: number;
   /** 슬롯 번호 (표시 x) */
   slot: number;
   x: number;
@@ -148,10 +165,11 @@ export interface Unit extends Attacker {
   arrived: boolean;
   /** defense 제한 이동: 할 일이 없어 홈(슬롯)으로 돌아가는 중 (표시용, §4.3.3) */
   returning?: boolean;
-  /** 빛나는 영웅 (§5.13-3) */
-  shining?: boolean;
-  /** 전설 추억 id (§5.13-5) */
-  legend?: string;
+}
+
+/** 걱정을 막는 유닛 (영웅·방패병). 올가미병은 막지 않는다 */
+export function blocks(u: Unit): boolean {
+  return u.soldier !== 'snare';
 }
 
 export type WorryState = 'moving' | 'stopped' | 'passing';
@@ -166,6 +184,9 @@ export interface Worry extends Attacker {
   joyReward: number;
   /** 역류 보스 (§4.3.2) */
   boss: boolean;
+  /** 올가미 감속 ([11]-1): 남은 초·비율 */
+  slowTimer: number;
+  slowMult: number;
   /** moving: 방어선 위에서 내려오는 중 / stopped: 방어선에 멈춤 / passing: 방어선을 지나 가라앉는 중 */
   state: WorryState;
 }
@@ -197,23 +218,23 @@ export type LaneEvent =
   | { type: 'worryStop'; worryId: number }
   | { type: 'attack'; attacker: AttackerRef; targetId: number; damage: number }
   | { type: 'worryDie'; worryId: number; x: number; y: number; joy: number; boss: boolean }
-  /** 방어 유닛 쓰러짐. 영웅·전설은 GameState가 부상(그리드 귀환)으로 처리 (§5.13-2) */
-  | { type: 'unitDie'; unitId: number; slot: number; chain: string; tier: number; x: number; y: number; shining?: boolean; legend?: string }
+  /** 디펜스 유닛 쓰러짐 (영웅은 GameState가 쓰러짐 → reviveSeconds 뒤 일어남, §5.17-10) */
+  | { type: 'unitDie'; unitId: number; role: UnitRole; slot: number; chain: string; tier: number; x: number; y: number }
   | { type: 'sink'; worryId: number; x: number; y: number; boss: boolean }
   // 심연 (§4.3.2)
   | { type: 'abyssArrive'; unitId: number }
   | { type: 'wallHit'; unitId: number; damage: number }
   | { type: 'counter'; unitId: number; damage: number }
-  | { type: 'abyssUnitDie'; unitId: number; slot: number; chain: string; tier: number; x: number; y: number; shining?: boolean; legend?: string };
+  | { type: 'abyssUnitDie'; unitId: number; role: UnitRole; slot: number; chain: string; tier: number; x: number; y: number };
 
 /** 이벤트를 쌓을 곳. GameState는 더 넓은 이벤트 배열을 넘긴다 */
 export interface LaneEventSink {
   push(e: LaneEvent): unknown;
 }
 
-/** 심연 step의 결과: 층 돌파가 있었으면 돌파한 층과 그 순간 살아 있던 유닛(소환 순서) */
+/** 심연 step의 결과: 층 돌파가 있었으면 돌파한 층. 유닛은 그대로 다음 층을 친다 (§5.17: 귀환 없음) */
 export interface AbyssStepResult {
-  cleared: { layer: number; units: Unit[] } | null;
+  cleared: { layer: number } | null;
 }
 
 export class Lane<K extends LaneKind = LaneKind> {
@@ -273,6 +294,8 @@ export class Lane<K extends LaneKind = LaneKind> {
       boss: stats.boss ?? false,
       cd: 0,
       state: 'moving',
+      slowTimer: 0,
+      slowMult: 0,
     };
     this.worries.push(w);
     out.push({ type: 'spawnWorry', worryId: w.id, x, boss: w.boss });
@@ -297,31 +320,58 @@ export class Lane<K extends LaneKind = LaneKind> {
   }
 
   /**
-   * 소환된 순간 쿨다운 0 → 사거리 안에 적이 있으면 다음 틱에 즉시 공격. 가득이면 null.
-   * abyss 유닛은 출발선의 빈 슬롯에서 시작한다.
+   * 레인에 올린 순간 쿨다운 0 → 사거리 안에 적이 있으면 다음 틱에 즉시 공격. 빈 슬롯이 없으면 null.
+   * abyss 유닛은 출발선의 빈 슬롯에서 시작한다. extra: 영웅·병사 표시 (role 기본 soldier)
    */
-  addUnit(id: number, side: Side, chain: string, tier: number, stats: CombatStats): Unit | null {
+  addUnit(
+    id: number,
+    side: Side,
+    chain: string,
+    tier: number,
+    stats: CombatStats,
+    extra: Partial<Pick<Unit, 'role' | 'dmgMult' | 'soldier' | 'life' | 'slow' | 'slowSeconds' | 'hp'>> = {},
+  ): Unit | null {
     const slot = this.pickSlot();
     if (slot === null) return null;
     const abyss = this.kind === 'abyss';
     const u: Unit = {
       id,
       side,
+      role: extra.role ?? 'soldier',
       chain,
       tier,
-      hp: stats.hp,
+      hp: extra.hp ?? stats.hp,
       maxHp: stats.hp,
       atk: stats.atk,
       atkInterval: stats.atkInterval,
       range: stats.range,
+      dmgMult: extra.dmgMult ?? 1,
       cd: 0,
       slot,
       x: this.geo.slotXs[slot],
       y: abyss ? (this.geo as AbyssGeometry).startY : (this.geo as LaneGeometry).lineY,
       arrived: !abyss,
     };
+    if (extra.soldier) u.soldier = extra.soldier;
+    if (extra.life !== undefined) {
+      u.life = extra.life;
+      u.lifeMax = extra.life;
+    }
+    if (extra.slow !== undefined) u.slow = extra.slow;
+    if (extra.slowSeconds !== undefined) u.slowSeconds = extra.slowSeconds;
     this.units.push(u);
     return u;
+  }
+
+  /** 병사 수 (영웅 제외) */
+  get soldierCount(): number {
+    return this.units.reduce((n, u) => n + (u.role === 'soldier' ? 1 : 0), 0);
+  }
+
+  /** 병사 수명 감소 → 다 된 병사 제거 (이벤트 없음, 귀환 없음). 제거된 병사를 돌려준다 */
+  expireSoldiers(dt: number): Unit[] {
+    for (const u of this.units) if (u.life !== undefined) u.life -= dt;
+    return removeWhere(this.units, (u) => u.life !== undefined && u.life <= EPS);
   }
 
   // ── 그림자 벽 (abyss) ──
@@ -398,7 +448,7 @@ export class Lane<K extends LaneKind = LaneKind> {
       }
     }
 
-    // 유닛의 벽 공격 (소환 순서). 벽이 이미 무너졌으면 더 치지 않는다 (헛방 없음)
+    // 유닛의 벽 공격 (레인에 오른 순서). 벽이 이미 무너졌으면 더 치지 않는다 (헛방 없음)
     for (const u of this.units) {
       if (u.hp <= 0) continue;
       if (stepAttack(u, dt, u.arrived && wall.hp > 0)) {
@@ -407,45 +457,55 @@ export class Lane<K extends LaneKind = LaneKind> {
       }
     }
 
-    // 벽의 반격: counterRange 안 유닛 중 가장 앞(y 최소, 같으면 먼저 소환). 무너진 벽은 반격하지 않음
+    // 벽의 반격: counterRange 안 유닛 중 방패병이 있으면 방패병 먼저([11]-1), 그 안에서 가장 앞(y 최소, 같으면 먼저 오른 유닛).
+    // 무너진 벽은 반격하지 않음
     let target: Unit | null = null;
     if (wall.hp > 0) {
       for (const u of this.units) {
         if (u.hp <= 0 || u.y - geo.wallY > wall.range + EPS) continue;
-        if (!target || u.y < target.y - EPS) target = u;
+        const shield = u.soldier === 'shield';
+        const tShield = target?.soldier === 'shield';
+        if (!target || (shield && !tShield) || (shield === tShield && u.y < target.y - EPS)) target = u;
       }
     }
     if (stepAttack(wall, dt, target !== null)) {
-      target!.hp -= wall.atk;
-      out.push({ type: 'counter', unitId: target!.id, damage: wall.atk });
+      const dmg = wall.atk * target!.dmgMult;
+      target!.hp -= dmg;
+      out.push({ type: 'counter', unitId: target!.id, damage: dmg });
     }
 
-    // 사망 처리: 조각 소실 (그림자는 GameState가 이벤트로)
+    // 사망 처리 (영웅 쓰러짐·병사 그림자는 GameState가 이벤트로)
     for (const u of removeWhere(this.units, (u) => u.hp <= 0)) {
-      out.push({ type: 'abyssUnitDie', unitId: u.id, slot: u.slot, chain: u.chain, tier: u.tier, x: u.x, y: u.y, ...heroicOf(u) });
+      out.push({ type: 'abyssUnitDie', unitId: u.id, role: u.role, slot: u.slot, chain: u.chain, tier: u.tier, x: u.x, y: u.y });
     }
 
-    // 층 돌파: 그 틱에 살아 있는 모든 유닛(전진 중 포함)이 귀환 대상
+    // 층 돌파: 유닛은 그대로 남아 다음 층을 친다 (귀환 없음, §5.17-5)
     if (wall.hp <= 0) {
       const layer = wall.layer;
-      const units = this.units.splice(0, this.units.length);
       this.nextLayer();
-      return { cleared: { layer, units } };
+      return { cleared: { layer } };
     }
     return { cleared: null };
+  }
+
+  /** 감속 반영 이동 거리 + 감속 시간 감소 */
+  private worryStep(w: Worry, dt: number): number {
+    const slow = w.slowTimer > EPS ? w.slowMult : 0;
+    if (w.slowTimer > 0) w.slowTimer = Math.max(0, w.slowTimer - dt);
+    return w.speed * (1 - slow) * dt;
   }
 
   /** 2. 걱정 이동 (방어선 도달 판정) */
   private moveWorries(dt: number, out: LaneEventSink): void {
     const { lineY } = this.geo as LaneGeometry;
-    const hasUnits = this.units.length > 0;
+    const hasUnits = this.units.some((u) => blocks(u));
     for (const w of this.worries) {
       if (w.state === 'stopped') {
         if (hasUnits) continue;
         // 막아서던 유닛이 모두 사라짐 → 다시 이동 (이미 방어선이므로 통과)
         w.state = 'passing';
       }
-      const ny = w.y + w.speed * dt;
+      const ny = w.y + this.worryStep(w, dt);
       if (w.state === 'moving' && ny >= lineY) {
         if (hasUnits) {
           w.y = lineY;
@@ -472,15 +532,22 @@ export class Lane<K extends LaneKind = LaneKind> {
     return best;
   }
 
-  /** 3. 유닛 공격 (소환 순서대로) → Happy */
+  /** 유닛의 한 방: 피해 + 올가미 감속 */
+  private hit(u: Unit, t: Worry, out: LaneEventSink): void {
+    t.hp -= u.atk;
+    if (u.slow !== undefined && u.slowSeconds !== undefined) {
+      t.slowMult = Math.max(t.slowTimer > EPS ? t.slowMult : 0, u.slow);
+      t.slowTimer = Math.max(t.slowTimer, u.slowSeconds);
+    }
+    out.push({ type: 'attack', attacker: { kind: 'unit', id: u.id }, targetId: t.id, damage: u.atk });
+  }
+
+  /** 3. 유닛 공격 (레인에 오른 순서대로) → Happy */
   private unitAttacks(dt: number, out: LaneEventSink): void {
     for (const u of this.units) {
       if (u.hp <= 0) continue;
       const t = this.pickWorryTarget(u.range);
-      if (stepAttack(u, dt, t !== null)) {
-        t!.hp -= u.atk;
-        out.push({ type: 'attack', attacker: { kind: 'unit', id: u.id }, targetId: t!.id, damage: u.atk });
-      }
+      if (stepAttack(u, dt, t !== null)) this.hit(u, t!, out);
     }
     const t = this.pickWorryTarget(this.happy.range);
     if (stepAttack(this.happy, dt, t !== null)) {
@@ -543,7 +610,7 @@ export class Lane<K extends LaneKind = LaneKind> {
         else if (w.y < blocker.y - EPS) w.state = 'moving';
         else continue;
       }
-      const ny = w.y + w.speed * dt;
+      const ny = w.y + this.worryStep(w, dt);
       if (w.state === 'moving') {
         if (blocker && ny >= blocker.y - EPS) {
           w.y = Math.max(w.y, blocker.y); // 막는 유닛이 더 위에 있으면 제자리 (뒤로 밀리지 않는다)
@@ -567,10 +634,7 @@ export class Lane<K extends LaneKind = LaneKind> {
         if (w.hp <= 0 || Math.abs(u.y - w.y) > u.range + EPS) continue;
         if (!t || w.y > t.y + EPS) t = w;
       }
-      if (stepAttack(u, dt, t !== null)) {
-        t!.hp -= u.atk;
-        out.push({ type: 'attack', attacker: { kind: 'unit', id: u.id }, targetId: t!.id, damage: u.atk });
-      }
+      if (stepAttack(u, dt, t !== null)) this.hit(u, t!, out);
     }
     const t = this.pickWorryTarget(this.happy.range);
     if (stepAttack(this.happy, dt, t !== null)) {
@@ -579,11 +643,11 @@ export class Lane<K extends LaneKind = LaneKind> {
     }
   }
 
-  /** x 거리가 가장 가까운 살아 있는 유닛. 같으면 먼저 소환된 유닛 */
+  /** 걱정을 막는(영웅·방패병) 살아 있는 유닛 중 x 거리가 가장 가까운 유닛. 같으면 먼저 오른 유닛 */
   private pickUnitTarget(x: number): Unit | null {
     let best: Unit | null = null;
     for (const u of this.units) {
-      if (u.hp <= 0) continue;
+      if (u.hp <= 0 || !blocks(u)) continue;
       if (!best || Math.abs(u.x - x) < Math.abs(best.x - x) - EPS) best = u;
     }
     return best;
@@ -595,8 +659,9 @@ export class Lane<K extends LaneKind = LaneKind> {
       if (w.state !== 'stopped' || w.hp <= 0) continue;
       const t = this.pickUnitTarget(w.x);
       if (stepAttack(w, dt, t !== null)) {
-        t!.hp -= w.atk;
-        out.push({ type: 'attack', attacker: { kind: 'worry', id: w.id }, targetId: t!.id, damage: w.atk });
+        const dmg = w.atk * t!.dmgMult;
+        t!.hp -= dmg;
+        out.push({ type: 'attack', attacker: { kind: 'worry', id: w.id }, targetId: t!.id, damage: dmg });
       }
     }
   }
@@ -608,7 +673,7 @@ export class Lane<K extends LaneKind = LaneKind> {
     }
     // 슬롯이 빈다. 나머지 유닛은 움직이지 않음
     for (const u of removeWhere(this.units, (u) => u.hp <= 0)) {
-      out.push({ type: 'unitDie', unitId: u.id, slot: u.slot, chain: u.chain, tier: u.tier, x: u.x, y: u.y, ...heroicOf(u) });
+      out.push({ type: 'unitDie', unitId: u.id, role: u.role, slot: u.slot, chain: u.chain, tier: u.tier, x: u.x, y: u.y });
     }
   }
 
@@ -619,14 +684,6 @@ export class Lane<K extends LaneKind = LaneKind> {
       out.push({ type: 'sink', worryId: w.id, x: w.x, y: w.y, boss: w.boss });
     }
   }
-}
-
-/** 이벤트에 실을 영웅 표시 (값이 있을 때만 키를 넣는다 — 1~2단계 이벤트 모양은 그대로) */
-function heroicOf(u: Unit): { shining?: boolean; legend?: string } {
-  const o: { shining?: boolean; legend?: string } = {};
-  if (u.shining) o.shining = true;
-  if (u.legend !== undefined) o.legend = u.legend;
-  return o;
 }
 
 /** 조건에 맞는 항목을 제자리에서 제거하고, 제거된 항목을 원래 순서대로 돌려준다 */

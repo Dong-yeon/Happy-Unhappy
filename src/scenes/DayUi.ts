@@ -1,16 +1,16 @@
 // 하루 구조 UI (§5.7, §5.8, §5.15): 이야기 장면 카드·갈림길 모달, "내일 또 만나요", 역류 준비 경고 띠, 이야기 한 장 패널,
-// 이야기책 목록(+ 펼치지 못한 날), 자라기 모달, 챕터 완성·미완성 화면.
+// 이야기책 목록(+ 펼치지 못한 날), 영웅 배정(1-1, [11]-3), 챕터 완성·미완성 화면.
 // 도형 + 텍스트만. 상태는 core(GameState)에서 읽고, 버튼은 core 메서드·hooks만 호출한다.
 import Phaser from 'phaser';
-import type { GrowthResult } from '../core/growth';
-import type { GameState } from '../core/game';
+import type { GameState, Role } from '../core/game';
 import type { ForgottenEntry } from '../core/gating';
 import type { GameData } from '../data/types';
 import { showRatings } from '../debug/gridPreset';
 import type { DayRating } from '../metrics/model';
 import { minutesUntilMidnight } from '../platform/clock';
-import { REGION, VIEW_H, VIEW_W, cellCenter, skyArc } from './layout';
-import { BRANCH_ICON, BRANCH_LABEL, recipeName, traitName, traitsLine } from './growthText';
+import { REGION, VIEW_H, VIEW_W } from './layout';
+import { chainShort } from './labels';
+import { heroName } from './laneUnits';
 import { mergeDiary } from './diaryList';
 import { Button, COLOR, text } from './ui';
 
@@ -33,6 +33,8 @@ export interface DayUiHooks {
   rate<K extends keyof DayRating>(day: number, key: K, value: DayRating[K]): void;
   endingAgree(): boolean | null;
   setEndingAgree(v: boolean): void;
+  /** 영웅 배정을 바꾼 뒤 바로 저장 (dayStart 경계) */
+  persist(): void;
 }
 
 const DAY_RATINGS: { value: NonNullable<DayRating['day']>; label: string }[] = [
@@ -44,10 +46,6 @@ const BACKFLOW_RATINGS: { value: NonNullable<DayRating['backflow']>; label: stri
   { value: 'tense', label: '긴장됐다' },
   { value: 'annoyed', label: '짜증났다' },
 ];
-
-/** 자라기 연출: 전설이 빛이 되어 해(행복한 추억)·달(정화된 추억)로 올라간다 */
-const GROWTH_LIGHT_MS = 700;
-const GROWTH_LIGHT_STAGGER = 120;
 
 /** [처음부터] 두 번 탭: 첫 탭 후 이 시간 안에 다시 눌러야 한다 */
 const RESTART_CONFIRM_MS = 3000;
@@ -103,8 +101,8 @@ export class DayUi {
   /** "내일 또 만나요"의 남은 시간 텍스트 (떠 있을 때만) */
   private waitText: Phaser.GameObjects.Text | null = null;
   private waitCheckedAt = 0;
-  /** 연출을 본 자라기 수 (복원 시점까지는 본 것으로 친다) */
-  private growthSeen: number;
+  /** 1-1 영웅 배정 화면을 이 세션에서 넘겼는지 (core가 1일차 카드를 닫으면 잠근다) */
+  private assignSeen = false;
 
   constructor(
     private readonly scene: Phaser.Scene,
@@ -117,7 +115,6 @@ export class DayUi {
     const band = scene.add.rectangle(0, 0, r.w, 22, 0x7a2e3e, 0.92).setOrigin(0);
     this.prepText = text(scene, r.w / 2, 11, '', { fontSize: '11px', color: '#ffd6de', fontStyle: 'bold' }).setOrigin(0.5);
     this.prepBand = scene.add.container(r.x, r.y + 2, [band, this.prepText]).setDepth(45).setVisible(false);
-    this.growthSeen = state.growthLog.length;
   }
 
   /** 입력 차단 중 (모달·일기장이 떠 있음) */
@@ -132,11 +129,10 @@ export class DayUi {
     if (key !== this.shownFor) {
       this.shownFor = key;
       this.closeModal();
-      const growth = s.growthLog[this.growthSeen];
-      if (growth && (s.phase === 'dayStart' || s.phase === 'chapterComplete')) this.showGrowth(growth); // 갈림길 카드·챕터 완성보다 먼저
-      else if (s.phase === 'dayStart') {
-        if (this.hooks.canOpenDay()) this.showEventCard();
-        else this.showSeeYouTomorrow();
+      if (s.phase === 'dayStart') {
+        if (!this.hooks.canOpenDay()) this.showSeeYouTomorrow();
+        else if (!s.assignmentDone && !this.assignSeen) this.showAssign(); // 1-1 카드보다 먼저 ([11]-3)
+        else this.showEventCard();
       } else if (s.phase === 'diary') this.showDiaryPanel();
       else if (s.phase === 'chapterComplete') this.showChapterComplete(s.completed);
     }
@@ -146,7 +142,7 @@ export class DayUi {
       const t = this.waitLabel();
       if (this.waitText.text !== t) this.waitText.setText(t);
     }
-    const prep = s.phase === 'day' && s.wave.inBossPrep;
+    const prep = s.phase === 'night' && s.wave.inBossPrep;
     this.prepBand.setVisible(prep);
     if (prep) this.prepText.setText(`⚠ ${this.data.monsters.backflowBoss.name}가 다가온다 · ${Math.ceil(s.wave.timer)}초`);
   }
@@ -155,7 +151,7 @@ export class DayUi {
   private phaseKey(): string {
     const s = this.state;
     const open = s.phase === 'dayStart' ? `:${this.hooks.canOpenDay()}` : '';
-    return `${s.phase}:${s.day}:${s.today.id}${open}:g${this.growthSeen}`;
+    return `${s.phase}:${s.day}:${s.today.id}${open}:a${this.assignSeen}`;
   }
 
   private closeModal(): void {
@@ -203,7 +199,7 @@ export class DayUi {
     m.text(36, e.title, { fontSize: '17px', color: '#f2c94c', fontStyle: 'bold' });
     const body = e.kind === 'plain' ? '이야기가 조용히 흘러간다.' : e.text;
     m.text(70, body, { fontSize: '12px', lineSpacing: 4 });
-    if (s.carryBackflow) m.text(milestone ? 124 : 112, `⚠ 어젯밤의 ${this.data.monsters.backflowBoss.name}가 아침에 온다 (준비 시간 있음)`, { fontSize: '10px', color: '#ff9e9e' });
+    if (s.carryBackflow) m.text(milestone ? 124 : 112, `⚠ 오늘 밤 ${this.data.monsters.backflowBoss.name}가 온다 (준비 시간 있음)`, { fontSize: '10px', color: '#ff9e9e' });
     const confirm = (choice?: string) => {
       if (this.state.confirmDay(choice).ok) {
         this.closeModal();
@@ -220,63 +216,48 @@ export class DayUi {
   }
 
   /**
-   * 자라기 연출 모달 (§5.14-2, §5.15-1): 소진된 전설이 빛이 되어 해/달로 올라가고, 갈래·양분·기억·특성을 보여준다.
-   * [자라기] 한 번이면 끝 (core는 이미 처리됨). 다음은 갈림길 카드(1-5 정화 다음 날) 또는 챕터 완성·미완성 화면.
+   * 영웅 배정 (1-1 dayStart, [11]-3): 누이·오라비를 낮덱(오펜스)·밤덱(디펜스)에 하나씩. 기본은 heroes.json(+ start.swapHeroes).
+   * 양쪽 최소 1명이라 고르는 것은 "누가 낮에 나가는가" 하나. [이대로 시작] → 이야기 장면 카드. 판 중 변경은 M8.10.
    */
-  private showGrowth(g: GrowthResult): void {
+  private showAssign(): void {
     const s = this.state;
-    const scene = this.scene;
-    const cfg = this.data.balance.growth;
-    const last = s.phase === 'chapterComplete';
-    const m = new Modal(scene, 262);
-    // 하늘의 해·달 (막 위에 다시 그린다)
-    const sunAt = skyArc(0.25);
-    const moonAt = skyArc(0.75);
-    const d = OVERLAY_DEPTH + 3;
-    const sun = scene.add.circle(sunAt.x, sunAt.y, 11, 0xffd36b).setStrokeStyle(2, 0xfff1c4).setDepth(d);
-    const moon = scene.add.circle(moonAt.x, moonAt.y, 9, 0xe8ecff).setStrokeStyle(2, 0x9fb0e0).setDepth(d);
-    m.objects.push(sun, moon);
-    const { cols, rows } = s.grid;
-    const mid = cellCenter(cols, rows, Math.floor((cols * rows) / 2));
-    g.consumed.forEach((c, i) => {
-      const from = c.cell !== null ? cellCenter(cols, rows, c.cell) : mid;
-      const to = c.kind === 'happy' ? sunAt : moonAt;
-      const light = scene.add.star(from.x, from.y, 4, 4, 9, c.kind === 'happy' ? 0xffe08a : 0xc9d4ff).setDepth(d + 1);
-      m.objects.push(light);
-      scene.tweens.add({
-        targets: light,
-        x: to.x,
-        y: to.y,
-        scale: 0.4,
-        delay: i * GROWTH_LIGHT_STAGGER,
-        duration: GROWTH_LIGHT_MS,
-        ease: 'Sine.easeIn',
-        onComplete: () => {
-          light.setVisible(false);
-          scene.tweens.add({ targets: c.kind === 'happy' ? sun : moon, scale: 1.25, yoyo: true, duration: 140 });
-        },
-      });
-    });
-    m.text(14, `${g.index}번째 자라기 · ${last ? '이야기를 덮으며' : `1-${this.data.balance.chapter.turningPoint} 전환점`}`, { fontSize: '11px', color: '#9fb4e0' });
-    m.text(32, '책장이 한 장 넘어갔다', { fontSize: '18px', color: '#f2c94c', fontStyle: 'bold' });
-    m.text(62, `${BRANCH_ICON[g.branch]}  ${BRANCH_LABEL[g.branch]}`, { fontSize: '13px', color: g.branch === 'slow' ? '#cfd6ea' : '#ffe08a' });
-    const given = g.consumed.length
-      ? `양분: 행복한 추억 ${g.happyCount} · 정화된 추억 ${g.purifiedCount}`
-      : '양분으로 줄 전설이 없었다. 그래도 아이는 자란다.';
-    m.text(90, given, { fontSize: '11px', lineSpacing: 3 });
-    m.text(112, `성장 ☀ +${g.gained.happy} · ☾ +${g.gained.unhappy}   기억 +${g.pairs} (모두 ${s.growth.memories})`, {
-      fontSize: '11px',
+    const m = new Modal(this.scene, 268);
+    m.text(16, '1-1 · 판 시작', { fontSize: '11px', color: '#9fb4e0' });
+    m.text(34, '누가 낮에 나갈까?', { fontSize: '17px', color: '#f2c94c', fontStyle: 'bold' });
+    m.text(64, '낮덱 = 해가 있는 동안 그림자 층을 정화 (오펜스)\n밤덱 = 몰려오는 무리로부터 집을 지킴 (디펜스)', {
+      fontSize: '10px',
       color: '#cfd6ea',
+      lineSpacing: 3,
     });
-    const up = Object.keys(g.traitsUp);
-    const upLine = up.length ? up.map((k) => `${traitName(this.data, k)} ${s.traits[k]}/${cfg.traitMaxStacks}`).join(' · ') : '새로 생긴 특성 없음';
-    m.text(136, `특성: ${upLine}`, { fontSize: '11px', color: '#9fe0a0', lineSpacing: 3 });
-    m.text(172, '다정함·포근함 = 낮에 / 용기·위로 = 밤에 그 계열이 강해진다', { fontSize: '9px', color: '#8a8f9e' });
-    if (!last) m.text(188, `자란 만큼 ${this.data.monsters.worry.name}도 조금 더 단단해진다`, { fontSize: '9px', color: '#8a8f9e' });
-    m.button(VIEW_W / 2, 226, 120, '자라기', () => {
-      this.growthSeen += 1;
+    const ids = [s.heroes.offense.id, s.heroes.defense.id];
+    const label = (offId: string) => {
+      const defId = ids.find((x) => x !== offId)!;
+      return `☀ 낮 ${heroName(this.data, offId)} · ☾ 밤 ${heroName(this.data, defId)}`;
+    };
+    // 영웅 기본 능력치 (heroes.json)
+    const stat = (role: Role) => {
+      const h = s.heroDef(role);
+      return `${role === 'offense' ? '☀' : '☾'} ${h.name} 체력 ${h.hp} · 공격 ${h.atk}`;
+    };
+    const info = m.text(192, '', { fontSize: '9px', color: '#8a8f9e', lineSpacing: 3 });
+    const opts = [...ids].sort().map((offId) => ({ offId, btn: null as Button | null }));
+    const mark = () => {
+      opts.forEach((o) => o.btn?.setActive(s.heroes.offense.id === o.offId));
+      info.setText(`${stat('offense')}\n${stat('defense')}`);
+    };
+    opts.forEach((o, k) => {
+      o.btn = m.button(VIEW_W / 2, 118 + k * 38, 260, label(o.offId), () => {
+        s.assignHeroes(o.offId);
+        mark();
+        this.hooks.persist();
+        this.hooks.onChange();
+      }, '11px');
+    });
+    mark();
+    m.button(VIEW_W / 2, 238, 140, '이대로 시작', () => {
+      this.assignSeen = true;
       this.closeModal();
-      this.shownFor = ''; // 다음 모달(갈림길 카드·챕터 완성)을 띄운다
+      this.shownFor = ''; // 이야기 장면 카드를 띄운다
     });
     this.modal = m;
   }
@@ -346,7 +327,7 @@ export class DayUi {
 
   /**
    * 챕터 완성 화면 (§5.15-5, D-043): 제목, 완성 문구, 조합법 카드 2장(해·달, 표시만 — 조합표에는 추가하지 않음),
-   * 기록(걸린 일수·준 전설 행복/정화·기억·앨범·특성·자라기 갈래), [이야기책] [처음부터].
+   * 기록(걸린 일수·스테이지·영웅 둘의 떡/동아줄 점수·먹이기·병사), [이야기책] [처음부터].
    * 미완성(completed false)이면 미완성 문구 + 기록, 조합법 카드 없음.
    */
   showChapterComplete(completed: boolean | null): void {
@@ -355,11 +336,8 @@ export class DayUi {
     const cc = this.data.chapterComplete;
     const done = completed === true;
     const agree = showRatings() && completed !== null;
-    const album = s.growth.album;
-    const ALBUM_ROWS = 3;
-    const albumLines = Math.min(album.length, ALBUM_ROWS) + (album.length > ALBUM_ROWS ? 1 : 0);
     const cardsH = done ? 110 : 0;
-    const recordH = 128 + albumLines * 14;
+    const recordH = 112;
     const m = new Modal(this.scene, 96 + cardsH + recordH + (agree ? 34 : 0) + 56);
     m.text(16, cc.title, { fontSize: '12px', color: '#9fb4e0' });
     const head = m.text(36, done ? cc.doneText : cc.notDoneText, { fontSize: '17px', color: done ? '#f2c94c' : '#cfd6ea', fontStyle: 'bold' });
@@ -387,24 +365,14 @@ export class DayUi {
     }
     m.text(y, `${s.day}일 동안 · 1-${s.stage}까지`, { fontSize: '11px', color: '#cfd6ea' });
     y += 20;
-    const branches = s.growth.branches.length ? s.growth.branches.map((b) => BRANCH_ICON[b]).join('   ') : '-';
-    m.text(y, `자라기  ${branches}`, { fontSize: '13px', color: '#ffe08a' });
-    y += 22;
-    const g = s.growth.given;
-    m.text(y, `양분으로 준 추억: 행복한 추억 ${g.happy} · 정화된 추억 ${g.purified}`, { fontSize: '11px' });
-    y += 18;
-    m.text(y, `기억 ${s.growth.memories}개`, { fontSize: '11px', color: '#f2c94c' });
-    y += 18;
-    album.slice(0, ALBUM_ROWS).forEach((a) => {
-      m.text(y, `${a.day}일 · ${recipeName(this.data, a.happy)} + ${recipeName(this.data, a.purified)}`, { fontSize: '10px', color: '#cfd6ea' });
-      y += 14;
-    });
-    if (album.length > ALBUM_ROWS) {
-      m.text(y, `외 ${album.length - ALBUM_ROWS}개`, { fontSize: '10px', color: '#8a8f9e' });
-      y += 14;
+    for (const role of ['offense', 'defense'] as const) {
+      const h = s.heroes[role];
+      const pts = this.data.chains.map((c) => `${chainShort(this.data, c.archetypeId)} ${h.points[c.archetypeId] ?? 0}`).join(' · ');
+      m.text(y, `${role === 'offense' ? '☀ 낮' : '☾ 밤'} ${heroName(this.data, h.id)}: ${pts}`, { fontSize: '11px', color: role === 'offense' ? '#ffe08a' : '#dfe6ff' });
+      y += 18;
     }
-    m.text(y + 4, `특성: ${traitsLine(this.data, s.traits)}`, { fontSize: '11px', color: '#9fe0a0', lineSpacing: 3 });
-    y += 44;
+    m.text(y, `먹이기 ${s.stats.feeds} · 전투 중 머지 ${s.stats.battleMerges} · 병사 ${s.stats.soldiersSpawned}`, { fontSize: '10px', color: '#9fe0a0' });
+    y += 40;
     if (agree) {
       const opts = [
         { value: true, label: '응' },
@@ -432,8 +400,8 @@ export class DayUi {
   }
 
   /**
-   * 추억 조합 도감 (§5.13-5): 조합표 전부를 처음부터 보여준다 (재료 아이콘 + 결과 이름, 만든 적 있으면 ✓).
-   * 원랜디·나랜디처럼 목표를 미리 보이게 한다.
+   * 추억 조합 도감 (§5.13-5, §5.17-6): 조합표를 보여주되 제작은 꺼져 있다 — "아직 쓰는 법을 모른다".
+   * 조합법의 역할(스킬 해금·진화·동료)은 보류 (D-045·D-047).
    */
   showRecipes(): void {
     if (this.diaryList) return;
@@ -443,12 +411,11 @@ export class DayUi {
     objs.push(scene.add.rectangle(0, 0, VIEW_W, VIEW_H, 0x0e1016, 0.96).setOrigin(0).setDepth(d).setInteractive());
     objs.push(text(scene, VIEW_W / 2, 14, '추억 조합', { fontSize: '15px', color: '#f2c94c', fontStyle: 'bold' }).setOrigin(0.5, 0).setDepth(d + 1));
     objs.push(
-      text(scene, VIEW_W / 2, 38, '✦ 빛나는 영웅(밤에 정화하면 생겨요) · ○ 빛나지 않은 영웅 · 쉬는 영웅도 재료', { fontSize: '10px', color: '#8a8f9e' })
+      text(scene, VIEW_W / 2, 38, '아직 쓰는 법을 모른다 (조합은 지금 되지 않아요)', { fontSize: '11px', color: '#ff9e6b' })
         .setOrigin(0.5, 0)
         .setDepth(d + 1),
     );
     const chains = new Map(this.data.chains.map((c) => [c.archetypeId, c]));
-    const made = this.state.stats.legendsByRecipe;
     const maxTier = this.data.balance.grid.maxTier;
     let y = 72;
     for (const r of this.data.recipes.recipes) {
@@ -470,14 +437,10 @@ export class DayUi {
       objs.push(text(scene, 166, y + 18, '→', { fontSize: '16px', color: '#f2c94c' }).setOrigin(0.5).setDepth(d + 1));
       const res = scene.add.rectangle(205, y + 18, 34, 28, 0x3b2a00).setStrokeStyle(3, 0xf2c94c).setDepth(d + 1);
       objs.push(res, text(scene, 205, y + 18, '◆', { fontSize: '13px', color: '#f2c94c' }).setOrigin(0.5).setDepth(d + 2));
-      const done = (made[r.id] ?? 0) > 0;
       objs.push(
         text(scene, 232, y + 10, r.name, { fontSize: '12px', color: '#ffe08a', fontStyle: 'bold' }).setDepth(d + 1),
         text(scene, 232, y + 25, r.kind === 'happy' ? '행복한 추억' : '정화된 추억', { fontSize: '9px', color: r.kind === 'happy' ? '#ffd36b' : '#b9c6ff' }).setDepth(d + 1),
-        text(scene, 232, y + 37, `공격 ${r.legend.atk} · 체력 ${r.legend.hp}${done ? '  ✓ 만듦' : ''}`, {
-          fontSize: '9px',
-          color: done ? '#9fe0a0' : '#8a8f9e',
-        }).setDepth(d + 1),
+        text(scene, 232, y + 37, '쓰는 법을 모름', { fontSize: '9px', color: '#8a8f9e' }).setDepth(d + 1),
       );
       y += 64;
     }

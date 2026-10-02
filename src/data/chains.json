@@ -4,15 +4,73 @@
     "world": "tale_sun_moon",
     "spawnWeight": 1,
     "color": "#E8A15A",
-    "tierNames": ["떡 한 조각", "떡 광주리", "떡 할미"],
-    "hero": { "hp": 110, "atk": 20, "atkInterval": 0.8, "range": 50 }
+    "tierNames": [
+      "떡 한 조각",
+      "떡 광주리",
+      "떡 할미"
+    ],
+    "side": "sun",
+    "growth": {
+      "maxHp": 6,
+      "dmgReduce": 0.005
+    },
+    "buff": "heal",
+    "soldier": {
+      "kind": "shield",
+      "name": "방패병",
+      "levels": [
+        {
+          "hp": 60,
+          "atk": 4,
+          "atkInterval": 1.2,
+          "range": 40
+        },
+        {
+          "hp": 140,
+          "atk": 8,
+          "atkInterval": 1.2,
+          "range": 40
+        }
+      ]
+    }
   },
   {
     "archetypeId": "comfort_object",
     "world": "tale_sun_moon",
     "spawnWeight": 1,
     "color": "#8FB8DE",
-    "tierNames": ["지푸라기", "새끼줄", "하늘 동아줄"],
-    "hero": { "hp": 150, "atk": 14, "atkInterval": 1.0, "range": 40 }
+    "tierNames": [
+      "지푸라기",
+      "새끼줄",
+      "하늘 동아줄"
+    ],
+    "side": "moon",
+    "growth": {
+      "atk": 0.8,
+      "atkIntervalPct": 0.006
+    },
+    "buff": "momentum",
+    "soldier": {
+      "kind": "snare",
+      "name": "올가미병",
+      "levels": [
+        {
+          "hp": 30,
+          "atk": 8,
+          "atkInterval": 1.0,
+          "range": 40,
+          "slow": 0.4,
+          "slowSeconds": 1.5
+        },
+        {
+          "hp": 60,
+          "atk": 16,
+          "atkInterval": 1.0,
+          "range": 40,
+          "slow": 0.4,
+          "slowSeconds": 2
+        }
+      ]
+    }
   }
 ]

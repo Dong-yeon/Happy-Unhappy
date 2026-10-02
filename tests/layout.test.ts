@@ -1,12 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import balance from '../src/data/balance.json';
+
+const SLOTS = balance.merge.soldierCap + 1;
 import {
   CORE,
+  HERO_SLOT,
+  HERO_SLOT_PAD,
   HOME,
-  PARTY_ROW,
-  PORTAL,
-  PORTAL_HIT_RADIUS,
-  PORTAL_RADIUS,
   REGION,
   RELEASE_HIT,
   RELEASE_ZONE,
@@ -28,7 +28,7 @@ import {
 } from '../src/scenes/layout';
 
 describe('레이아웃 영역 (v0.8 §5.11-2)', () => {
-  it('세로: HUD → 하늘 띠 → 땅 띠 → 포탈 받침 → 그리드 → 하단 바가 0~640을 빈틈없이 덮는다', () => {
+  it('세로: HUD → 하늘 띠 → 땅 띠 → 영웅 슬롯(구 포탈 받침) → 그리드 → 하단 바가 0~640을 빈틈없이 덮는다', () => {
     const rows = [REGION.hud, REGION.sky, REGION.ground, REGION.portalBase, REGION.grid, REGION.bottomBar];
     expect(rows[0].y).toBe(0);
     for (let i = 1; i < rows.length; i++) expect(rows[i].y).toBe(rows[i - 1].y + rows[i - 1].h);
@@ -48,11 +48,11 @@ describe('레이아웃 영역 (v0.8 §5.11-2)', () => {
 
 describe('core 좌표는 v0.7 그대로 (§5.11-2 구현 원칙)', () => {
   it('레인 기하 수치 (core·테스트·시뮬이 쓰는 값)', () => {
-    const g = gameGeometry(balance.lane.laneCap);
+    const g = gameGeometry(SLOTS);
     expect(g.defense).toMatchObject({ spawnY: 44, lineY: 348, sinkY: 364, spawnXMin: 12, spawnXMax: 164, centerX: 88, happyX: 136 });
     expect(g.abyss).toMatchObject({ startY: 348, wallY: 52, centerX: 272 });
-    expect(g.defense.slotXs).toHaveLength(balance.lane.laneCap);
-    expect(g.abyss.slotXs).toHaveLength(balance.lane.laneCap);
+    expect(g.defense.slotXs).toHaveLength(SLOTS);
+    expect(g.abyss.slotXs).toHaveLength(SLOTS);
     expect(g.defense.slotXs.every((x) => x > 0 && x < 176)).toBe(true);
     expect(g.abyss.slotXs.every((x) => x > 184 && x < 360)).toBe(true);
   });
@@ -63,7 +63,7 @@ describe('core 좌표는 v0.7 그대로 (§5.11-2 구현 원칙)', () => {
 });
 
 describe('core 좌표 → 화면 변환 (진행 축 → screenX, 옆 축 → screenY)', () => {
-  const g = gameGeometry(balance.lane.laneCap);
+  const g = gameGeometry(SLOTS);
 
   it('왕복: fromScreen(toScreen(p)) = p (두 레인)', () => {
     for (const kind of ['defense', 'abyss'] as const) {
@@ -111,47 +111,34 @@ describe('core 좌표 → 화면 변환 (진행 축 → screenX, 옆 축 → scr
   });
 });
 
-describe('포탈 (D-018)', () => {
-  it('화면 가운데 기준 좌우 대칭, 지름 48', () => {
-    expect(PORTAL_RADIUS * 2).toBe(48);
-    expect(PORTAL.happy.y).toBe(PORTAL.unhappy.y);
-    expect(VIEW_W / 2 - PORTAL.happy.x).toBe(PORTAL.unhappy.x - VIEW_W / 2);
-  });
-
-  it('포탈은 받침에 걸쳐 땅 띠 바닥과 그리드 윗변에 닿는다', () => {
-    for (const p of Object.values(PORTAL)) {
-      expect(p.y - PORTAL_RADIUS).toBeLessThanOrEqual(REGION.portalBase.y);
-      expect(p.y + PORTAL_RADIUS).toBeGreaterThanOrEqual(REGION.grid.y);
+describe('영웅 슬롯 (§5.17-9)', () => {
+  it('구 포탈 받침 안에 두 칸, 왼쪽 ☀ 낮덱 / 오른쪽 ☾ 밤덱, 겹치지 않음', () => {
+    for (const r of Object.values(HERO_SLOT)) {
+      expect(r.y).toBeGreaterThanOrEqual(REGION.portalBase.y);
+      expect(r.y + r.h).toBeLessThanOrEqual(REGION.portalBase.y + REGION.portalBase.h);
+      expect(r.x).toBeGreaterThanOrEqual(0);
+      expect(r.x + r.w).toBeLessThanOrEqual(VIEW_W);
     }
-  });
-
-  it('판정 원이 서로 겹치지 않는다', () => {
-    expect(PORTAL.unhappy.x - PORTAL.happy.x).toBeGreaterThan(PORTAL_HIT_RADIUS * 2);
-  });
-
-  it('맡긴 추억 줄 (laneCap칸)은 손거울 오른쪽, 화면 안', () => {
-    expect(PARTY_ROW.x).toBeGreaterThan(PORTAL.unhappy.x + PORTAL_RADIUS);
-    const right = PARTY_ROW.x + balance.lane.laneCap * (PARTY_ROW.cell + PARTY_ROW.gap);
-    expect(right).toBeLessThanOrEqual(VIEW_W);
+    expect(HERO_SLOT.offense.x + HERO_SLOT.offense.w).toBeLessThan(HERO_SLOT.defense.x);
   });
 });
 
 const G54 = { cols: 5, rows: 4 };
 const NONE: DropTarget = { kind: 'none' };
 const RELEASE: DropTarget = { kind: 'release' };
-const HAPPY: DropTarget = { kind: 'summon', portal: 'happy' };
-const UNHAPPY: DropTarget = { kind: 'summon', portal: 'unhappy' };
+const OFF: DropTarget = { kind: 'feed', role: 'offense' };
+const DEF: DropTarget = { kind: 'feed', role: 'defense' };
+const mid = (r: { x: number; y: number; w: number; h: number }) => ({ x: r.x + r.w / 2, y: r.y + r.h / 2 });
 
-describe('dropTarget — 우선순위: 그리드 칸 → 놓아주기 영역 → 포탈 판정 원 → 땅 띠(그 단계의 포탈) → 무효', () => {
+describe('dropTarget — 우선순위: 그리드 칸 → 놓아주기 영역 → 영웅 슬롯 → 무효 (§5.17-9)', () => {
   it('그리드 칸', () => {
     const c = cellCenter(G54.cols, G54.rows, 7);
     expect(dropTarget(G54, c.x, c.y)).toEqual({ kind: 'cell', index: 7 });
   });
 
-  it('그리드 칸이 포탈 판정 원보다 우선 (윗줄이 판정 원과 겹침)', () => {
-    const y = REGION.grid.y + 5;
-    expect(Math.hypot(0, y - PORTAL.happy.y)).toBeLessThanOrEqual(PORTAL_HIT_RADIUS);
-    expect(dropTarget(G54, PORTAL.happy.x, y).kind).toBe('cell');
+  it('그리드 칸이 슬롯 판정 여유보다 우선 (슬롯 아래 여유가 그리드 윗줄과 겹쳐도)', () => {
+    const c = cellCenter(G54.cols, G54.rows, 1);
+    expect(dropTarget(G54, c.x, REGION.grid.y + 2).kind).toBe('cell');
   });
 
   it('그리드 영역이라도 칸이 아닌 여백은 무효 (4×4 좌우 여백)', () => {
@@ -181,35 +168,26 @@ describe('dropTarget — 우선순위: 그리드 칸 → 놓아주기 영역 →
     expect(dropTarget(G54, cx, z.y + z.h + p + 1)).toEqual(NONE);
   });
 
-  it('놓아주기 판정은 그리드·포탈 판정 원과 겹치지 않는다', () => {
+  it('놓아주기 판정은 그리드·영웅 슬롯과 겹치지 않는다', () => {
     expect(RELEASE_HIT.y).toBeGreaterThanOrEqual(REGION.grid.y + REGION.grid.h);
-    for (const pt of Object.values(PORTAL)) {
-      expect(RELEASE_HIT.y - pt.y).toBeGreaterThan(PORTAL_HIT_RADIUS);
-    }
+    for (const r of Object.values(HERO_SLOT)) expect(RELEASE_HIT.y).toBeGreaterThan(r.y + r.h + HERO_SLOT_PAD);
   });
 
-  it('포탈 위와 판정 반경 안', () => {
-    expect(dropTarget(G54, PORTAL.happy.x, PORTAL.happy.y)).toEqual(HAPPY);
-    expect(dropTarget(G54, PORTAL.unhappy.x, PORTAL.unhappy.y)).toEqual(UNHAPPY);
-    expect(dropTarget(G54, PORTAL.happy.x - 30, PORTAL.happy.y)).toEqual(HAPPY);
-    expect(dropTarget(G54, PORTAL.unhappy.x + 30, PORTAL.unhappy.y)).toEqual(UNHAPPY);
+  it('영웅 슬롯 사각형 안 = 그 덱 먹이기, 위·아래 여유까지', () => {
+    expect(dropTarget(G54, mid(HERO_SLOT.offense).x, mid(HERO_SLOT.offense).y)).toEqual(OFF);
+    expect(dropTarget(G54, mid(HERO_SLOT.defense).x, mid(HERO_SLOT.defense).y)).toEqual(DEF);
+    expect(dropTarget(G54, HERO_SLOT.offense.x + 2, HERO_SLOT.offense.y - HERO_SLOT_PAD + 1)).toEqual(OFF);
+    expect(dropTarget(G54, HERO_SLOT.defense.x + HERO_SLOT.defense.w - 2, HERO_SLOT.defense.y + 2)).toEqual(DEF);
   });
 
-  it('땅 띠 전체 = 그 단계의 포탈 (낮 창문 / 밤 손거울), 낮·밤이 아니면 무효', () => {
-    expect(dropTarget(G54, 10, 200, 'happy')).toEqual(HAPPY);
-    expect(dropTarget(G54, 350, 200, 'happy')).toEqual(HAPPY);
-    expect(dropTarget(G54, 10, 200, 'unhappy')).toEqual(UNHAPPY);
-    expect(dropTarget(G54, 350, REGION.ground.y + 1, 'unhappy')).toEqual(UNHAPPY);
-    expect(dropTarget(G54, 180, 200, null)).toEqual(NONE);
-  });
-
-  it('하늘 띠·HUD·포탈 받침의 빈 곳·하단 바의 나머지는 무효', () => {
-    expect(dropTarget(G54, VIEW_W / 2, 80, 'happy')).toEqual(NONE); // 하늘
-    expect(dropTarget(G54, VIEW_W / 2, PORTAL.happy.y, 'happy')).toEqual(NONE); // 두 포탈 사이
-    expect(dropTarget(G54, 100, 10, 'happy')).toEqual(NONE); // HUD
-    expect(dropTarget(G54, 10, PORTAL.happy.y, 'happy')).toEqual(NONE); // 포탈 받침 왼쪽 끝
-    expect(dropTarget(G54, 60, 612, 'happy')).toEqual(NONE); // 조각 생성 버튼 위
-    expect(dropTarget(G54, 300, 612, 'happy')).toEqual(NONE); // 그림자 게이지 위
+  it('땅 띠(레인)·하늘·HUD·두 슬롯 사이·하단 바 나머지는 무효 (구 포탈·땅 띠 소환 없음)', () => {
+    expect(dropTarget(G54, 10, 200)).toEqual(NONE); // 땅 띠
+    expect(dropTarget(G54, 350, 200)).toEqual(NONE);
+    expect(dropTarget(G54, VIEW_W / 2, 80)).toEqual(NONE); // 하늘
+    expect(dropTarget(G54, VIEW_W / 2, mid(HERO_SLOT.offense).y)).toEqual(NONE); // 두 슬롯 사이
+    expect(dropTarget(G54, 100, 10)).toEqual(NONE); // HUD
+    expect(dropTarget(G54, 60, 612)).toEqual(NONE); // 조각 생성 버튼 위
+    expect(dropTarget(G54, 300, 612)).toEqual(NONE); // 그림자 게이지 위
   });
 });
 

@@ -4,8 +4,6 @@ import {
   applyDrop,
   createGrid,
   emptyIndices,
-  enqueueReturn,
-  flushReturnQueue,
   isPreset,
   pickChain,
   pickEmpty,
@@ -21,7 +19,7 @@ import {
   type Piece,
 } from '../src/core/grid';
 import { mulberry32 } from '../src/core/rng';
-import { PORTAL, REGION, cellAt, dropTarget } from '../src/scenes/layout';
+import { HERO_SLOT, REGION, cellAt, dropTarget } from '../src/scenes/layout';
 
 const MAX = 3;
 const presets: [number, number][] = [[4, 4], [5, 4], [6, 4]];
@@ -206,17 +204,18 @@ describe('resolveDrop / applyDrop — §4.1.1 결과표', () => {
     expect(g.cells).toEqual([a, null]);
   });
 
-  it('포탈·레인 (M3 이전): 그리드 칸이 아니므로 원위치(none)', () => {
+  it('영웅 슬롯·레인: 그리드 칸이 아니므로 그리드에서는 원위치(none). 슬롯은 먹이기, 레인은 무효 (§5.17-9)', () => {
     const g = createGrid({ cols: 5, rows: 4 }, MAX);
     const a = pc(DOG, 1);
     g.cells[0] = a;
-    for (const [x, y] of [
-      [PORTAL.happy.x, PORTAL.happy.y],
-      [PORTAL.unhappy.x, PORTAL.unhappy.y],
-      [20, REGION.ground.y + 50],
-      [340, REGION.ground.y + 50],
-    ]) {
-      expect(dropTarget(g, x, y, 'happy').kind).toBe('summon');
+    const mid = (r: { x: number; y: number; w: number; h: number }) => [r.x + r.w / 2, r.y + r.h / 2];
+    for (const [x, y, kind] of [
+      [...mid(HERO_SLOT.offense), 'feed'],
+      [...mid(HERO_SLOT.defense), 'feed'],
+      [20, REGION.ground.y + 50, 'none'],
+      [340, REGION.ground.y + 50, 'none'],
+    ] as [number, number, string][]) {
+      expect(dropTarget(g, x, y).kind).toBe(kind);
       expect(cellAt(g.cols, g.rows, x, y)).toBeNull();
       expect(applyDrop(g, 0, null)).toBe('none');
     }
@@ -333,122 +332,5 @@ describe('놓아주기', () => {
     expect(releaseAt(g, 0, 4)).toBeNull();
     expect(releaseAt(g, 1, 4)).toBeNull();
     expect(g.cells[0]).toBe(w);
-  });
-});
-
-describe('귀환 대기열 (빈 칸은 rng로 선택, D-019)', () => {
-  const CAP = 2;
-
-  it('빈 칸이 있으면 즉시 배치 (빈 칸 중 하나)', () => {
-    const g = row(pc(DOG, 1), null, null);
-    const q: Piece[] = [];
-    const p = pc(DOG, 2);
-    const r = enqueueReturn(g, q, p, CAP, mulberry32(1));
-    expect(r.queued).toBe(false);
-    expect(r.lost).toBe(0);
-    expect([1, 2]).toContain(r.placedAt);
-    expect(g.cells[r.placedAt!]).toBe(p);
-    expect(q).toEqual([]);
-  });
-
-  it('빈 칸이 없으면 대기', () => {
-    const g = row(pc(DOG, 1));
-    const q: Piece[] = [];
-    expect(enqueueReturn(g, q, pc(DOG, 2), CAP, mulberry32(1))).toEqual({ placedAt: null, queued: true, lost: 0 });
-    expect(q).toHaveLength(1);
-  });
-
-  it('대기열이 상한이면 소실 + 소실 수 1', () => {
-    const g = row(pc(DOG, 1));
-    const q: Piece[] = [];
-    const rng = mulberry32(1);
-    enqueueReturn(g, q, pc(DOG, 2), CAP, rng);
-    enqueueReturn(g, q, pc(DOG, 2), CAP, rng);
-    const r = enqueueReturn(g, q, pc(DOG, 3), CAP, rng);
-    expect(r).toEqual({ placedAt: null, queued: false, lost: 1 });
-    expect(q).toHaveLength(CAP);
-  });
-
-  it('flush: 대기열 앞에서부터 배치, 배치 칸은 빈 칸 중에서', () => {
-    const g = row(pc(DOG, 1), pc(DOG, 1), pc(DOG, 1));
-    const q: Piece[] = [];
-    const rng = mulberry32(5);
-    const first = pc(BLANKET, 2);
-    const second = pc(BLANKET, 3);
-    const third = wild();
-    for (const p of [first, second, third]) enqueueReturn(g, q, p, 5, rng);
-
-    g.cells[2] = null;
-    g.cells[0] = null;
-    const placed = flushReturnQueue(g, q, rng);
-    expect([...placed].sort()).toEqual([0, 2]);
-    expect(g.cells[placed[0]]).toBe(first);
-    expect(g.cells[placed[1]]).toBe(second);
-    expect(q).toEqual([third]);
-  });
-
-  it('대기 중인 조각이 있으면 새로 온 조각보다 먼저 배치', () => {
-    const g = row(pc(DOG, 1));
-    const q: Piece[] = [];
-    const rng = mulberry32(1);
-    const waiting = pc(BLANKET, 2);
-    enqueueReturn(g, q, waiting, CAP, rng);
-    g.cells[0] = null; // flush 없이 칸이 빈 상태
-    const late = pc(DOG, 2);
-    const r = enqueueReturn(g, q, late, CAP, rng);
-    expect(g.cells[0]).toBe(waiting);
-    expect(r.queued).toBe(true);
-    expect(q).toEqual([late]);
-  });
-
-  /** 4×4 빈 그리드에 귀환 3개 → 배치 칸 목록 */
-  function placeThree(seed: number): number[] {
-    const g = createGrid({ cols: 4, rows: 4 }, MAX);
-    const q: Piece[] = [];
-    const rng = mulberry32(seed);
-    return [0, 1, 2].map(() => enqueueReturn(g, q, pc(DOG, 2), CAP, rng).placedAt!);
-  }
-
-  it('시드 고정이면 배치 칸이 결정적 (enqueue·flush 모두)', () => {
-    expect(placeThree(42)).toEqual(placeThree(42));
-
-    const flushRun = (seed: number) => {
-      const g = createGrid({ cols: 4, rows: 4 }, MAX);
-      g.cells.fill(pc(DOG, 1));
-      const q: Piece[] = [];
-      const rng = mulberry32(seed);
-      for (let i = 0; i < 3; i++) enqueueReturn(g, q, pc(DOG, 2), 5, rng);
-      for (const i of [1, 6, 11, 14]) g.cells[i] = null;
-      return flushReturnQueue(g, q, rng);
-    };
-    expect(flushRun(7)).toEqual(flushRun(7));
-  });
-
-  it('여러 시드에서 첫 빈 칸(0번)에만 몰리지 않는다', () => {
-    const SEEDS = 400;
-    const firstPlacement = Array.from({ length: SEEDS }, (_, s) => placeThree(s + 1)[0]);
-    const atFirst = firstPlacement.filter((i) => i === 0).length;
-    // 균등이면 1/16 ≈ 6%. 행 우선이었다면 100%
-    expect(atFirst / SEEDS).toBeLessThan(0.15);
-    expect(new Set(firstPlacement).size).toBe(16);
-    // 좌우 반(열 0~1 / 2~3)도 한쪽으로 쏠리지 않음 (H1 편향)
-    const left = firstPlacement.filter((i) => i % 4 < 2).length;
-    expect(left / SEEDS).toBeGreaterThan(0.4);
-    expect(left / SEEDS).toBeLessThan(0.6);
-  });
-
-  it('flush도 첫 빈 칸에만 몰리지 않는다', () => {
-    const SEEDS = 400;
-    const hits = Array.from({ length: SEEDS }, (_, s) => {
-      const g = createGrid({ cols: 4, rows: 4 }, MAX);
-      g.cells.fill(pc(DOG, 1));
-      const q: Piece[] = [];
-      const rng = mulberry32(s + 1);
-      enqueueReturn(g, q, pc(DOG, 2), 5, rng);
-      for (const i of [0, 5, 10, 15]) g.cells[i] = null;
-      return flushReturnQueue(g, q, rng)[0];
-    });
-    expect(hits.filter((i) => i === 0).length / SEEDS).toBeLessThan(0.4);
-    expect(new Set(hits)).toEqual(new Set([0, 5, 10, 15]));
   });
 });

@@ -108,8 +108,8 @@ export class Checker {
 
 const COMBAT_KEYS = ['hp', 'atk', 'atkInterval', 'range'];
 
-function checkCombat(c: Checker, v: unknown, path: string, extra: string[] = []): Obj | undefined {
-  const o = c.obj(v, path, [...extra, ...COMBAT_KEYS]);
+function checkCombat(c: Checker, v: unknown, path: string, extra: string[] = [], optional: string[] = []): Obj | undefined {
+  const o = c.obj(v, path, [...extra, ...COMBAT_KEYS], optional);
   if (!o) return undefined;
   c.num(o.hp, `${path}.hp`, { min: 1 });
   c.num(o.atk, `${path}.atk`, { min: 0 });
@@ -120,14 +120,19 @@ function checkCombat(c: Checker, v: unknown, path: string, extra: string[] = [])
 
 function checkBalance(c: Checker, v: unknown): { maxTier?: number; maxDays?: number; chapterLength?: number } {
   const p = 'balance';
-  const b = c.obj(v, p, ['version', 'start', 'grid', 'lane', 'happy', 'wave', 'abyss', 'hero', 'growth', 'night', 'shadow', 'chapter', 'days', 'diary']);
+  const b = c.obj(v, p, ['version', 'start', 'grid', 'lane', 'happy', 'wave', 'abyss', 'hero', 'feed', 'buff', 'merge', 'offense', 'shadow', 'chapter', 'days', 'diary']);
   if (!b) return {};
-  if (b.version !== 2) c.fail(`${p}.version`, `2여야 함 (현재 ${String(b.version)})`);
-  c.nums(b.start, `${p}.start`, ['joy', 'shadow'], { min: 0 });
+  if (b.version !== 3) c.fail(`${p}.version`, `3이어야 함 (현재 ${String(b.version)})`);
+  const st = c.obj(b.start, `${p}.start`, ['joy', 'shadow', 'swapHeroes']);
+  if (st) {
+    c.num(st.joy, `${p}.start.joy`, { min: 0 });
+    c.num(st.shadow, `${p}.start.shadow`, { min: 0 });
+    c.bool(st.swapHeroes, `${p}.start.swapHeroes`);
+  }
 
   let maxTier: number | undefined;
   const g = c.obj(b.grid, `${p}.grid`, [
-    'gridCols', 'gridRows', 'gridPresets', 'spawnCostBase', 'spawnCostStep', 'maxTier', 'releaseRefund', 'returnQueueCap',
+    'gridCols', 'gridRows', 'gridPresets', 'spawnCostBase', 'spawnCostStep', 'maxTier', 'releaseRefund',
   ]);
   if (g) {
     const cols = c.num(g.gridCols, `${p}.grid.gridCols`, { int: true, min: 1 });
@@ -150,12 +155,10 @@ function checkBalance(c: Checker, v: unknown): { maxTier?: number; maxDays?: num
     c.num(g.spawnCostStep, `${p}.grid.spawnCostStep`, { min: 0 });
     maxTier = c.num(g.maxTier, `${p}.grid.maxTier`, { int: true, min: 1 });
     c.num(g.releaseRefund, `${p}.grid.releaseRefund`, { min: 0 });
-    c.num(g.returnQueueCap, `${p}.grid.returnQueueCap`, { int: true, min: 0 });
   }
 
-  const lane = c.obj(b.lane, `${p}.lane`, ['laneCap', 'abyssAdvanceSpeed', 'defenseInterceptRange', 'defenseMoveSpeed', 'defenseContact']);
+  const lane = c.obj(b.lane, `${p}.lane`, ['abyssAdvanceSpeed', 'defenseInterceptRange', 'defenseMoveSpeed', 'defenseContact']);
   if (lane) {
-    c.num(lane.laneCap, `${p}.lane.laneCap`, { int: true, min: 1 });
     c.num(lane.abyssAdvanceSpeed, `${p}.lane.abyssAdvanceSpeed`, { min: 0 });
     // 방어 유닛 제한 이동 (§4.3.3): 0이면 기존 규칙
     c.num(lane.defenseInterceptRange, `${p}.lane.defenseInterceptRange`, { min: 0 });
@@ -166,9 +169,9 @@ function checkBalance(c: Checker, v: unknown): { maxTier?: number; maxDays?: num
   const h = c.nums(b.happy, `${p}.happy`, ['atk', 'atkInterval', 'range'], { min: 0 });
   if (h) c.num(h.atkInterval, `${p}.happy.atkInterval`, { min: 0.01 });
 
-  const w = c.obj(b.wave, `${p}.wave`, ['wavesPerDay', 'countBase', 'countStep', 'spawnInterval', 'waveGap', 'dayStartDelay', 'bossPrepSeconds', 'hpGrowthPerDay']);
+  const w = c.obj(b.wave, `${p}.wave`, ['wavesPerNight', 'countBase', 'countStep', 'spawnInterval', 'waveGap', 'dayStartDelay', 'bossPrepSeconds', 'hpGrowthPerDay']);
   if (w) {
-    c.num(w.wavesPerDay, `${p}.wave.wavesPerDay`, { int: true, min: 1 });
+    c.num(w.wavesPerNight, `${p}.wave.wavesPerNight`, { int: true, min: 1 });
     c.num(w.countBase, `${p}.wave.countBase`, { int: true, min: 0 });
     c.num(w.countStep, `${p}.wave.countStep`, { min: 0 });
     c.num(w.spawnInterval, `${p}.wave.spawnInterval`, { min: 0 });
@@ -189,15 +192,32 @@ function checkBalance(c: Checker, v: unknown): { maxTier?: number; maxDays?: num
     c.num(a.counterAtkInterval, `${p}.abyss.counterAtkInterval`, { min: 0.01 });
   }
 
-  // 영웅 (v0.9, D-029)
-  c.nums(b.hero, `${p}.hero`, ['shineMult'], { min: 0 });
-  // 자라는 날 (v0.10, D-030)
-  const gr = c.nums(b.growth, `${p}.growth`, ['growthPerLegend', 'memoryBonus', 'traitPerStack', 'traitMaxStacks', 'ageWorryMult'], { min: 0 });
-  if (gr) c.num(gr.traitMaxStacks, `${p}.growth.traitMaxStacks`, { int: true, min: 0 });
+  // 영웅·먹이기·버프·병사 (§5.17, [11])
+  const hr = c.nums(b.hero, `${p}.hero`, ['dmgReduceMax', 'atkIntervalMin', 'reviveSeconds', 'reviveHpRatio'], { min: 0 });
+  if (hr) {
+    c.num(hr.dmgReduceMax, `${p}.hero.dmgReduceMax`, { max: 0.95 });
+    c.num(hr.atkIntervalMin, `${p}.hero.atkIntervalMin`, { min: 0.01 });
+    c.num(hr.reviveHpRatio, `${p}.hero.reviveHpRatio`, { min: 0.01, max: 1 });
+  }
+  const fd = c.obj(b.feed, `${p}.feed`, ['tierScore']);
+  if (fd) {
+    const ts = c.arr(fd.tierScore, `${p}.feed.tierScore`) ?? [];
+    if (maxTier !== undefined && ts.length !== maxTier) c.fail(`${p}.feed.tierScore`, `maxTier(${maxTier})개여야 함 (현재 ${ts.length})`);
+    ts.forEach((x, i) => c.num(x, `${p}.feed.tierScore[${i}]`, { min: 0 }));
+  }
+  const bf = c.nums(b.buff, `${p}.buff`, ['healPct', 'momentumAtkPct', 'momentumSeconds', 'momentumMaxStacks', 'tier3Mult'], { min: 0 });
+  if (bf) c.num(bf.momentumMaxStacks, `${p}.buff.momentumMaxStacks`, { int: true, min: 1 });
+  const mg = c.obj(b.merge, `${p}.merge`, ['soldiers', 'soldierCap', 'soldierLifetime', 'affinityMult']);
+  if (mg) {
+    c.bool(mg.soldiers, `${p}.merge.soldiers`);
+    c.num(mg.soldierCap, `${p}.merge.soldierCap`, { int: true, min: 0 });
+    c.num(mg.soldierLifetime, `${p}.merge.soldierLifetime`, { min: 0.1 });
+    c.num(mg.affinityMult, `${p}.merge.affinityMult`, { min: 0 });
+  }
 
-  // 밤 (v0.8, D-027): abyss.unhappyStallShadowPerSec → night.stallShadowPerSec
-  const n = c.nums(b.night, `${p}.night`, ['nightSeconds', 'stallShadowPerSec'], { min: 0 });
-  if (n) c.num(n.nightSeconds, `${p}.night.nightSeconds`, { min: 1 });
+  // 낮 = 오펜스 (§5.17-10, 구 night 블록)
+  const n = c.nums(b.offense, `${p}.offense`, ['seconds', 'stallShadowPerSec'], { min: 0 });
+  if (n) c.num(n.seconds, `${p}.offense.seconds`, { min: 1 });
 
   const shadowKeys = ['shadowMax', 'sinkShadow', 'sinkLayerHp', 'shadowAfterBossWin', 'shadowAfterBossLose'];
   const s = c.obj(b.shadow, `${p}.shadow`, [...shadowKeys, 'weatherThresholds']);
@@ -244,31 +264,31 @@ function checkBalance(c: Checker, v: unknown): { maxTier?: number; maxDays?: num
   return { maxTier, maxDays, chapterLength };
 }
 
-function checkUnits(c: Checker, v: unknown, maxTier: number | undefined): void {
-  const u = c.obj(v, 'units', ['commonSpirit']);
-  if (!u) return;
-  const list = c.arr(u.commonSpirit, 'units.commonSpirit', 1) ?? [];
-  const tiers = list.map((e, i) => {
-    const o = checkCombat(c, e, `units.commonSpirit[${i}]`, ['tier']);
-    return o ? c.num(o.tier, `units.commonSpirit[${i}].tier`, { int: true, min: 1 }) : undefined;
+/** heroes.json (§5.17-1): 영웅 능력치, 기본 배정 offense ≠ defense (둘 다 heroes에 있는 id) */
+function checkHeroes(c: Checker, v: unknown): void {
+  const o = c.obj(v, 'heroes', ['heroes', 'offense', 'defense']);
+  if (!o) return;
+  const list = c.arr(o.heroes, 'heroes.heroes', 2) ?? [];
+  const ids = list.map((e, i) => {
+    const h = checkCombat(c, e, `heroes.heroes[${i}]`, ['id', 'name']);
+    if (!h) return undefined;
+    c.str(h.name, `heroes.heroes[${i}].name`);
+    return c.str(h.id, `heroes.heroes[${i}].id`);
   });
-  c.unique(tiers.map((t) => (t === undefined ? undefined : String(t))), 'units.commonSpirit', 'tier');
-  // 1 ~ (maxTier-1) 단계는 공용 정령, maxTier는 영웅
-  if (maxTier !== undefined) {
-    for (let t = 1; t < maxTier; t++) {
-      if (!tiers.includes(t)) c.fail('units.commonSpirit', `${t}단계 능력치 없음`);
-    }
-    for (const t of tiers) {
-      if (t !== undefined && t >= maxTier) c.fail('units.commonSpirit', `${t}단계는 영웅 단계라 chains.hero에서 정의해야 함`);
-    }
+  c.unique(ids, 'heroes.heroes', '영웅 id');
+  const off = c.str(o.offense, 'heroes.offense');
+  const def = c.str(o.defense, 'heroes.defense');
+  for (const [k, id] of [['offense', off], ['defense', def]] as const) {
+    if (id !== undefined && !ids.includes(id)) c.fail(`heroes.${k}`, `heroes에 없는 영웅 "${id}"`);
   }
+  if (off !== undefined && off === def) c.fail('heroes.defense', 'offense와 다른 영웅이어야 함 (양쪽 최소 1명)');
 }
 
 function checkChains(c: Checker, v: unknown, maxTier: number | undefined, world: string | undefined): string[] {
   const list = c.arr(v, 'chains', 1) ?? [];
   const ids = list.map((e, i) => {
     const p = `chains[${i}]`;
-    const o = c.obj(e, p, ['archetypeId', 'world', 'spawnWeight', 'color', 'tierNames', 'hero']);
+    const o = c.obj(e, p, ['archetypeId', 'world', 'spawnWeight', 'color', 'tierNames', 'side', 'growth', 'buff', 'soldier']);
     if (!o) return undefined;
     const id = c.str(o.archetypeId, `${p}.archetypeId`);
     checkWorld(c, o.world, `${p}.world`, world);
@@ -279,7 +299,27 @@ function checkChains(c: Checker, v: unknown, maxTier: number | undefined, world:
     if (maxTier !== undefined && names.length !== maxTier) {
       c.fail(`${p}.tierNames`, `maxTier(${maxTier})개여야 함 (현재 ${names.length})`);
     }
-    checkCombat(c, o.hero, `${p}.hero`);
+    if (o.side !== 'sun' && o.side !== 'moon') c.fail(`${p}.side`, 'sun 또는 moon이어야 함');
+    if (o.buff !== 'heal' && o.buff !== 'momentum') c.fail(`${p}.buff`, 'heal 또는 momentum이어야 함');
+    const gr = c.obj(o.growth, `${p}.growth`, [], ['maxHp', 'dmgReduce', 'atk', 'atkIntervalPct']);
+    if (gr) {
+      for (const k of Object.keys(gr)) c.num(gr[k], `${p}.growth.${k}`, { min: 0 });
+      if (Object.keys(gr).length === 0) c.fail(`${p}.growth`, '오르는 능력치가 하나 이상이어야 함');
+    }
+    const so = c.obj(o.soldier, `${p}.soldier`, ['kind', 'name', 'levels']);
+    if (so) {
+      if (so.kind !== 'shield' && so.kind !== 'snare') c.fail(`${p}.soldier.kind`, 'shield 또는 snare여야 함');
+      c.str(so.name, `${p}.soldier.name`);
+      const lv = c.arr(so.levels, `${p}.soldier.levels`) ?? [];
+      // 결과 2단계 = 1단, 3단계 = 2단 → maxTier − 1 단
+      if (maxTier !== undefined && lv.length !== maxTier - 1) c.fail(`${p}.soldier.levels`, `maxTier − 1(${maxTier - 1})개여야 함 (현재 ${lv.length})`);
+      lv.forEach((l, k) => {
+        const q = `${p}.soldier.levels[${k}]`;
+        const lo = checkCombat(c, l, q, [], ['slow', 'slowSeconds']);
+        if (lo && 'slow' in lo) c.num(lo.slow, `${q}.slow`, { min: 0, max: 0.95 });
+        if (lo && 'slowSeconds' in lo) c.num(lo.slowSeconds, `${q}.slowSeconds`, { min: 0 });
+      });
+    }
     return id;
   });
   c.unique(ids, 'chains', 'archetypeId');
@@ -445,13 +485,12 @@ function checkDays(c: Checker, v: unknown, eventIds: EventIds, maxDays: number |
 }
 
 function checkDiary(c: Checker, v: unknown): void {
-  const d = c.obj(v, 'diary', ['result', 'night', 'growth', 'forgottenDay']);
+  const d = c.obj(v, 'diary', ['result', 'night', 'forgottenDay']);
   if (!d) return;
   const r = c.obj(d.result, 'diary.result', ['backflow', 'manySunk', 'default']);
   if (r) for (const k of ['backflow', 'manySunk', 'default']) if (k in r) c.strList(r[k], `diary.result.${k}`);
   const n = c.obj(d.night, 'diary.night', ['layerCleared', 'tried', 'none']);
   if (n) for (const k of ['layerCleared', 'tried', 'none']) if (k in n) c.strList(n[k], `diary.night.${k}`);
-  c.strList(d.growth, 'diary.growth');
   c.str(d.forgottenDay, 'diary.forgottenDay');
 }
 
@@ -522,7 +561,7 @@ export function validateGameData(raw: Record<keyof GameData, unknown>): Validati
   const c = new Checker();
   const { maxTier, maxDays, chapterLength } = checkBalance(c, raw.balance);
   const world = typeof (raw.chapter as Obj | null)?.world === 'string' ? ((raw.chapter as Obj).world as string) : undefined;
-  checkUnits(c, raw.units, maxTier);
+  checkHeroes(c, raw.heroes);
   const chainIds = checkChains(c, raw.chains, maxTier, world);
   checkMonsters(c, raw.monsters);
   const eventIds = checkEvents(c, raw.events, chainIds, maxTier, world);

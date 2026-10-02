@@ -5,7 +5,6 @@ import type { GameData } from '../src/data/types';
 import { emptyDayStats, resolveDayEvent, type DailyUse, type DayStats } from '../src/core/day';
 import { diaryCategory, nightCategory, pickAvoiding, writeDiary } from '../src/core/diary';
 import { GameState, type CoreEvent } from '../src/core/game';
-import { WILDCARD } from '../src/core/grid';
 import { FIXED_DT } from '../src/core/lane';
 import { mulberry32 } from '../src/core/rng';
 import { waveCount, waveHp } from '../src/core/wave';
@@ -33,7 +32,7 @@ const WITH_GIFT = (d: GameData) => {
 function fresh(edit: (d: GameData) => void = () => {}, seed = 1): GameState {
   const d = structuredClone(base);
   edit(d);
-  return new GameState(d, { cols: 5, rows: 4 }, mulberry32(seed), gameGeometry(d.balance.lane.laneCap));
+  return new GameState(d, { cols: 5, rows: 4 }, mulberry32(seed), gameGeometry(d.balance.merge.soldierCap + 1));
 }
 
 function ticks(g: GameState, n: number): CoreEvent[] {
@@ -60,7 +59,7 @@ const ofType = <T extends CoreEvent['type']>(es: CoreEvent[], t: T) =>
   es.filter((e): e is Extract<CoreEvent, { type: T }> => e.type === t);
 
 describe('상태 흐름', () => {
-  it('dayStart에서 시간 정지 → 카드 닫으면 day → 저녁 종료 후 night → 달이 지면 diary → 다음 날', () => {
+  it('dayStart에서 시간 정지 → 카드 닫으면 day(오펜스) → 해질녘 → night(디펜스) → 마지막 웨이브 뒤 diary → 다음 날 (§5.17-10)', () => {
     const g = fresh();
     expect(g.phase).toBe('dayStart');
     ticks(g, 600);
@@ -103,16 +102,16 @@ describe('상태 흐름', () => {
     expect(g.nextDay()).toBe(false);
   });
 
-  it('하루 웨이브 수는 항상 3 (보스로 교체돼도)', () => {
+  it('밤 웨이브 수는 항상 3 (보스로 교체돼도)', () => {
     const g = fresh((d) => (d.balance.lane.abyssAdvanceSpeed = 0));
     begin(g);
-    g.summon(g.debugGrant(DOG, 1)!, 'unhappy'); // 멈춤으로 인한 그림자 방지
-    g.debugScheduleBackflow(); // 아침 칸 → 보스
+    g.debugScheduleBackflow(); // 낮에 예약 → 오늘 밤 첫 웨이브가 보스
+    g.debugToNight();
     const es = runDay(g);
     const bossSpawns = ofType(es, 'spawnWorry').filter((e) => e.boss).length;
     const normal = ofType(es, 'spawnWorry').filter((e) => !e.boss).length;
     expect(bossSpawns).toBe(1);
-    expect(normal).toBe(waveCount({ ...W, hpBase: 1 }, 1) * 2); // 낮·저녁
+    expect(normal).toBe(waveCount({ ...W, hpBase: 1 }, 1) * 2); // 2·3웨이브
   });
 });
 
@@ -121,11 +120,13 @@ describe('웨이브: 일차 기준 수·HP, worryMultiplier', () => {
     // 가라앉음·멈춤으로 역류가 와서 웨이브 칸이 보스로 바뀌지 않게 그림자 증가를 끈다
     const g = fresh((d) => {
       d.balance.shadow.sinkShadow = 0;
-      d.balance.night.stallShadowPerSec = 0;
+      d.balance.offense.stallShadowPerSec = 0;
+      d.balance.abyss.abyssDeathShadow = 0;
+      d.balance.abyss.layerHpBase = 1e9; // 낮에 층을 넘지 않게 (넘으면 그림자가 줄어 결과가 흔들릴 수 있음)
     });
     g.debugGotoDay(4);
     begin(g);
-    const es = runDay(g, 3000); // 방어 없음: Happy 거점 혼자 막으므로 하루가 길다
+    const es = runDay(g, 3000);
     expect(g.phase).toBe('diary');
     const spawns = ofType(es, 'spawnWorry').filter((e) => !e.boss);
     expect(spawns).toHaveLength(waveCount({ ...W, hpBase: 1 }, 4) * 3);
@@ -134,6 +135,7 @@ describe('웨이브: 일차 기준 수·HP, worryMultiplier', () => {
   it('worryMultiplier는 수와 HP 모두에 곱한다 (넘어져 다친 날 ×1.4)', () => {
     const g = fresh();
     begin(g, 'scraped_knee');
+    g.debugToNight(); // 웨이브는 밤 (§5.17-10)
     ticks(g, 60 * W.dayStartDelay + 1);
     const w = g.defense.worries[0];
     expect(w.maxHp).toBeCloseTo(waveHp({ ...W, hpBase: base.monsters.worry.hpBase }, 1, 1.4), 9);
@@ -160,16 +162,16 @@ describe('하루 시작 처리', () => {
     const g = fresh(WITH_GIFT);
     const es = begin(g, 'gift');
     const [fp] = ofType(es, 'freePiece');
-    expect(fp.ret.piece).toMatchObject({ chain: DOG, tier: 2 });
-    expect(g.grid.cells[fp.ret.placedAt!]).toBe(fp.ret.piece);
+    expect(fp.grant.piece).toMatchObject({ chain: DOG, tier: 2 });
+    expect(g.grid.cells[fp.grant.placedAt!]).toBe(fp.grant.piece);
   });
 
-  it('freePieces: 칸이 없으면 귀환 대기열 규칙', () => {
+  it('freePieces: 칸이 없으면 사라진다 (귀환 대기열 없음, §5.17-5)', () => {
     const g = fresh(WITH_GIFT);
     while (g.debugGrant(BLANKET, 1) !== null);
     const es = begin(g, 'gift');
-    expect(ofType(es, 'freePiece')[0].ret).toMatchObject({ placedAt: null, queued: true });
-    expect(g.returnQueue).toHaveLength(1);
+    expect(ofType(es, 'freePiece')[0].grant).toMatchObject({ placedAt: null, lost: true });
+    expect(g.lostReturns).toBe(1);
   });
 
   it('chainWeight가 조각 생성 확률에 반영 (비 오는 날: 담요 ×2 → 약 2/3)', () => {
@@ -210,75 +212,57 @@ describe('이정표', () => {
     expect(g.flags).toEqual(['avoid']);
   });
 
-  it('Happy 선택의 그림자로 가득 차면 역류 예약 (남은 칸 = 아침)', () => {
+  it('해 쪽 선택의 그림자로 가득 차면 역류 예약 → 오늘 밤 첫 웨이브 (§5.17-10)', () => {
     const g = fresh();
     g.debugSetShadow(base.balance.shadow.shadowMax - 5);
     const es = begin(g, 'first_tooth', 'happy');
-    expect(ofType(es, 'backflowPending')).toEqual([{ type: 'backflowPending', slot: 'morning' }]);
+    expect(ofType(es, 'backflowPending')).toEqual([{ type: 'backflowPending', slot: 'tonight' }]);
+    expect(ofType(es, 'dayBegin')[0].bossTonight).toBe(true);
   });
 
-  it('Unhappy가 맡는다: 기쁨 −(0 미만 불가), flag face, 층 남은 HP × (1 − reduce)는 그날 밤(해질녘)에 1회', () => {
+  it('달 쪽 선택: 기쁨 −(0 미만 불가), flag face, 현재 층 남은 HP × (1 − reduce)는 오늘 낮(바로)에 1회', () => {
     const g = fresh((d) => (d.balance.days.morningJoyFloor = 0)); // 바닥은 따로 테스트
     g.joy = 5;
     const hp = g.abyss.wall.hp;
     begin(g, 'first_tooth', 'unhappy');
     expect(g.joy).toBe(0);
     expect(g.flags).toEqual(['face']);
-    expect(g.abyss.wall.hp).toBe(hp); // 낮에는 아직
-    g.debugToNight();
     expect(g.abyss.wall.hp).toBeCloseTo(hp * (1 - unhappy.faceLayerHpReduce!), 9);
-    ticks(g, 120);
+    g.debugToNight();
     expect(g.abyss.wall.hp).toBeCloseTo(hp * (1 - unhappy.faceLayerHpReduce!), 9); // 다시 줄지 않음
   });
 
-  it('face: 그날 밤 첫 층 돌파 때만 귀환 조각 +1 (첫 비영웅 체인 1단계)', () => {
+  it('face: 그날 첫 층 돌파 때만 조각 +1 (1단계, 빈 칸에)', () => {
     const g = fresh();
     begin(g, 'first_tooth', 'unhappy');
-    g.debugToNight();
-    g.summon(g.debugGrant(DOG, 3)!, 'unhappy');
-    g.summon(g.debugGrant(BLANKET, 2)!, 'unhappy');
     g.debugBreakLayer();
     const [c1] = ofType(ticks(g, 1), 'layerClear');
-    expect(c1.returns.map((r) => [r.piece.chain, r.piece.tier])).toEqual([
-      [DOG, 3], // 빛나는 영웅 (v0.9)
-      [BLANKET, 3],
-      [BLANKET, 1], // 보너스
-    ]);
-    g.summon(g.debugGrant(DOG, 1)!, 'unhappy');
+    expect(c1.bonus).toHaveLength(1);
+    expect(c1.bonus[0].piece.tier).toBe(1);
+    expect(g.grid.cells[c1.bonus[0].placedAt!]).toBe(c1.bonus[0].piece);
     g.debugBreakLayer();
     const [c2] = ofType(ticks(g, 1), 'layerClear');
-    expect(c2.returns).toHaveLength(1); // 두 번째 돌파에는 없음
-  });
-
-  it('face: 돌파 유닛이 영웅뿐이면 보너스는 와일드카드 (영웅은 빛나는 영웅으로)', () => {
-    const g = fresh();
-    begin(g, 'first_tooth', 'unhappy');
-    g.debugToNight();
-    g.summon(g.debugGrant(DOG, 3)!, 'unhappy');
-    g.debugBreakLayer();
-    const [c] = ofType(ticks(g, 1), 'layerClear');
-    expect(c.returns.map((r) => r.piece.chain)).toEqual([DOG, WILDCARD]);
-    expect(c.returns[0].piece.shining).toBe(true);
+    expect(c2.bonus).toHaveLength(0); // 두 번째 돌파에는 없음
   });
 });
 
-describe('역류의 시점 (D-021)', () => {
-  /** 심연 유닛 1기(제자리)로 멈춤을 막는다 */
-  function calm(): GameState {
+describe('역류의 시점 (D-021, §5.17-10)', () => {
+  /** 낮을 바로 끝내고 밤으로 (Happy 공격 0, 디펜스 영웅이 걱정을 막으므로 웨이브가 이어진다) */
+  function night(edit: (d: GameData) => void = () => {}): GameState {
     const g = fresh((d) => {
-      d.balance.lane.abyssAdvanceSpeed = 0;
       d.balance.happy.atk = 0;
+      edit(d);
     });
     begin(g);
-    g.summon(g.debugGrant(DOG, 1)!, 'unhappy');
+    g.debugToNight();
     return g;
   }
   function untilSlot(g: GameState, slot: number) {
     for (let k = 0; k < 60 * 300 && !(g.wave.slot === slot && g.wave.active); k++) g.tick(FIXED_DT);
   }
 
-  it('낮 도중 예약 → 저녁 웨이브가 보스', () => {
-    const g = calm();
+  it('밤 도중 예약 → 남은 다음 웨이브 칸이 보스', () => {
+    const g = night();
     untilSlot(g, 1);
     g.debugScheduleBackflow();
     expect(g.wave.bossSlots.has(2)).toBe(true);
@@ -287,142 +271,77 @@ describe('역류의 시점 (D-021)', () => {
     expect(g.bossLog.at(-1)).toMatchObject({ day: 1, slot: 'evening', prep: false });
   });
 
-  it('저녁 도중 예약 → 다음 날 아침 보스 + 준비 시간(bossPrepSeconds)', () => {
-    const g = calm();
-    untilSlot(g, 2);
+  it('낮에 예약 → 그날 밤 첫 웨이브 보스 + 준비 시간(bossPrepSeconds)', () => {
+    const g = fresh();
+    begin(g);
     const es: CoreEvent[] = [];
     g.debugScheduleBackflow();
     es.push(...g.tick(0));
-    expect(ofType(es, 'backflowPending')).toEqual([{ type: 'backflowPending', slot: 'nextMorning' }]);
+    expect(ofType(es, 'backflowPending')).toEqual([{ type: 'backflowPending', slot: 'tonight' }]);
     expect(g.carryBackflow).toBe(true);
-    runDay(g);
-    g.nextDay();
-    const begun = begin(g);
-    expect(ofType(begun, 'dayBegin')[0].bossMorning).toBe(true);
+    g.debugToNight();
     expect(g.wave.inBossPrep).toBe(true);
-    // 준비 시간 동안 조각 생성·소환 가능, 보스는 아직
+    // 준비 시간 동안 조각 생성 가능, 보스는 아직
     ticks(g, 60 * W.bossPrepSeconds - 2);
     expect(g.defense.worries).toHaveLength(0);
     expect(g.spawn()).not.toBeNull();
     ticks(g, 3);
     expect(g.wave.isBoss).toBe(true);
-    expect(g.bossLog.at(-1)).toMatchObject({ day: 2, slot: 'morning', prep: true });
+    expect(g.bossLog.at(-1)).toMatchObject({ day: 1, slot: 'morning', prep: true });
+  });
+
+  it('밤 마지막 웨이브 도중 예약 → 다음 밤 첫 웨이브 보스', () => {
+    const g = night();
+    untilSlot(g, 2);
+    g.debugScheduleBackflow();
+    expect(ofType(g.tick(0), 'backflowPending')).toEqual([{ type: 'backflowPending', slot: 'nextNight' }]);
+    runDay(g);
+    g.nextDay();
+    begin(g);
+    expect(g.wave.inBossPrep).toBe(false); // 낮에는 웨이브가 없다
+    g.debugToNight();
+    expect(g.wave.inBossPrep).toBe(true);
   });
 
   it('보스 등장 진단 기록 필드', () => {
-    const g = calm();
-    g.summon(g.debugGrant(DOG, 2)!, 'happy');
+    const g = fresh();
+    begin(g);
     g.debugScheduleBackflow();
-    ticks(g, 60 * W.dayStartDelay + 1);
+    g.debugToNight();
+    ticks(g, 60 * W.bossPrepSeconds + 1);
     const rec = g.bossLog[0];
-    expect(rec).toMatchObject({
-      day: 1,
-      slot: 'morning',
-      prep: false,
-      defenseUnits: 1,
-      defenseAvgTier: 2,
-      abyssUnits: 0, // 낮에는 심연 레인이 돌지 않는다 (맡긴 조각은 nightParty)
-      shadowBefore: base.balance.shadow.shadowMax,
-      win: null,
-    });
+    expect(rec).toMatchObject({ day: 1, slot: 'morning', prep: true, defenseUnits: 1, heroUp: true, shadowBefore: base.balance.shadow.shadowMax, win: null });
     expect(rec.gridPieces).toBe(g.grid.cells.filter((c) => c !== null).length);
   });
 });
 
-describe('하루 끝 처리 (D-022: 방어 유닛도 귀환)', () => {
-  it('방어 귀환 → 심연 귀환 → 일기 순서, dayStats 초기화, 그리드·그림자·층은 유지', () => {
-    const g = fresh((d) => (d.balance.lane.abyssAdvanceSpeed = 0));
-    begin(g);
-    g.summon(g.debugGrant(DOG, 3)!, 'happy'); // 영웅이면 저녁까지 살아남는다
-    g.summon(g.debugGrant(BLANKET, 2)!, 'unhappy');
-    g.summon(g.debugGrant(DOG, 3)!, 'unhappy');
-    g.abyss.addExtraHp(7);
-    const es = runDay(g);
-    const order = es
-      .filter((e) => e.type === 'dayReturn' || e.type === 'dayEnd')
-      .map((e) => (e.type === 'dayReturn' ? `return:${e.side}` : e.type));
-    expect(order).toEqual(['return:happy', 'return:unhappy', 'dayEnd']);
-    expect(ofType(es, 'disband' as CoreEvent['type'])).toEqual([]); // 해산 없음
-    expect(g.defense.units).toEqual([]);
-    expect(g.abyss.units).toEqual([]);
-    const [def, aby] = ofType(es, 'dayReturn');
-    expect(def.returns.map((r) => [r.piece.chain, r.piece.tier])).toEqual([[DOG, 3]]);
-    expect(aby.returns.map((r) => [r.piece.chain, r.piece.tier])).toEqual([
-      [BLANKET, 2],
-      [DOG, 3], // 영웅도 단계 그대로
-    ]);
-    // 층 진행도 유지: 하루 끝에 초기화되지 않음 (그날 가라앉음분까지 누적)
-    expect(g.abyss.wall.extraHp).toBe(7 + g.lastDayStats!.sunk * base.balance.shadow.sinkLayerHp);
-    expect(g.dayStats).toMatchObject({ sunk: 0, defeated: 0, sentUp: 0, realSeconds: 0 });
-    expect(g.lastDayStats!.sentUp).toBe(1);
-    expect(g.lastDayStats!.realSeconds).toBeGreaterThan(30);
-  });
-
-  it('살아남은 방어 유닛은 단계 그대로 귀환 (성장 없음), 다친 유닛도 같은 조각', () => {
+describe('하루 끝 처리 (§5.17-5: 귀환 없음)', () => {
+  it('해질녘·새벽에 레인 우리 편은 물러난다 (조각으로 돌아오지 않음), 그리드·그림자·층은 유지', () => {
     const g = fresh();
     begin(g);
-    const r1 = g.summon(g.debugGrant(DOG, 1)!, 'happy');
-    g.summon(g.debugGrant(BLANKET, 2)!, 'happy');
-    if (r1.ok) r1.unit!.hp = 1; // 다쳐 있어도
-    g.debugEndDay();
-    const [def] = ofType(g.tick(0), 'dayReturn');
-    expect(def.side).toBe('happy');
-    expect(def.returns.map((r) => [r.piece.chain, r.piece.tier])).toEqual([
-      [DOG, 1],
-      [BLANKET, 2],
-    ]);
-    for (const r of def.returns) expect(g.grid.cells[r.placedAt!]).toBe(r.piece);
+    const before = g.grid.cells.filter((c) => c !== null).length;
+    g.abyss.addExtraHp(7);
+    expect(g.abyss.units.map((u) => u.role)).toEqual(['hero']);
+    g.debugToNight();
+    expect(g.abyss.units).toEqual([]);
+    expect(g.defense.units.map((u) => u.role)).toEqual(['hero']);
+    g.debugEndNight();
     expect(g.defense.units).toEqual([]);
+    expect(g.grid.cells.filter((c) => c !== null).length).toBe(before);
+    expect(g.abyss.wall.extraHp).toBe(7);
+    expect(g.dayStats).toMatchObject({ sunk: 0, defeated: 0, feeds: 0, realSeconds: 0 });
   });
 
-  it('귀환 순서: 방어 → 심연, 각 레인 안에서는 소환 순서 (piece id가 그 순서로 증가)', () => {
-    const g = fresh((d) => (d.balance.lane.abyssAdvanceSpeed = 0));
+  it('밤을 끝낼 때 방어선에 남은 걱정은 사라진다 (가라앉음 아님: 그림자·층 HP·sunk 변화 없음)', () => {
+    const g = fresh();
     begin(g);
-    g.summon(g.debugGrant(BLANKET, 1)!, 'unhappy'); // 심연 먼저 소환해도
-    g.summon(g.debugGrant(DOG, 2)!, 'happy');
-    g.summon(g.debugGrant(DOG, 1)!, 'unhappy');
-    g.summon(g.debugGrant(BLANKET, 3)!, 'happy');
-    g.debugEndDay();
-    const rets = ofType(g.tick(0), 'dayReturn');
-    const seq = rets.flatMap((e) => e.returns.map((r) => `${e.side}:${r.piece.chain}:${r.piece.tier}`));
-    expect(seq).toEqual([
-      `happy:${DOG}:2`,
-      `happy:${BLANKET}:3`,
-      `unhappy:${BLANKET}:1`,
-      `unhappy:${DOG}:1`,
-    ]);
-    const ids = rets.flatMap((e) => e.returns.map((r) => r.piece.id));
-    expect([...ids].sort((a, b) => a - b)).toEqual(ids);
-  });
-
-  it('칸이 모자라면 대기열 → returnQueueCap 초과는 소실', () => {
-    const cap = base.balance.grid.returnQueueCap;
-    const g = fresh((d) => (d.balance.lane.abyssAdvanceSpeed = 0));
-    begin(g);
-    for (let k = 0; k < 5; k++) g.summon(g.debugGrant(DOG, 1)!, 'happy');
-    for (let k = 0; k < 5; k++) g.summon(g.debugGrant(BLANKET, 1)!, 'unhappy');
-    while (g.debugGrant(DOG, 1) !== null); // 그리드 가득
-    g.debugEndDay();
-    const rets = ofType(g.tick(0), 'dayReturn').flatMap((e) => e.returns);
-    expect(rets).toHaveLength(10);
-    expect(rets.filter((r) => r.placedAt !== null)).toHaveLength(0);
-    expect(rets.filter((r) => r.queued)).toHaveLength(cap);
-    expect(rets.filter((r) => r.lost)).toHaveLength(10 - cap);
-    // 대기열은 방어 유닛부터 찬다
-    expect(rets.slice(0, cap).every((r) => r.queued)).toBe(true);
-    expect(g.lostReturns).toBe(10 - cap);
-  });
-
-  it('방어선에 남은 걱정은 사라진다 (가라앉음 아님: 그림자·층 HP·sunk 변화 없음)', () => {
-    const g = fresh((d) => (d.balance.lane.abyssAdvanceSpeed = 0));
-    begin(g);
-    g.summon(g.debugGrant(DOG, 1)!, 'unhappy'); // 멈춤 그림자 방지
-    ticks(g, 60 * (base.balance.wave.dayStartDelay + 2)); // 아침 걱정 몇 마리 등장
+    g.debugToNight();
+    ticks(g, 60 * (base.balance.wave.dayStartDelay + 2)); // 첫 웨이브 걱정 몇 마리 등장
     expect(g.defense.worries.length).toBeGreaterThan(0);
     const shadow = g.shadow;
     const extra = g.abyss.wall.extraHp;
     const sunk = g.stats.sunkCount;
-    g.debugEndDay();
+    g.debugEndNight();
     const es = g.tick(0);
     expect(g.defense.worries).toEqual([]);
     expect(ofType(es, 'sink')).toEqual([]);
@@ -440,17 +359,17 @@ describe('그림일기', () => {
   });
   const th = base.balance.diary.diarySinkThreshold;
 
-  it('낮 결과 문장 우선순위: 역류 > 가라앉음 ≥ 기준 > 기본 (층 돌파는 밤 문장으로, v0.8)', () => {
+  it('밤(디펜스) 결과 문장 우선순위: 역류 > 가라앉음 ≥ 기준 > 기본', () => {
     expect(diaryCategory(stats({ backflow: 1, layersCleared: 2, sunk: 9 }), th)).toBe('backflow');
     expect(diaryCategory(stats({ layersCleared: 1, sunk: 9 }), th)).toBe('manySunk');
     expect(diaryCategory(stats({ sunk: th }), th)).toBe('manySunk');
     expect(diaryCategory(stats({ sunk: th - 1, layersCleared: 3 }), th)).toBe('default');
   });
 
-  it('밤 문장: 층 돌파 > 내려갔지만 돌파 못 함 > 아무도 내려가지 않음', () => {
-    expect(nightCategory(stats({ layersCleared: 1, sentDown: 2 }))).toBe('layerCleared');
-    expect(nightCategory(stats({ sentDown: 1 }))).toBe('tried');
-    expect(nightCategory(stats({}))).toBe('none');
+  it('낮(오펜스) 문장: 층 돌파 > 영웅이 쓰러짐 > 내려갔지만 돌파 못 함 (§5.17-10)', () => {
+    expect(nightCategory(stats({ layersCleared: 1, offenseFell: 1 }))).toBe('layerCleared');
+    expect(nightCategory(stats({ offenseFell: 1 }))).toBe('none');
+    expect(nightCategory(stats({}))).toBe('tried');
   });
 
   it('직전 날과 같은 결과 문장은 피한다 (후보가 둘 이상이면)', () => {
@@ -459,20 +378,24 @@ describe('그림일기', () => {
     expect(pickAvoiding(mulberry32(1), ['하나'], '하나')).toBe('하나');
   });
 
-  it('문장 = 이벤트 문장 + 낮 결과 문장 + 밤 문장, 직전 밤 문장은 피한다', () => {
+  it('문장 = 이벤트 문장 + 낮(오펜스) 문장 + 밤(디펜스) 결과 문장 (하루 순서), 직전 낮 문장은 피한다', () => {
     const plain = { kind: 'plain' as const, id: 'plain' as const, title: '평범한 하루', text: '', effects: {} };
     const two = structuredClone(base);
-    two.diary.night.none = ['달 하나.', '달 둘.'];
+    two.diary.night.tried = ['달 하나.', '달 둘.'];
     const e = writeDiary(two, 3, plain, stats({}), mulberry32(2), null);
     expect(base.events.plainDay.diaryLines).toContain(e.eventLine);
     expect(base.diary.result.default).toContain(e.resultLine);
-    expect(two.diary.night.none).toContain(e.nightLine);
-    expect(e.line).toBe(`${e.eventLine} ${e.resultLine} ${e.nightLine}`);
-    expect(e).toMatchObject({ day: 3, eventTitle: '평범한 하루', category: 'default', nightCategory: 'none' });
+    expect(two.diary.night.tried).toContain(e.nightLine);
+    expect(e.line).toBe(`${e.eventLine} ${e.nightLine} ${e.resultLine}`);
+    expect(e).toMatchObject({ day: 3, eventTitle: '평범한 하루', category: 'default', nightCategory: 'tried' });
     for (let s = 1; s <= 20; s++) {
       const next = writeDiary(two, 4, plain, stats({}), mulberry32(s), e);
       expect(next.nightLine).not.toBe(e.nightLine);
     }
+    // 밤이 없던 날(1-10 정화): 밤 결과 문장 없음
+    const noNight = writeDiary(two, 5, plain, stats({ layersCleared: 1 }), mulberry32(3), null, false);
+    expect(noNight.resultLine).toBe('');
+    expect(noNight.line).toBe(`${noNight.eventLine} ${noNight.nightLine}`);
   });
 });
 
@@ -614,7 +537,7 @@ describe('결정성', () => {
         for (let k = 0; k < 600 && g.timeFlows; k++) {
           if (k % 120 === 0) {
             const s = g.spawn();
-            if (s) g.summon(s.index, k % 240 === 0 ? 'happy' : 'unhappy');
+            if (s) g.feed(s.index, k % 240 === 0 ? 'offense' : 'defense');
           }
           log.push(...g.tick(FIXED_DT).map((e) => e.type));
         }
@@ -631,14 +554,15 @@ describe('결정성', () => {
 });
 
 describe('디버그 하루 끝', () => {
-  it('아직 오지 않은 보스 칸을 건너뛰면 다음 날 아침 보스로 넘어간다', () => {
+  it('아직 오지 않은 보스 칸을 건너뛰면 다음 밤 첫 웨이브 보스로 넘어간다', () => {
     const g = fresh();
     begin(g);
-    g.debugScheduleBackflow(); // 아침 칸이 보스
-    g.debugEndDay();
+    g.debugScheduleBackflow(); // 오늘 밤 첫 웨이브가 보스
+    g.debugEndDay(); // 낮 → 밤 → 바로 새벽 (보스 전)
     expect(g.carryBackflow).toBe(true);
     g.nextDay();
     begin(g);
+    g.debugToNight();
     expect(g.wave.inBossPrep).toBe(true);
   });
 });

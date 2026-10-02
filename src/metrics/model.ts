@@ -2,11 +2,10 @@
 // metrics는 관찰만 한다: 게임 규칙은 이 값을 읽지 않는다.
 
 import type { DayStats } from '../core/day';
-import type { SummonRecord } from '../core/game';
-import type { GrowthResult } from '../core/growth';
+import type { FeedRecord } from '../core/game';
 import type { GameStats } from '../core/stats';
 
-export const METRICS_VERSION = 2;
+export const METRICS_VERSION = 3;
 export const MAX_SESSIONS = 500;
 export const MAX_LIVES = 20;
 /** 직렬화 결과 상한 (localStorage 5MB 대비) */
@@ -30,17 +29,16 @@ export interface DayMetrics {
   realDate: string;
   eventId: string;
   dayStats: DayStats;
-  summons: SummonRecord[];
+  /** 그날 먹이기 기록 (v3, §5.17-2. 구 summons) */
+  feeds: FeedRecord[];
   dropFails: DropFails;
   dragDistance: number;
   /** 그날 낮 + 밤의 실제 경과 시간(초, 배속·백그라운드 제외) = dayRealSeconds + nightRealSeconds */
   realSeconds: number;
-  /** 낮(day 단계) 실제 시간 (v0.8) */
+  /** 낮(day 단계 = 오펜스, §5.17-10) 실제 시간 */
   dayRealSeconds: number;
-  /** 밤(night 단계) 실제 시간 (v0.8) */
+  /** 밤(night 단계 = 디펜스) 실제 시간 */
   nightRealSeconds: number;
-  /** 낮에 손거울로 맡긴 수 (v0.8, = dayStats.reserved) */
-  reserved: number;
   /** 그날 ×1이 아닌 배속을 쓴 실제 시간(초) */
   speedUsed: number;
   /** 그날 gating 우회 상태로 시작했는지 */
@@ -62,8 +60,6 @@ export interface LifeMetrics {
   chapter: { completed: boolean; day: number; stage: number } | null;
   endingAgree: boolean | null;
   stats: GameStats | null;
-  /** 자라기마다 소진 목록·갈래·특성 (§5.14-6). v0.10 이전 기록에는 없다 */
-  growths?: GrowthResult[];
 }
 
 export interface SessionRecord {
@@ -75,7 +71,7 @@ export interface SessionRecord {
 }
 
 export interface MetricsData {
-  version: 2;
+  version: 3;
   firstSeen: string;
   sessions: SessionRecord[];
   lives: LifeMetrics[];
@@ -133,7 +129,7 @@ export function parseMetrics(raw: string | null): { ok: true; data: MetricsData 
       return { ok: false, reason: `구조 불일치 (lives[${i}])` };
     }
     for (const [j, d] of (l.days as unknown[]).entries()) {
-      if (!isObj(d) || typeof d.day !== 'number' || !isObj(d.dayStats) || !Array.isArray(d.summons)) {
+      if (!isObj(d) || typeof d.day !== 'number' || !isObj(d.dayStats) || !Array.isArray(d.feeds)) {
         return { ok: false, reason: `구조 불일치 (lives[${i}].days[${j}])` };
       }
     }
@@ -144,7 +140,7 @@ export function parseMetrics(raw: string | null): { ok: true; data: MetricsData 
 }
 
 /**
- * 상한: 세션 500, 일생 20 (오래된 것부터 버림), 직렬화 1.5MB 초과 시 가장 오래된 life의 summons부터 비움.
+ * 상한: 세션 500, 일생 20 (오래된 것부터 버림), 직렬화 1.5MB 초과 시 가장 오래된 life의 feeds부터 비움.
  * 제자리 수정. 잘라낸 내용을 경고 메시지로 돌려준다 (없으면 빈 배열).
  */
 export function enforceLimits(data: MetricsData, maxBytes = MAX_BYTES): string[] {
@@ -165,9 +161,9 @@ export function enforceLimits(data: MetricsData, maxBytes = MAX_BYTES): string[]
     let cleared = 0;
     for (const d of life.days) {
       if (size <= maxBytes) break;
-      if (d.summons.length === 0) continue;
-      cleared += d.summons.length;
-      d.summons = [];
+      if (d.feeds.length === 0) continue;
+      cleared += d.feeds.length;
+      d.feeds = [];
       size = byteLength(JSON.stringify(data));
     }
     if (cleared) warnings.push(`일생 ${life.lifeId}의 소환 기록 ${cleared}개 비움 (크기 상한 ${maxBytes}B)`);
@@ -210,7 +206,9 @@ export interface MetricsSummary {
   lives: number;
   daysCompleted: number;
   sessionDates: number;
-  unhappyRatio: number | null;
+  /** 밤덱(디펜스)에 먹인 비율 (구 Unhappy 소환 비율) */
+  defenseFeedRatio: number | null;
+  /** 먹인 단계 분포 */
   tierShare: Record<string, number>;
   /** 배속 사용일 제외 */
   dayLengthMedian: number | null;
@@ -230,12 +228,12 @@ export function median(xs: number[]): number | null {
 
 export function summarizeMetrics(lives: LifeMetrics[], sessions: SessionRecord[]): MetricsSummary {
   const days = lives.flatMap((l) => l.days);
-  const summons = days.flatMap((d) => d.summons);
-  const down = summons.filter((s) => s.side === 'unhappy').length;
+  const feeds = days.flatMap((d) => d.feeds);
+  const down = feeds.filter((s) => s.role === 'defense').length;
   const tierCount: Record<string, number> = {};
-  for (const s of summons) tierCount[s.tier] = (tierCount[s.tier] ?? 0) + 1;
+  for (const s of feeds) tierCount[s.tier] = (tierCount[s.tier] ?? 0) + 1;
   const tierShare: Record<string, number> = {};
-  for (const [t, c] of Object.entries(tierCount)) tierShare[t] = c / summons.length;
+  for (const [t, c] of Object.entries(tierCount)) tierShare[t] = c / feeds.length;
   const game = days.reduce((s, d) => s + d.dayStats.realSeconds, 0);
   const full = days.reduce((s, d) => s + d.dayStats.gridFullSeconds, 0);
   const ratings = { good: 0, meh: 0, bad: 0, tense: 0, annoyed: 0 };
@@ -247,7 +245,7 @@ export function summarizeMetrics(lives: LifeMetrics[], sessions: SessionRecord[]
     lives: lives.length,
     daysCompleted: days.length,
     sessionDates: new Set(sessions.map((s) => s.realDate)).size,
-    unhappyRatio: summons.length ? down / summons.length : null,
+    defenseFeedRatio: feeds.length ? down / feeds.length : null,
     tierShare,
     dayLengthMedian: median(days.filter((d) => d.speedUsed === 0).map((d) => d.realSeconds)),
     gridFullRatio: game > 0 ? full / game : null,
@@ -268,7 +266,7 @@ export function formatSummary(title: string, s: MetricsSummary): string {
   const r = s.ratings;
   return [
     `[${title}] 일생 ${s.lives} · 날 ${s.daysCompleted} · 세션 날짜 ${s.sessionDates}`,
-    `Unhappy ${pct(s.unhappyRatio)} · 단계 ${tiers || '—'}`,
+    `밤덱 먹이기 ${pct(s.defenseFeedRatio)} · 먹인 단계 ${tiers || '—'}`,
     `하루 ${s.dayLengthMedian === null ? '—' : `${Math.round(s.dayLengthMedian)}초`} · 가득 참 ${pct(s.gridFullRatio)} · 놓아주기 ${s.releases}`,
     `역류 ${s.backflows} (처치 ${s.bossWins}) · 평가 ${r.good}/${r.meh}/${r.bad} · 긴장/짜증 ${r.tense}/${r.annoyed}`,
   ].join('\n');

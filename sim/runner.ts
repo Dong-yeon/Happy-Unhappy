@@ -1,9 +1,9 @@
-// 한 판(1챕터) 실행: 시드 하나 × 정책 하나 → 결과 (스펙 §8.1). M5부터 실제 하루 구조(--until life)만.
-// 시간은 core의 고정 틱으로만, 하루 단계가 'waves'일 때만 흐른다. 봇은 decisionInterval마다 판단하고 반응 지연 뒤에 행동한다.
-// 하루 시작 카드는 봇이 닫고(이정표면 정책의 선택), 그림일기 뒤에는 바로 다음 날로 넘어간다.
+// 한 판(1챕터) 실행: 시드 하나 × 정책 하나 → 결과 (스펙 §8.1, §5.17-7).
+// 시간은 core의 고정 틱으로만, 낮(오펜스)·밤(디펜스)에만 흐른다. 봇은 decisionInterval마다 판단하고 반응 지연 뒤에 행동한다.
+// 하루 시작 카드는 봇이 닫고(갈림길이면 정책의 선택), 이야기 한 장 뒤에는 바로 다음 날로 넘어간다.
+// 정책에 boundary가 있으면(lazy) 카드를 닫기 전·다음 날로 넘어가기 전에 시간 없이 행동을 몰아서 한다 (전투 밖 머지).
 // --saveRoundTrip (§5.8-4): 경계(dayStart·diary)마다 serializeGame → JSON → fromSave로 상태를 갈아끼운다. 봇 rng는 그대로.
-import type { Branch } from '../src/core/growth';
-import { GameState, type BossRecord } from '../src/core/game';
+import { GameState, type BossRecord, type Role } from '../src/core/game';
 import { FIXED_DT } from '../src/core/lane';
 import { mulberry32 } from '../src/core/rng';
 import { serializeGame, type SaveGame } from '../src/core/save';
@@ -22,7 +22,7 @@ export interface RunResult {
   seed: number;
   /** 이야기 한 장까지 끝낸 날 수 (완성한 날 또는 maxDays) */
   days: number;
-  /** 첫 가라앉음이 일어난 웨이브 (일생 통산 번호: (일차-1) × wavesPerDay + 칸 + 1). 없으면 null */
+  /** 첫 가라앉음이 일어난 웨이브 (판 통산 번호: (일차-1) × wavesPerNight + 칸 + 1). 없으면 null */
   firstSinkWave: number | null;
   firstSinkDay: number | null;
   sunk: number;
@@ -31,25 +31,10 @@ export interface RunResult {
   /** 각 날이 끝났을 때의 기쁨·그림자 */
   joyByDay: number[];
   shadowByDay: number[];
-  /** 각 날의 길이(×1 게임 시간, 초) = dayStats.realSeconds (낮 + 밤) */
+  /** 각 날의 길이(×1 게임 시간, 초) = 오펜스(낮) + 디펜스(밤) */
   dayLengths: number[];
-  /** 각 날의 낮·밤 길이 (§5.11-8) */
-  dayLengthsDay: number[];
-  dayLengthsNight: number[];
-  /** 낮에 손거울로 맡긴 수 (일생 합) */
-  reserved: number;
-  /** 잠들기 횟수 */
-  sleeps: number;
-  // v0.9 영웅 규칙 (§5.13-7)
-  injuriesDay: number;
-  injuriesNight: number;
-  shiningMade: number;
-  legendsMade: number;
-  legendsByRecipe: Record<string, number>;
-  bossFloorsReached: number;
-  bossFloorsCleared: number;
-  wildcardsGained: number;
-  combines: number;
+  dayLengthsOffense: number[];
+  dayLengthsDefense: number[];
   dayStartJoy: number[];
   dayEndJoy: number[];
   /** 1일차 일반 걱정 수·가라앉은 수 */
@@ -59,37 +44,53 @@ export interface RunResult {
   kills: number;
   /** 그리드 가득 참 상태였던 틱 비율 */
   gridFullRatio: number;
-  summons: number;
-  /** 단계별 소환 수 (key = 단계) */
-  summonTiers: Record<string, number>;
-  meanSummonTier: number | null;
-  /** Happy(창문) / Unhappy(손거울) 소환 비율 */
-  upRatio: number | null;
-  downRatio: number | null;
   layersCleared: number;
-  /** 역류(보스 웨이브) 수 */
   backflows: number;
   bossWins: number;
   bossLosses: number;
-  /** 보스 등장 진단 기록 (§5.7) */
   bossLog: BossRecord[];
-  /** 귀환 대기열 상한 초과로 소실된 조각 */
+  bossFloorsReached: number;
+  bossFloorsCleared: number;
+  wildcardsGained: number;
+  /** 지급할 칸이 없어 사라진 조각 */
   lostReturns: number;
+  /** 오펜스 병사 쓰러짐 */
   abyssDeaths: number;
-  /** Unhappy 멈춤 누적(초) */
+  /** 낮 영웅이 쓰러져 건너뛴 시간(초) */
   stallSeconds: number;
   maxShadow: number;
-  /** 이정표 flag 기록 */
   flags: string[];
   spawns: number;
   merges: number;
   releases: number;
+  feeds: number;
   /** 실수(엉뚱한 곳 드롭 → 원위치)로 버린 행동 */
   mistakes: number;
   /** 반응 지연 사이에 상태가 바뀌어 core가 거절한 행동 */
   staleActions: number;
   playTime: number;
-  /** 판의 끝 (§5.15-1): 완성 true / maxDays 미완성 false / 시간 상한으로 중단 null */
+  // ── v0.13 영웅·먹이기·버프 (§5.17-7) ──
+  /** 영웅별 최종 체인 점수 (덱 자리 기준) */
+  heroPoints: Record<Role, Record<string, number>>;
+  heroIds: Record<Role, string>;
+  /** 먹인 단계별 수 (key = 단계) */
+  feedTiers: Record<string, number>;
+  battleMerges: number;
+  affinityMerges: number;
+  offenseFalls: number;
+  defenseFalls: number;
+  buffHeal: number;
+  /** 기세 평균 중첩 (전투 시간 기준) */
+  momentumAvg: number;
+  // ── 병사 ([11]-4) ──
+  soldiers: number;
+  soldiersCapped: number;
+  soldiersByKind: Record<string, number>;
+  damageHero: number;
+  damageSoldier: number;
+  damageBase: number;
+  // ── 챕터 진행 (§5.15-6) ──
+  /** 판의 끝: 완성 true / maxDays 미완성 false / 시간 상한으로 중단 null */
   completed: boolean | null;
   /** 끝난 일차 (완성이면 완성 일차) */
   endDay: number;
@@ -98,15 +99,16 @@ export interface RunResult {
   /** 1-turningPoint 도달·정화 일차 (없으면 null) */
   turningPointReachedDay: number | null;
   turningPointClearedDay: number | null;
-  /** 자라기마다 (§5.14-5): 소진한 행복/정화 전설 수·기억·갈래 */
-  growths: { day: number; happy: number; purified: number; pairs: number; branch: Branch }[];
-  /** 일생 끝(또는 중단 시점)의 특성 스택 */
-  traits: Record<string, number>;
 }
 
 /** 봇 rng는 게임 rng와 다른 수열 (같은 시드에서도 서로 간섭하지 않게) */
 function botSeed(seed: number): number {
   return (Math.imul(seed, 0x9e3779b1) ^ 0x5bd1e995) >>> 0;
+}
+
+/** 레인 슬롯 수 = 영웅 1 + soldierCap */
+export function simGeometry(data: GameData) {
+  return gameGeometry(data.balance.merge.soldierCap + 1);
 }
 
 export function runOne(data: GameData, cfg: SimConfig, policy: Policy, opt: RunOptions): RunResult {
@@ -116,23 +118,22 @@ export function runOne(data: GameData, cfg: SimConfig, policy: Policy, opt: RunO
 /** 경계 상태를 저장 → JSON → 복원한 새 GameState (저장 누락 필드 검출용) */
 function roundTrip(data: GameData, state: GameState, grid: RunOptions['grid']): GameState {
   const save = JSON.parse(JSON.stringify(serializeGame(state))) as SaveGame;
-  return GameState.fromSave(data, save, mulberry32(save.seed), gameGeometry(data.balance.lane.laneCap), grid);
+  return GameState.fromSave(data, save, mulberry32(save.seed), simGeometry(data), grid);
 }
 
 /** 한 판 + 마지막 상태 (chapterComplete면 serializeGame으로 비교 가능) */
 export function runLife(data: GameData, cfg: SimConfig, policy: Policy, opt: RunOptions): { result: RunResult; state: GameState } {
-  let state = new GameState(data, opt.grid, mulberry32(opt.seed), gameGeometry(data.balance.lane.laneCap), opt.seed);
+  let state = new GameState(data, opt.grid, mulberry32(opt.seed), simGeometry(data), opt.seed);
   const botRng = mulberry32(botSeed(opt.seed));
-  const wpd = data.balance.wave.wavesPerDay;
+  const wpn = data.balance.wave.wavesPerNight;
   const days = data.balance.chapter.maxDays;
 
   const sunkByDay = new Array<number>(days).fill(0);
   const joyByDay: number[] = [];
   const shadowByDay: number[] = [];
   const dayLengths: number[] = [];
-  const dayLengthsDay: number[] = [];
-  const dayLengthsNight: number[] = [];
-  let reserved = 0;
+  const dayLengthsOffense: number[] = [];
+  const dayLengthsDefense: number[] = [];
   const dayStartJoy: number[] = [];
   const dayEndJoy: number[] = [];
   let firstSinkWave: number | null = null;
@@ -142,15 +143,15 @@ export function runLife(data: GameData, cfg: SimConfig, policy: Policy, opt: Run
   let fullTicks = 0;
   let ticks = 0;
   let maxShadow = state.shadow;
-  const counts = { spawns: 0, merges: 0, releases: 0, mistakes: 0, staleActions: 0, sleeps: 0, combines: 0 };
+  const counts = { spawns: 0, merges: 0, releases: 0, feeds: 0, mistakes: 0, staleActions: 0 };
 
   let nextDecision = 0;
   let pending: { action: Action; at: number } | null = null;
   const maxTicks = Math.ceil(cfg.maxGameSeconds / FIXED_DT);
 
-  const execute = (a: Action) => {
-    // 실수: 드래그 행동(드롭·소환·놓아주기)을 엉뚱한 곳에 놓아 원위치 → 아무 일도 없음
-    if (a.type !== 'spawn' && a.type !== 'sleep' && botRng() < cfg.mistakeRate) {
+  const execute = (a: Action, mistakes = true) => {
+    // 실수: 드래그 행동(드롭·먹이기·놓아주기)을 엉뚱한 곳에 놓아 원위치 → 아무 일도 없음
+    if (mistakes && a.type !== 'spawn' && botRng() < cfg.mistakeRate) {
       counts.mistakes += 1;
       return;
     }
@@ -162,15 +163,11 @@ export function runLife(data: GameData, cfg: SimConfig, policy: Policy, opt: Run
       case 'drop': {
         const kind = state.drop(a.from, a.to);
         if (kind === 'merge') counts.merges += 1;
-        else if (kind === 'combine') counts.combines += 1;
         else if (kind === 'none') counts.staleActions += 1;
         break;
       }
-      case 'summon':
-        if (!state.summon(a.cell, a.side).ok) counts.staleActions += 1;
-        break;
-      case 'sleep':
-        if (state.sleep()) counts.sleeps += 1;
+      case 'feed':
+        if (state.feed(a.cell, a.role).ok) counts.feeds += 1;
         else counts.staleActions += 1;
         break;
       case 'release':
@@ -180,10 +177,21 @@ export function runLife(data: GameData, cfg: SimConfig, policy: Policy, opt: Run
     }
   };
 
+  /** 전투 밖 행동 (lazy): null이 나올 때까지, 실수 없이 */
+  const boundary = () => {
+    if (!policy.boundary) return;
+    for (let k = 0; k < 200; k++) {
+      const a = policy.boundary({ state, rng: botRng, cfg });
+      if (!a) break;
+      execute(a, false);
+    }
+  };
+
   while (state.phase !== 'chapterComplete' && ticks < maxTicks) {
     if (state.phase === 'dayStart') {
       if (opt.saveRoundTrip) state = roundTrip(data, state, opt.grid);
-      // 카드 닫기 (이정표면 정책이 고름. 기본은 첫 선택지)
+      boundary();
+      // 카드 닫기 (갈림길이면 정책이 고름. 기본은 첫 선택지)
       const choices = state.choices;
       const pick = choices.length ? (policy.milestone?.({ state, rng: botRng, cfg }, choices) ?? choices[0].id) : undefined;
       const r = state.confirmDay(pick);
@@ -201,14 +209,14 @@ export function runLife(data: GameData, cfg: SimConfig, policy: Policy, opt: Run
       joyByDay[i] = state.joy;
       shadowByDay[i] = state.shadow;
       dayLengths[i] = st.realSeconds;
-      dayLengthsDay[i] = st.daySeconds;
-      dayLengthsNight[i] = st.nightSeconds;
-      reserved += st.reserved;
+      dayLengthsOffense[i] = st.offenseSeconds;
+      dayLengthsDefense[i] = st.defenseSeconds;
+      boundary();
       state.nextDay();
       continue;
     }
 
-    // waves: 봇 행동 (틱 사이 = 사람 입력과 같은 시점)
+    // 낮·밤: 봇 행동 (틱 사이 = 사람 입력과 같은 시점)
     const t = state.playTime;
     if (pending && t >= pending.at - 1e-9) {
       execute(pending.action);
@@ -222,7 +230,8 @@ export function runLife(data: GameData, cfg: SimConfig, policy: Policy, opt: Run
     }
 
     const day = state.day;
-    const waveNo = (day - 1) * wpd + state.wave.slot + 1;
+    const waveNo = (day - 1) * wpn + state.wave.slot + 1;
+    const night = state.phase === 'night';
     const events = state.tick(FIXED_DT);
     ticks += 1;
     if (state.grid.cells.every((c) => c !== null)) fullTicks += 1;
@@ -231,7 +240,7 @@ export function runLife(data: GameData, cfg: SimConfig, policy: Policy, opt: Run
       if (e.type === 'spawnWorry' && !e.boss && day === 1) day1Worries += 1;
       else if (e.type === 'worryDie') kills += 1;
       // 역류 보스 가라앉음은 일반 가라앉음에 넣지 않는다 (core stats.sunkCount와 같은 기준)
-      else if (e.type === 'sink' && !e.boss) {
+      else if (e.type === 'sink' && !e.boss && night) {
         sunkByDay[day - 1] += 1;
         if (firstSinkWave === null) {
           firstSinkWave = waveNo;
@@ -241,12 +250,21 @@ export function runLife(data: GameData, cfg: SimConfig, policy: Policy, opt: Run
     }
   }
 
-  const summonTiers: Record<string, number> = {};
-  for (const r of state.summonLog) summonTiers[r.tier] = (summonTiers[r.tier] ?? 0) + 1;
-  const summons = state.summonLog.length;
-  const up = state.summonLog.filter((r) => r.side === 'happy').length;
+  // 1-10 정화한 날은 이야기 한 장 뒤 바로 chapterComplete라 diary 단계를 거치지 않는다 → 그날 기록을 여기서
+  if (state.phase === 'chapterComplete' && state.lastDayStats && dayLengths.length < state.day) {
+    const st = state.lastDayStats;
+    const i = state.day - 1;
+    dayEndJoy[i] = st.joyEnd;
+    joyByDay[i] = state.joy;
+    shadowByDay[i] = state.shadow;
+    dayLengths[i] = st.realSeconds;
+    dayLengthsOffense[i] = st.offenseSeconds;
+    dayLengthsDefense[i] = st.defenseSeconds;
+  }
   const st = state.stats;
   const lived = dayLengths.length;
+  const feedTiers: Record<string, number> = {};
+  for (const f of state.feedLog) feedTiers[f.tier] = (feedTiers[f.tier] ?? 0) + 1;
 
   const result: RunResult = {
     seed: opt.seed,
@@ -258,9 +276,8 @@ export function runLife(data: GameData, cfg: SimConfig, policy: Policy, opt: Run
     joyByDay,
     shadowByDay,
     dayLengths,
-    dayLengthsDay,
-    dayLengthsNight,
-    reserved,
+    dayLengthsOffense,
+    dayLengthsDefense,
     dayStartJoy,
     dayEndJoy,
     day1Worries,
@@ -268,16 +285,14 @@ export function runLife(data: GameData, cfg: SimConfig, policy: Policy, opt: Run
     finalJoy: state.joy,
     kills,
     gridFullRatio: ticks === 0 ? 0 : fullTicks / ticks,
-    summons,
-    summonTiers,
-    meanSummonTier: summons === 0 ? null : state.summonLog.reduce((s, r) => s + r.tier, 0) / summons,
-    upRatio: summons === 0 ? null : up / summons,
-    downRatio: summons === 0 ? null : (summons - up) / summons,
     layersCleared: st.layersCleared,
     backflows: st.backflows,
     bossWins: st.bossWins,
     bossLosses: st.bossLosses,
     bossLog: state.bossLog.map((b) => ({ ...b })),
+    bossFloorsReached: st.bossFloorsReached,
+    bossFloorsCleared: st.bossFloorsCleared,
+    wildcardsGained: st.wildcardsGained,
     lostReturns: state.lostReturns,
     abyssDeaths: st.abyssDeaths,
     stallSeconds: st.stallSeconds,
@@ -285,21 +300,26 @@ export function runLife(data: GameData, cfg: SimConfig, policy: Policy, opt: Run
     flags: [...state.flags],
     ...counts,
     playTime: state.playTime,
+    heroPoints: { offense: { ...state.heroes.offense.points }, defense: { ...state.heroes.defense.points } },
+    heroIds: { offense: state.heroes.offense.id, defense: state.heroes.defense.id },
+    feedTiers,
+    battleMerges: st.battleMerges,
+    affinityMerges: st.affinityMerges,
+    offenseFalls: st.offenseFalls,
+    defenseFalls: st.defenseFalls,
+    buffHeal: st.buffHeal,
+    momentumAvg: st.battleSeconds > 0 ? st.momentumStackSeconds / st.battleSeconds : 0,
+    soldiers: st.soldiersSpawned,
+    soldiersCapped: st.soldiersCapped,
+    soldiersByKind: { ...st.soldiersByKind },
+    damageHero: st.damageHero,
+    damageSoldier: st.damageSoldier,
+    damageBase: st.damageBase,
     completed: state.completed,
     endDay: state.day,
     stage: state.stage,
     turningPointReachedDay: st.turningPointReachedDay || null,
     turningPointClearedDay: st.turningPointClearedDay || null,
-    injuriesDay: st.injuriesDay,
-    injuriesNight: st.injuriesNight,
-    shiningMade: st.shiningMade,
-    legendsMade: st.legendsMade,
-    legendsByRecipe: { ...st.legendsByRecipe },
-    bossFloorsReached: st.bossFloorsReached,
-    bossFloorsCleared: st.bossFloorsCleared,
-    wildcardsGained: st.wildcardsGained,
-    growths: state.growthLog.map((g) => ({ day: g.day, happy: g.happyCount, purified: g.purifiedCount, pairs: g.pairs, branch: g.branch })),
-    traits: { ...state.traits },
   };
   return { result, state };
 }

@@ -3,7 +3,7 @@ import { FIXED_DT } from '../src/core/lane';
 import { DayWaves, waveCount, waveHp, type WaveConfig } from '../src/core/wave';
 
 const CFG: WaveConfig = {
-  wavesPerDay: 3,
+  wavesPerNight: 3,
   countBase: 6,
   countStep: 1,
   spawnInterval: 1.5,

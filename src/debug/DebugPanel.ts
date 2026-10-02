@@ -1,6 +1,6 @@
 // ?debug=1 디버그 패널. M7에서 정식 디버그 패널로 흡수.
 // 기본은 접힘: 포탈 받침 왼쪽 빈 자리의 [DBG] 토글만 보인다. 펼치면 방어 레인 위에 겹쳐 뜬다 (심연 레인은 가리지 않음).
-// 탭: 기본(그리드·기쁨·조각) / 웨이브(정지·다음·배속) / 심연(그림자·역류·층) / 하루(일차·하루 끝·이벤트·일기장)
+// 탭: 기본(그리드·기쁨·조각) / 웨이브(정지·다음·배속) / 심연(그림자·역류·층·영웅 쓰러짐) / 하루(일차·하루 끝·이벤트·일기장)
 //     / 챕터(스테이지 이동·즉시 완성/미완성) / 저장(gating·저장 초기화·JSON 복사·시드) / metrics(내보내기·요약·초기화)
 import Phaser from 'phaser';
 import { allEventIds } from '../core/day';
@@ -181,8 +181,12 @@ export function createDebugPanel(
       controls.onChange();
     }, '10px');
     y += 26;
-    btn('심연', scene, x0 + 40, y, 80, 20, '심연 전멸', () => {
+    btn('심연', scene, x0 + 40, y, 80, 20, '낮 우리 편 전멸', () => {
       state.debugKillAbyssUnits();
+      controls.onChange();
+    }, '10px');
+    btn('심연', scene, x0 + 124, y, 80, 20, '밤 영웅 쓰러짐', () => {
+      state.debugKnockDefenseHero();
       controls.onChange();
     }, '10px');
   }
@@ -279,7 +283,7 @@ export function createDebugPanel(
       loop: true,
       callback: () => {
         const flags = [state.pendingCrossroad ? '갈림길 대기' : '', state.chapterCleared ? '1-10 정화됨' : ''].filter(Boolean).join(' · ');
-        now.setText(`1-${state.stage} · ${state.day}/${state.maxDays}일 · 자라기 ${state.growthLog.length}회${flags ? ` · ${flags}` : ''}`);
+        now.setText(`1-${state.stage} · ${state.day}/${state.maxDays}일 · 먹이기 ${state.stats.feeds}회${flags ? ` · ${flags}` : ''}`);
       },
     });
   }
@@ -385,10 +389,10 @@ export function createDebugPanel(
     .setDepth(PANEL_DEPTH)
     .setInteractive(); // 패널 뒤로 입력이 새지 않게
 
-  // 접기/펼치기 토글: 포탈 받침 왼쪽 빈 자리 (그리드·레인·포탈 밖)
+  // 접기/펼치기 토글: 하늘 띠 왼쪽 아래 (v0.13: 포탈 받침 자리는 영웅 슬롯)
   let open = false;
-  const base = REGION.portalBase;
-  const toggle = new Button(scene, base.x + 30, base.y + base.h / 2, 48, 20, '', () => {
+  const base = REGION.sky;
+  const toggle = new Button(scene, base.x + 30, base.y + base.h - 14, 48, 20, '', () => {
     open = !open;
     apply();
   }, '10px');

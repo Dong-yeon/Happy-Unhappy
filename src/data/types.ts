@@ -8,8 +8,9 @@ export interface CombatStats {
 }
 
 export interface Balance {
-  version: 2;
-  start: { joy: number; shadow: number };
+  version: 3;
+  /** swapHeroes: true면 기본 배정(heroes.json offense/defense)을 맞바꾼다 (영웅 배정 기본값, [11]-3) */
+  start: { joy: number; shadow: number; swapHeroes: boolean };
   grid: {
     gridCols: number;
     gridRows: number;
@@ -18,12 +19,11 @@ export interface Balance {
     spawnCostStep: number;
     maxTier: number;
     releaseRefund: number;
-    returnQueueCap: number;
   };
   lane: {
-    laneCap: number;
+    /** 오펜스: 영웅·병사가 층으로 전진하는 속도 */
     abyssAdvanceSpeed: number;
-    /** 방어 유닛 제한 이동 (§4.3.3, D-026): 방어선에서 나갈 수 있는 최대 거리. 0 = 기존 규칙 */
+    /** 디펜스 영웅·병사 제한 이동 (§4.3.3, D-026): 방어선에서 나갈 수 있는 최대 거리. 0 = 이동 없음 */
     defenseInterceptRange: number;
     /** 방어 유닛 이동 속도 (px/초) */
     defenseMoveSpeed: number;
@@ -31,15 +31,16 @@ export interface Balance {
     defenseContact: number;
   };
   happy: { atk: number; atkInterval: number; range: number };
+  /** 밤(디펜스) 웨이브 (§5.17-10: 구 낮 웨이브) */
   wave: {
-    wavesPerDay: number;
+    wavesPerNight: number;
     countBase: number;
     countStep: number;
     spawnInterval: number;
     waveGap: number;
-    /** 하루 첫 웨이브 전 대기(초) */
+    /** 밤 첫 웨이브 전 대기(초) */
     dayStartDelay: number;
-    /** 전날 저녁에 예약된 역류: 다음 날 아침 보스 전 준비 시간(초) (D-021) */
+    /** 낮에 예약된 역류: 그날 밤 첫 웨이브(보스) 전 준비 시간(초) (D-021, §5.17-10) */
     bossPrepSeconds: number;
     hpGrowthPerDay: number;
   };
@@ -50,6 +51,7 @@ export interface Balance {
     counterAtkInterval: number;
     /** 벽 반격 사거리 (벽 아래 변에서의 y 거리, px) */
     counterRange: number;
+    /** 오펜스 병사가 쓰러질 때 그림자 */
     abyssDeathShadow: number;
     layerClearShadowReduce: number;
     /** 보스 층 (§5.13-4): 이 값의 배수 층 */
@@ -59,25 +61,45 @@ export interface Balance {
     /** 보스 층 돌파 보상 와일드카드 수 */
     bossFloorWildcards: number;
   };
-  /** 영웅 (§5.13-3): 빛나는 영웅의 hp·atk 배수 */
-  hero: { shineMult: number };
-  /** 자라는 날 (§5.14-4, D-030) */
-  growth: {
-    /** 양분으로 준 전설 하나당 성장치 */
-    growthPerLegend: number;
-    /** 기억(행복 1 + 정화 1 짝) 하나당 양쪽 성장치 보너스 */
-    memoryBonus: number;
-    /** 특성 스택당 hp·atk 배수 증가 */
-    traitPerStack: number;
-    traitMaxStacks: number;
-    /** 자란 횟수만큼 걱정 HP × ageWorryMult^n */
-    ageWorryMult: number;
+  /** 영웅 공통 (§5.17-2·4·10) */
+  hero: {
+    /** 떡 성장 받는 피해 감소의 상한 */
+    dmgReduceMax: number;
+    /** 동아줄 성장 atkInterval 하한(초) */
+    atkIntervalMin: number;
+    /** 디펜스(밤) 영웅 쓰러짐 → 이 초 뒤 일어남 */
+    reviveSeconds: number;
+    /** 일어날 때 hp = maxHp × 이 값 */
+    reviveHpRatio: number;
   };
-  /** 밤 (§5.11-7, D-027) */
-  night: {
-    /** 밤 길이(초, 달이 질 때까지) */
-    nightSeconds: number;
-    /** 밤 동안 심연 유닛 0기이면 그림자 + 이 값 × dt (Unhappy 멈춤, 외면의 대가) */
+  /** 먹이기 (§5.17-2): 단계별 점수 (index 0 = 1단계) */
+  feed: { tierScore: number[] };
+  /** 전투 중 머지 버프 (§5.17-3) */
+  buff: {
+    /** 떡: 즉시 회복 maxHp × healPct */
+    healPct: number;
+    /** 동아줄: 기세 1중첩당 atk +momentumAtkPct */
+    momentumAtkPct: number;
+    momentumSeconds: number;
+    momentumMaxStacks: number;
+    /** 결과 3단계 머지면 회복 × / 중첩 수 × */
+    tier3Mult: number;
+  };
+  /** 전투 중 머지 병사 ([11]-1·2, D-049·D-050) */
+  merge: {
+    soldiers: boolean;
+    /** 두 레인 합이 아니라 지금 싸우는 레인의 병사 수 상한 */
+    soldierCap: number;
+    /** 병사 수명(초) */
+    soldierLifetime: number;
+    /** 때 맞춤 (낮 sun 체인 / 밤 moon 체인) 병사 능력치·버프 배수 */
+    affinityMult: number;
+  };
+  /** 낮 = 오펜스 (§5.17-10, 구 night 블록) */
+  offense: {
+    /** 낮 길이(초) */
+    seconds: number;
+    /** 오펜스 영웅이 쓰러져 낮이 끝나면 남은 초 × 이 값만큼 그림자 */
     stallShadowPerSec: number;
   };
   shadow: {
@@ -92,7 +114,7 @@ export interface Balance {
   /** 챕터 진행 (§5.15-1, D-039): 1-1 ~ 1-length = 심연 1 ~ length층 */
   chapter: {
     length: number;
-    /** 이 층을 정화하면 다음 dayStart에 자라기 + 갈림길 */
+    /** 이 층을 정화하면 다음 dayStart에 갈림길 */
     turningPoint: number;
     /** 전환점 층 HP 배수 */
     turningPointHpMult: number;
@@ -108,8 +130,33 @@ export interface Balance {
   diary: { diarySinkThreshold: number };
 }
 
-export interface Units {
-  commonSpirit: (CombatStats & { tier: number })[];
+/** 시작 영웅 (§5.17-1, heroes.json) */
+export interface HeroDef extends CombatStats {
+  id: string;
+  name: string;
+}
+
+export interface Heroes {
+  heroes: HeroDef[];
+  /** 기본 배정: 낮(오펜스) / 밤(디펜스) 영웅 id */
+  offense: string;
+  defense: string;
+}
+
+/** 먹이기 성장 (점수 1당, §5.17-2) */
+export interface ChainGrowth {
+  maxHp?: number;
+  /** 받는 피해 감소 (비율) */
+  dmgReduce?: number;
+  atk?: number;
+  /** atkInterval 감소 (비율) */
+  atkIntervalPct?: number;
+}
+
+export interface SoldierLevel extends CombatStats {
+  /** 올가미병: 맞힌 적 감속 비율·시간 */
+  slow?: number;
+  slowSeconds?: number;
 }
 
 export interface Chain {
@@ -118,7 +165,13 @@ export interface Chain {
   spawnWeight: number;
   color: string;
   tierNames: string[];
-  hero: CombatStats;
+  /** 때 맞춤 ([11]-2): sun = 낮에 머지하면 강함 / moon = 밤 */
+  side: 'sun' | 'moon';
+  growth: ChainGrowth;
+  /** 전투 중 머지 버프 (§5.17-3) */
+  buff: 'heal' | 'momentum';
+  /** 전투 중 머지 병사 ([11]-1): shield = 접촉한 적 정지·반격을 먼저 받음 / snare = 맞힌 적 감속 */
+  soldier: { kind: 'shield' | 'snare'; name: string; levels: SoldierLevel[] };
 }
 
 export interface Monsters {
@@ -206,8 +259,6 @@ export interface Diary {
   result: { backflow: string[]; manySunk: string[]; default: string[] };
   /** 밤 문장 (§5.11-6) */
   night: { layerCleared: string[]; tried: string[]; none: string[] };
-  /** 자라기 문장 (§5.14-2, §5.15-4): 자라기가 이어지는 날 */
-  growth: string[];
   forgottenDay: string;
 }
 
@@ -258,7 +309,7 @@ export interface Recipes {
 
 export interface GameData {
   balance: Balance;
-  units: Units;
+  heroes: Heroes;
   chains: Chain[];
   monsters: Monsters;
   events: Events;

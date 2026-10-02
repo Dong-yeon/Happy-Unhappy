@@ -17,17 +17,9 @@ const MAX = data.balance.grid.maxTier;
 function game(edit: (d: GameData) => void = () => {}, cols = 4, rows = 4): GameState {
   const d = structuredClone(data);
   edit(d);
-  const g = new GameState(d, { cols, rows }, mulberry32(1), gameGeometry(d.balance.lane.laneCap), 1);
+  const g = new GameState(d, { cols, rows }, mulberry32(1), gameGeometry(d.balance.merge.soldierCap + 1), 1);
   g.debugForceEvent('plain');
-  g.confirmDay();
-  g.wave.paused = true; // 걱정 없이 입력만
-  return g;
-}
-
-/** 밤으로 (심연 레인은 밤에만 돈다, §5.11). 테스트 동안 밤이 끝나지 않게 */
-function toNight(g: GameState): GameState {
-  g.debugToNight();
-  g.nightTimer = 1e6;
+  g.confirmDay(); // 낮(오펜스) 시작 (§5.17-10)
   return g;
 }
 
@@ -67,7 +59,7 @@ describe('DayStats 입력 집계', () => {
     expect(g.dayStats.merges).toBe(0);
   });
 
-  it('gridFullSeconds: waves 단계에서 빈칸이 없던 틱 × FIXED_DT', () => {
+  it('gridFullSeconds: 낮·밤에 빈칸이 없던 틱 × FIXED_DT', () => {
     const g = game();
     g.grid.cells.fill(null);
     for (let i = 0; i < g.grid.cells.length; i++) put(g, i, DOG, 1);
@@ -79,7 +71,7 @@ describe('DayStats 입력 집계', () => {
   });
 
   it('layerClearTimes: 층 돌파 시각(playTime), layersCleared와 개수 같음', () => {
-    const g = toNight(game());
+    const g = game();
     g.debugBreakLayer();
     g.tick(FIXED_DT);
     const t1 = g.playTime;
@@ -90,34 +82,36 @@ describe('DayStats 입력 집계', () => {
     expect(g.dayStats.layersCleared).toBe(2);
   });
 
-  it('lostReturns · abyssDeaths · stallSeconds도 그날 기록 (일생 stats와 같은 증가량)', () => {
-    const g = game((d) => {
-      d.balance.lane.abyssAdvanceSpeed = 0;
-      d.balance.grid.returnQueueCap = 0;
-    });
-    toNight(g);
-    // 귀환 소실: 그리드 가득 + 대기열 상한 0 → 층 돌파 귀환 조각 소실
-    g.summon(g.debugGrant(DOG, 1)!, 'unhappy');
+  it('lostReturns · offenseFell · stallSeconds도 그날 기록 (판 stats와 같은 증가량), 병사 쓰러짐은 stats.abyssDeaths', () => {
+    const g = new GameState(structuredClone(data), { cols: 4, rows: 4 }, mulberry32(1), gameGeometry(data.balance.merge.soldierCap + 1), 1);
+    g.debugForceEvent('first_tooth');
+    g.confirmDay('unhappy'); // face: 첫 층 돌파 때 조각 +1
+    // 지급 소실: 그리드 가득 → 보너스 조각 사라짐
     for (let i = 0; i < g.grid.cells.length; i++) if (!g.grid.cells[i]) put(g, i, BLANKET, 1);
     g.debugBreakLayer();
     g.tick(FIXED_DT);
     expect(g.dayStats.lostReturns).toBe(g.lostReturns);
-    expect(g.dayStats.lostReturns).toBeGreaterThan(0);
-    // 심연 사망
-    g.grid.cells[0] = null;
-    g.summon(g.debugGrant(DOG, 1)!, 'unhappy');
+    expect(g.dayStats.lostReturns).toBe(1);
+    // 전투 중 머지 → 병사, 그다음 낮 우리 편 전멸 (병사 쓰러짐 + 영웅 쓰러짐 → 낮 끝)
+    g.grid.cells.fill(null);
+    put(g, 0, DOG, 1);
+    put(g, 1, DOG, 1);
+    expect(g.drop(0, 1)).toBe('merge');
+    expect(g.abyss.soldierCount).toBe(1);
     g.debugKillAbyssUnits();
     g.tick(FIXED_DT);
-    expect(g.dayStats.abyssDeaths).toBe(g.stats.abyssDeaths);
-    expect(g.dayStats.abyssDeaths).toBe(1);
+    expect(g.stats.abyssDeaths).toBe(1);
+    expect(g.lastDayStats ?? g.dayStats).toBeDefined();
+    expect(g.phase).toBe('night');
+    expect(g.dayStats.offenseFell).toBe(1);
     expect(g.dayStats.stallSeconds).toBe(g.stats.stallSeconds);
+    expect(g.dayStats.stallSeconds).toBeGreaterThan(0);
   });
 
   it('하루 끝에 lastDayStats로 넘어가고 dayStats는 새로 (배열도 새 것)', () => {
     const g = game();
     g.joy = 100;
     g.spawn();
-    toNight(g);
     g.debugBreakLayer();
     g.tick(FIXED_DT);
     g.debugEndDay();
@@ -127,7 +121,7 @@ describe('DayStats 입력 집계', () => {
   });
 });
 
-describe('GameStats: tier3ByChain · heroFirstSummonDay, SummonRecord.day', () => {
+describe('GameStats: tier3ByChain, FeedRecord.day', () => {
   it('머지로 3단계가 되면 체인별 +1 (와일드카드 + 2단계 포함), 2단계 머지는 세지 않음', () => {
     const g = game();
     g.grid.cells.fill(null);
@@ -143,18 +137,18 @@ describe('GameStats: tier3ByChain · heroFirstSummonDay, SummonRecord.day', () =
     expect(g.stats.tier3ByChain).toEqual({ [DOG]: 1, [BLANKET]: 1 });
   });
 
-  it('영웅 첫 소환 일차는 체인별로 처음 한 번만 (위·아래 모두)', () => {
+  it('먹이기 기록: 일차·덱·체인·단계·점수 (§5.17-2)', () => {
     const g = game();
-    g.summon(g.debugGrant(DOG, 3)!, 'happy');
+    g.feed(g.debugGrant(DOG, 3)!, 'offense');
     g.debugEndDay();
     g.nextDay();
     g.debugForceEvent('plain');
     g.confirmDay();
-    g.summon(g.debugGrant(DOG, 3)!, 'unhappy');
-    g.summon(g.debugGrant(BLANKET, 3)!, 'unhappy');
-    g.summon(g.debugGrant(BLANKET, 2)!, 'happy');
-    expect(g.stats.heroFirstSummonDay).toEqual({ [DOG]: 1, [BLANKET]: 2 });
-    expect(g.summonLog.map((r) => r.day)).toEqual([1, 2, 2, 2]);
+    g.feed(g.debugGrant(BLANKET, 2)!, 'defense');
+    expect(g.feedLog.map((r) => [r.day, r.role, r.chain, r.tier, r.points])).toEqual([
+      [1, 'offense', DOG, 3, 7],
+      [2, 'defense', BLANKET, 2, 3],
+    ]);
   });
 
   it('새 필드도 저장 round-trip에 포함 (serialize → JSON → fromSave → serialize 동일)', () => {
@@ -163,15 +157,15 @@ describe('GameStats: tier3ByChain · heroFirstSummonDay, SummonRecord.day', () =
     put(g, toIndex(g.grid, 0, 0), DOG, 2);
     put(g, toIndex(g.grid, 1, 0), DOG, 2);
     g.drop(0, 1);
-    g.summon(1, 'happy');
+    g.feed(1, 'defense');
     g.joy = 100;
     g.spawn();
     g.debugEndDay();
     const save = serializeGame(g);
     expect(save.stats.tier3ByChain).toEqual({ [DOG]: 1 });
     expect(save.lastDayStats).toMatchObject({ merges: 1, spawns: 1 });
-    expect(save.summonLog[0].day).toBe(1);
-    const back = GameState.fromSave(data, JSON.parse(JSON.stringify(save)), mulberry32(1), gameGeometry(data.balance.lane.laneCap), {
+    expect(save.feedLog[0].day).toBe(1);
+    const back = GameState.fromSave(data, JSON.parse(JSON.stringify(save)), mulberry32(1), gameGeometry(data.balance.merge.soldierCap + 1), {
       cols: 4,
       rows: 4,
     });

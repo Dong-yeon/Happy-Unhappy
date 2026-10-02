@@ -1,0 +1,22 @@
+{
+  "heroes": [
+    {
+      "id": "nui",
+      "name": "누이",
+      "hp": 120,
+      "atk": 18,
+      "atkInterval": 0.9,
+      "range": 50
+    },
+    {
+      "id": "orabi",
+      "name": "오라비",
+      "hp": 160,
+      "atk": 14,
+      "atkInterval": 1.0,
+      "range": 50
+    }
+  ],
+  "offense": "nui",
+  "defense": "orabi"
+}

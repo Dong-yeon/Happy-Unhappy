@@ -1,4 +1,5 @@
-// 리포트: 시드 N개 결과 → 요약 통계, 콘솔 표, 비교 (스펙 §8.1). M8.8: 챕터 완성률·완성 일차·1-5 도달·자라기 (§5.15-6)
+// 리포트: 시드 N개 결과 → 요약 통계, 콘솔 표, 비교 (스펙 §8.1).
+// M8.9 (§5.17-7, [11]-4): 챕터 완성률·완성 일차, 영웅별 점수·기세·쓰러짐·버프 회복, 병사 수·피해 비중·때 맞춤·상한.
 import type { OverrideValue } from './overrides';
 import type { RunResult } from './runner';
 import type { SimConfig } from './types';
@@ -13,7 +14,7 @@ export interface Summary {
 }
 
 export interface PolicyReport {
-  version: 1;
+  version: 2;
   policy: string;
   createdAt: string;
   options: {
@@ -23,11 +24,13 @@ export interface PolicyReport {
     mode: 'life';
     /** chapter.maxDays */
     days: number;
-    wavesPerDay: number;
+    wavesPerNight: number;
+    /** 이 리포트를 만든 먹이기 배분 r (낮덱 몫, balanced·lazy가 쓴다) */
+    feedRatio: number;
     /** --set으로 덮어쓴 값 (전체 경로 → 값). 없으면 JSON 그대로 */
     overrides?: Record<string, OverrideValue>;
   };
-  sim: Omit<SimConfig, 'm3Goals' | 'm4Goals' | 'm5Goals' | 'm88Goals'>;
+  sim: Omit<SimConfig, 'm3Goals' | 'm5Goals' | 'm89Goals'>;
   summary: Record<string, Summary>;
   /** 첫 가라앉음이 없었던 시드 비율 */
   neverSankRatio: number;
@@ -42,12 +45,14 @@ export interface PolicyReport {
     shadowP90: number;
     lengthMedian: number;
   }[];
-  /** 보스 등장 진단 (§5.7): 슬롯·준비 여부별 처치율, 등장 시 방어 유닛 수 분포 */
+  /** 보스 등장 진단 (§5.7): 슬롯·준비 여부별, 등장 시 디펜스 우리 편 수별 처치율 */
   bossDiag: BossDiag;
-  /** 소환 단계 분포 (전 시드 합산 비율) */
-  tierShare: Record<string, number>;
-  /** 챕터 진행 (M8.8, §5.15-6) */
+  /** 먹인 단계 분포 (전 시드 합산 비율) */
+  feedTierShare: Record<string, number>;
+  /** 챕터 진행 (§5.15-6) */
   chapter: ChapterStats;
+  /** 병사 출전 체인·단별 (전 시드 합) */
+  soldiersByKind: Record<string, number>;
   runs: RunResult[];
 }
 
@@ -98,9 +103,9 @@ export interface BossDiagRow {
 
 export interface BossDiag {
   total: number;
-  /** key = "morning|prep", "noon|-" 처럼 슬롯|준비여부 */
+  /** key = "morning|prep", "noon|-" 처럼 웨이브 칸|준비여부 */
   bySlot: Record<string, BossDiagRow>;
-  /** key = 등장 시 방어 유닛 수 */
+  /** key = 등장 시 디펜스 레인 우리 편 수 (영웅 + 병사) */
   byDefense: Record<string, BossDiagRow>;
 }
 
@@ -165,13 +170,16 @@ export function summarize(values: (number | null)[]): Summary {
   return { mean, median: quantile(xs, 0.5), p10: quantile(xs, 0.1), p90: quantile(xs, 0.9), n: xs.length };
 }
 
-/** 요약에 넣는 지표 (표 순서) */
+const sumPts = (p: Record<string, number>) => Object.values(p).reduce((s, v) => s + v, 0);
+const totalDamage = (r: RunResult) => r.damageHero + r.damageSoldier + r.damageBase;
+
+/** 요약에 넣는 지표 (표 순서). 낮 = 오펜스, 밤 = 디펜스 (역할 기준 이름, §5.17-10) */
 export const METRICS: { key: string; label: string; get: (r: RunResult) => number | null }[] = [
   { key: 'firstSinkWave', label: '첫 가라앉음 웨이브', get: (r) => r.firstSinkWave },
   { key: 'firstSinkDay', label: '첫 가라앉음 일차', get: (r) => r.firstSinkDay },
   { key: 'dayLength', label: '하루 길이(초, ×1)', get: (r) => median(r.dayLengths) },
-  { key: 'dayLengthDay', label: '낮 길이(초)', get: (r) => median(r.dayLengthsDay ?? []) },
-  { key: 'dayLengthNight', label: '밤 길이(초)', get: (r) => median(r.dayLengthsNight ?? []) },
+  { key: 'dayLengthOffense', label: '오펜스(낮) 길이(초)', get: (r) => median(r.dayLengthsOffense) },
+  { key: 'dayLengthDefense', label: '디펜스(밤) 길이(초)', get: (r) => median(r.dayLengthsDefense) },
   { key: 'earlySunk', label: '1~2일차 가라앉음', get: (r) => (r.sunkByDay[0] ?? 0) + (r.sunkByDay[1] ?? 0) },
   {
     key: 'midSunk',
@@ -182,40 +190,36 @@ export const METRICS: { key: string; label: string; get: (r: RunResult) => numbe
   { key: 'kills', label: '처치 수', get: (r) => r.kills },
   { key: 'finalJoy', label: '최종 기쁨', get: (r) => r.finalJoy },
   { key: 'gridFullRatio', label: '그리드 가득 참 비율', get: (r) => r.gridFullRatio },
-  { key: 'summons', label: '소환 수', get: (r) => r.summons },
-  { key: 'meanSummonTier', label: '소환 평균 단계', get: (r) => r.meanSummonTier },
-  { key: 'upRatio', label: '창문(Happy) 비율', get: (r) => r.upRatio },
-  { key: 'downRatio', label: '손거울(Unhappy) 비율', get: (r) => r.downRatio },
-  { key: 'reserved', label: '맡긴 수 (낮 손거울)', get: (r) => r.reserved ?? null },
-  { key: 'reservedRatio', label: '맡긴 비율 (소환 중)', get: (r) => (r.summons ? (r.reserved ?? 0) / r.summons : null) },
-  { key: 'layersCleared', label: '밤 층 돌파', get: (r) => r.layersCleared },
+  { key: 'layersCleared', label: '오펜스 층 돌파', get: (r) => r.layersCleared },
   { key: 'backflows', label: '역류', get: (r) => r.backflows },
   { key: 'bossWins', label: '역류 보스 처치', get: (r) => r.bossWins },
   { key: 'maxShadow', label: '최대 그림자', get: (r) => r.maxShadow },
-  { key: 'stallSeconds', label: '밤 멈춤(초, 잠들기 포함)', get: (r) => r.stallSeconds },
-  { key: 'sleeps', label: '잠들기', get: (r) => r.sleeps ?? null },
-  // v0.9 영웅 규칙 (§5.13-7)
-  { key: 'injuriesDay', label: '부상 (낮)', get: (r) => r.injuriesDay ?? null },
-  { key: 'injuriesNight', label: '부상 (밤)', get: (r) => r.injuriesNight ?? null },
-  { key: 'shiningMade', label: '빛나는 영웅 생성', get: (r) => r.shiningMade ?? null },
-  { key: 'legendsMade', label: '전설 생성', get: (r) => r.legendsMade ?? null },
-  { key: 'bossFloorsReached', label: '보스 층 도달', get: (r) => r.bossFloorsReached ?? null },
-  { key: 'bossFloorsCleared', label: '보스 층 돌파', get: (r) => r.bossFloorsCleared ?? null },
-  { key: 'wildcardsGained', label: '와일드카드 획득', get: (r) => r.wildcardsGained ?? null },
-  { key: 'abyssDeaths', label: '심연 유닛 사망', get: (r) => r.abyssDeaths },
-  { key: 'lostReturns', label: '귀환 소실', get: (r) => r.lostReturns },
+  // §5.17-7
+  { key: 'feeds', label: '먹이기 수', get: (r) => r.feeds },
+  { key: 'offensePoints', label: '낮덱(오펜스) 점수', get: (r) => sumPts(r.heroPoints.offense) },
+  { key: 'defensePoints', label: '밤덱(디펜스) 점수', get: (r) => sumPts(r.heroPoints.defense) },
+  { key: 'merges', label: '머지 수', get: (r) => r.merges },
+  { key: 'battleMergeRatio', label: '전투 중 머지 비율', get: (r) => (r.merges ? r.battleMerges / r.merges : null) },
+  { key: 'momentumAvg', label: '기세 평균 중첩', get: (r) => r.momentumAvg },
+  { key: 'offenseFalls', label: '쓰러짐 (낮 오펜스)', get: (r) => r.offenseFalls },
+  { key: 'defenseFalls', label: '쓰러짐 (밤 디펜스)', get: (r) => r.defenseFalls },
+  { key: 'buffHeal', label: '버프 회복 hp', get: (r) => r.buffHeal },
+  // [11]-4
+  { key: 'soldiers', label: '병사 출전', get: (r) => r.soldiers },
+  { key: 'soldiersCapped', label: '상한으로 막힌 병사', get: (r) => r.soldiersCapped },
+  { key: 'soldierShare', label: '피해 중 병사 비중', get: (r) => (totalDamage(r) > 0 ? r.damageSoldier / totalDamage(r) : null) },
+  { key: 'affinityRatio', label: '때 맞춤 머지 비율 (전투 중)', get: (r) => (r.battleMerges ? r.affinityMerges / r.battleMerges : null) },
+  { key: 'bossFloorsCleared', label: '보스 층 돌파', get: (r) => r.bossFloorsCleared },
+  { key: 'wildcardsGained', label: '와일드카드 획득', get: (r) => r.wildcardsGained },
+  { key: 'abyssDeaths', label: '오펜스 병사 쓰러짐', get: (r) => r.abyssDeaths },
+  { key: 'lostReturns', label: '지급 소실', get: (r) => r.lostReturns },
   { key: 'releases', label: '놓아주기 수', get: (r) => r.releases },
   { key: 'dayJoyDelta', label: '하루 끝−시작 기쁨', get: (r) => dayJoyDeltaMedian(r) },
   { key: 'day1Sunk', label: '1일차 가라앉음', get: (r) => r.day1Sunk },
   { key: 'mistakes', label: '실수(원위치)', get: (r) => r.mistakes },
 ];
 
-export function buildReport(
-  policy: string,
-  runs: RunResult[],
-  options: PolicyReport['options'],
-  cfg: SimConfig,
-): PolicyReport {
+export function buildReport(policy: string, runs: RunResult[], options: PolicyReport['options'], cfg: SimConfig): PolicyReport {
   const summary: Record<string, Summary> = {};
   for (const m of METRICS) summary[m.key] = summarize(runs.map(m.get));
 
@@ -240,18 +244,20 @@ export function buildReport(
 
   const tierCount: Record<string, number> = {};
   let total = 0;
+  const soldiersByKind: Record<string, number> = {};
   for (const r of runs) {
-    for (const [t, c] of Object.entries(r.summonTiers)) {
+    for (const [t, c] of Object.entries(r.feedTiers)) {
       tierCount[t] = (tierCount[t] ?? 0) + c;
       total += c;
     }
+    for (const [k, c] of Object.entries(r.soldiersByKind)) soldiersByKind[k] = (soldiersByKind[k] ?? 0) + c;
   }
-  const tierShare: Record<string, number> = {};
-  for (const [t, c] of Object.entries(tierCount)) tierShare[t] = total === 0 ? 0 : c / total;
+  const feedTierShare: Record<string, number> = {};
+  for (const [t, c] of Object.entries(tierCount)) feedTierShare[t] = total === 0 ? 0 : c / total;
 
-  const { m3Goals: _m3, m4Goals: _m4, m5Goals: _m5, m88Goals: _m88, ...sim } = cfg;
+  const { m3Goals: _m3, m5Goals: _m5, m89Goals: _m89, ...sim } = cfg;
   return {
-    version: 1,
+    version: 2,
     policy,
     createdAt: new Date().toISOString(),
     options,
@@ -260,17 +266,22 @@ export function buildReport(
     neverSankRatio: runs.filter((r) => r.firstSinkWave === null).length / Math.max(1, runs.length),
     curves,
     bossDiag: bossDiagnostics(runs),
-    tierShare,
+    feedTierShare,
     chapter: chapterStats(runs),
+    soldiersByKind,
     runs,
   };
 }
 
 // ── 콘솔 출력 ──
 
-function fmt(v: number, digits = 2): string {
-  if (!Number.isFinite(v)) return '—';
+function fmt(v: number | null | undefined, digits = 2): string {
+  if (v === null || v === undefined || !Number.isFinite(v)) return '—';
   return Number.isInteger(v) ? String(v) : v.toFixed(digits);
+}
+
+function pctOf(x: number): string {
+  return `${fmt(x * 100, 1)}%`;
 }
 
 function table(header: string[], rows: string[][]): string {
@@ -300,12 +311,17 @@ export function overridesLine(r: PolicyReport): string {
     .join(' ')})`;
 }
 
+/** 정책 이름 + r (balanced·lazy) */
+export function policyLabel(r: PolicyReport): string {
+  return r.policy === 'balanced' || r.policy === 'lazy' ? `${r.policy}(${r.options.feedRatio})` : r.policy;
+}
+
 export function formatReport(r: PolicyReport): string {
   const o = r.options;
   const ov = overridesLine(r);
   const lines = [
     ...(ov ? [ov] : []),
-    `■ ${r.policy}  (시드 ${o.seeds}, 그리드 ${o.grid}, ${o.days}일 일생)`,
+    `■ ${policyLabel(r)}  (시드 ${o.seeds}, 그리드 ${o.grid}, 최대 ${o.days}일)`,
     table(
       // n: 값이 있는 시드 수 (첫 가라앉음이 없던 시드는 빠진다)
       ['지표', '평균', '중앙값', 'p10', 'p90', 'n'],
@@ -315,81 +331,52 @@ export function formatReport(r: PolicyReport): string {
       }),
     ),
     `가라앉음 없이 끝난 시드: ${fmt(r.neverSankRatio * 100, 1)}%`,
-    `소환 단계 분포: ${Object.entries(r.tierShare)
-      .sort(([a], [b]) => Number(a) - Number(b))
-      .map(([t, s]) => `${t}단계 ${fmt(s * 100, 1)}%`)
-      .join(' / ') || '—'}`,
+    `먹인 단계 분포: ${tierLine(r.feedTierShare)}`,
     '일차별 (하루 끝 기쁨 중앙값 [p10~p90] / 가라앉음 평균 / 그림자 중앙값 [p90] / 하루 길이 중앙값):',
     curveLine(r),
     formatBossDiag(r),
     formatChapter(r),
-    formatGrowth(r),
-    heroLine(r),
+    formatHeroes(r),
   ];
   return lines.join('\n');
 }
 
-/** v0.9 영웅 규칙 요약 한 줄: 전설 종류(전 시드 합), 보스 층 도달·돌파 판 비율 */
-function heroLine(r: PolicyReport): string {
-  const kinds: Record<string, number> = {};
-  for (const run of r.runs) for (const [k, n] of Object.entries(run.legendsByRecipe ?? {})) kinds[k] = (kinds[k] ?? 0) + n;
-  const n = Math.max(1, r.runs.length);
-  const reached = r.runs.filter((x) => (x.bossFloorsReached ?? 0) > 0).length / n;
-  const cleared = r.runs.filter((x) => (x.bossFloorsCleared ?? 0) > 0).length / n;
-  const kindText = Object.entries(kinds).map(([k, c]) => `${k} ${c}`).join(' · ') || '없음';
-  return `영웅 규칙: 전설 종류(전 시드 합) ${kindText} / 보스 층 도달한 판 ${fmt(reached * 100, 1)}% · 돌파한 판 ${fmt(cleared * 100, 1)}%`;
+function tierLine(share: Record<string, number>): string {
+  return (
+    Object.entries(share)
+      .sort(([a], [b]) => Number(a) - Number(b))
+      .map(([t, s]) => `${t}단계 ${fmt(s * 100, 1)}%`)
+      .join(' / ') || '—'
+  );
 }
 
-function pctOf(x: number): string {
-  return `${fmt(x * 100, 1)}%`;
-}
-
-/** 챕터 진행 (§5.15-6): 완성률·완성 일차·1-5 도달·끝난 스테이지 + 성장 기록 */
+/** 챕터 진행 (§5.15-6): 완성률·완성 일차·1-5 도달·끝난 스테이지 */
 export function formatChapter(r: PolicyReport): string {
   const c = r.chapter;
   if (!c || c.n === 0) return '챕터: 판 없음';
   const q = (s: Summary, d = 1) => (s.n ? `p10 ${fmt(s.p10, d)} / p50 ${fmt(s.median, d)} / p90 ${fmt(s.p90, d)} (n=${s.n})` : '—');
-  const growths = r.runs.flatMap((x) => (x.growths ?? []));
-  const memories = r.runs.reduce((a, x) => a + (x.growths ?? []).reduce((b, g) => b + g.pairs, 0), 0) / Math.max(1, r.runs.length);
   return [
     `챕터 완성률 ${pctOf(c.completedRate)} · 미완성 ${pctOf(c.unfinishedRate)}${c.completedRate + c.unfinishedRate < 1 - 1e-9 ? ` · 중단 ${pctOf(1 - c.completedRate - c.unfinishedRate)}` : ''}`,
     `  완성 일차: ${q(c.completeDay)}`,
     `  1-5 도달 일차: ${q(c.turningPointReachedDay)} · 도달 ${pctOf(c.turningPointReachedRate)}  / 1-5 정화 일차: ${q(c.turningPointClearedDay)}`,
     `  끝난 스테이지: ${q(c.stage)}`,
-    `  판당 기억 ${fmt(memories, 2)} (자라기 ${growths.length}회 합)`,
   ].join('\n');
 }
 
-/** 자라기별 (§5.14-5): 소진 전설 행복/정화 평균, 기억 평균, 갈래 분포 + 특성 스택 평균 */
-export function formatGrowth(r: PolicyReport): string {
-  const runs = r.runs;
-  const maxN = Math.max(0, ...runs.map((x) => x.growths?.length ?? 0));
-  if (maxN === 0) return '자라기: 없음';
-  const rows: string[][] = [];
-  for (let i = 0; i < maxN; i++) {
-    const gs = runs.flatMap((x) => (x.growths && x.growths[i] ? [x.growths[i]] : []));
-    const n = gs.length;
-    const mean = (f: (g: (typeof gs)[number]) => number) => (n ? gs.reduce((s, g) => s + f(g), 0) / n : NaN);
-    const br = (b: string) => pctOf(n ? gs.filter((g) => g.branch === b).length / n : 0);
-    rows.push([
-      `${i + 1}번째 (${[...new Set(gs.map((g) => g.day))].join('/')}일)`,
-      String(n),
-      fmt(mean((g) => g.happy), 2),
-      fmt(mean((g) => g.purified), 2),
-      fmt(mean((g) => g.pairs), 2),
-      `${br('happy')} / ${br('unhappy')} / ${br('together')} / ${br('slow')}`,
-    ]);
-  }
-  const traitKeys = [...new Set(runs.flatMap((x) => Object.keys(x.traits ?? {})))].sort();
-  const n = Math.max(1, runs.length);
-  const traitText = traitKeys.length
-    ? traitKeys.map((k) => `${k} ${fmt(runs.reduce((s, x) => s + (x.traits?.[k] ?? 0), 0) / n, 2)}`).join(' · ')
-    : '없음';
-  const allTogether = runs.filter((x) => (x.growths?.length ?? 0) > 0 && x.growths.every((g) => g.branch === 'together')).length;
+/** 영웅별 최종 체인 점수 (전 시드 평균) + 병사 체인·단별 수 */
+export function formatHeroes(r: PolicyReport): string {
+  const n = Math.max(1, r.runs.length);
+  const chains = [...new Set(r.runs.flatMap((x) => [...Object.keys(x.heroPoints.offense), ...Object.keys(x.heroPoints.defense)]))].sort();
+  const ids = (role: 'offense' | 'defense') => [...new Set(r.runs.map((x) => x.heroIds[role]))].join('/');
+  const line = (role: 'offense' | 'defense') =>
+    chains.length ? chains.map((c) => `${c} ${fmt(r.runs.reduce((s, x) => s + (x.heroPoints[role][c] ?? 0), 0) / n, 1)}`).join(' · ') : '없음';
+  const sold = Object.entries(r.soldiersByKind)
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([k, c]) => `${k}단 ${fmt(c / n, 2)}`)
+    .join(' · ');
   return [
-    table(['자라기', 'n', '행복 전설', '정화 전설', '기억', '갈래 happy / unhappy / together / slow'], rows),
-    `특성 스택 평균 (일생 끝): ${traitText}`,
-    `모든 자라기가 together인 판: ${pctOf(allTogether / n)} (기록용)`,
+    `영웅 최종 점수 (판당 평균) — 낮덱 ${ids('offense')}: ${line('offense')} / 밤덱 ${ids('defense')}: ${line('defense')}`,
+    `병사 출전 (판당 평균, 체인:단): ${sold || '없음'}`,
   ].join('\n');
 }
 
@@ -402,7 +389,7 @@ function curveLine(r: PolicyReport): string {
     .join('\n');
 }
 
-const SLOT_LABEL: Record<string, string> = { morning: '아침', noon: '낮', evening: '저녁' };
+const SLOT_LABEL: Record<string, string> = { morning: '밤 1웨이브', noon: '밤 2웨이브', evening: '밤 3웨이브' };
 
 /** 보스 등장 진단 표 (§5.7) */
 export function formatBossDiag(r: PolicyReport): string {
@@ -417,28 +404,20 @@ export function formatBossDiag(r: PolicyReport): string {
   );
   const defRows = Object.keys(d.byDefense)
     .sort((a, b) => Number(a) - Number(b))
-    .map((k) => [`방어 유닛 ${k}기`, String(d.byDefense[k].n), String(d.byDefense[k].wins), pct(d.byDefense[k].winRate)]);
+    .map((k) => [`디펜스 우리 편 ${k}`, String(d.byDefense[k].n), String(d.byDefense[k].wins), pct(d.byDefense[k].winRate)]);
   return [
-    `보스 등장 진단 (전 시드 ${d.total}회): 슬롯·준비 여부별 / 등장 시 방어 유닛 수별`,
+    `보스 등장 진단 (전 시드 ${d.total}회): 웨이브·준비 여부별 / 등장 시 디펜스 우리 편(영웅+병사) 수별`,
     table(['구분', '등장', '처치', '처치율'], [...slotRows, ...defRows]),
   ].join('\n');
 }
 
 /** 정책 간 비교 표 (중앙값 중심) */
 export function formatComparison(reports: PolicyReport[]): string {
-  const keys = ['sunk', 'earlySunk', 'midSunk', 'layersCleared', 'backflows', 'downRatio', 'reservedRatio', 'dayLengthDay', 'injuriesDay', 'injuriesNight', 'shiningMade', 'legendsMade', 'bossFloorsCleared', 'wildcardsGained'];
-  const header = [
-    '정책',
-    ...keys.map((k) => METRICS.find((m) => m.key === k)!.label + ' (중앙값)'),
-    '무가라앉음%',
-    '완성%',
-    '완성일 p50',
-    '1-5 도달 p50',
-  ];
+  const keys = ['sunk', 'earlySunk', 'midSunk', 'layersCleared', 'backflows', 'offensePoints', 'defensePoints', 'battleMergeRatio', 'momentumAvg', 'offenseFalls', 'defenseFalls', 'soldiers', 'soldierShare', 'affinityRatio', 'soldiersCapped'];
+  const header = ['정책', ...keys.map((k) => METRICS.find((m) => m.key === k)!.label + ' (중앙값)'), '완성%', '완성일 p50', '1-5 도달 p50'];
   const rows = reports.map((r) => [
-    r.policy,
+    policyLabel(r),
     ...keys.map((k) => fmt(r.summary[k].median) + (r.summary[k].n < r.runs.length ? ` (n=${r.summary[k].n})` : '')),
-    fmt(r.neverSankRatio * 100, 1),
     fmt(r.chapter.completedRate * 100, 1),
     fmt(r.chapter.completeDay.median, 1),
     fmt(r.chapter.turningPointReachedDay.median, 1),
@@ -448,26 +427,24 @@ export function formatComparison(reports: PolicyReport[]): string {
 
 /** --compare: 같은 정책의 수치 변경 전후 */
 export function formatCompare(a: PolicyReport, b: PolicyReport): string {
-  const rows = METRICS.map((m) => {
+  const rows = METRICS.filter((m) => a.summary[m.key] && b.summary[m.key]).map((m) => {
     const x = a.summary[m.key];
     const y = b.summary[m.key];
     const d = y.median - x.median;
     return [m.label, fmt(x.mean), fmt(y.mean), fmt(x.median), fmt(y.median), (d > 0 ? '+' : '') + fmt(d)];
   });
+  rows.push(['챕터 완성률', pctOf(a.chapter.completedRate), pctOf(b.chapter.completedRate), '', '', '']);
   const head =
-    `비교: ${a.policy} (${a.createdAt}) → ${b.policy} (${b.createdAt})` +
+    `비교: ${policyLabel(a)} (${a.createdAt}) → ${policyLabel(b)} (${b.createdAt})` +
     `\n  A ${overridesLine(a) || '(JSON 그대로)'}\n  B ${overridesLine(b) || '(JSON 그대로)'}`;
   const warn =
-    a.policy !== b.policy ||
-    a.options.grid !== b.options.grid ||
-    a.options.days !== b.options.days ||
-    (a.options.mode ?? null) !== (b.options.mode ?? null)
-      ? '\n※ 정책·그리드·일생 조건이 다릅니다. 조건을 맞춰 비교하세요 (M5 이전 리포트와는 비교하지 마세요).'
+    a.policy !== b.policy || a.options.grid !== b.options.grid || a.options.days !== b.options.days
+      ? '\n※ 정책·그리드·판 조건이 다릅니다. 조건을 맞춰 비교하세요 (M8.9 이전 리포트와는 비교하지 마세요).'
       : '';
   return `${head}${warn}\n${table(['지표', '평균 A', '평균 B', '중앙값 A', '중앙값 B', 'Δ중앙값'], rows)}`;
 }
 
-// ── §8.2 M3 부분 목표 ──
+// ── §8.2 목표 ──
 
 export interface GoalCheck {
   /** 비교 표 열 이름 (짧게). 판정 기준 안내 같은 항목은 없음 */
@@ -477,10 +454,16 @@ export interface GoalCheck {
   detail: string;
 }
 
-/**
- * §8.2 M3 부분 목표 (v0.4.1 표). M5부터는 실제 하루 구조(--until life) 기준.
- * 방어만 있는 M3에서는 "붕괴 시점"이 아니라 "경제가 실제 제약인가"를 본다.
- */
+/** --saveRoundTrip 결과 (정책별 일치 시드 수) */
+export interface RoundTripCheck {
+  policy: string;
+  matched: number;
+  total: number;
+  /** 어긋난 시드 (앞 몇 개) */
+  mismatchSeeds: number[];
+}
+
+/** §8.2 M3 부분 목표 중 M8.9에서도 뜻이 있는 것: idle 1일차 가라앉음, 기쁨이 남지 않음, 그리드가 찰 때가 있음 */
 export function checkM3Goals(reports: PolicyReport[], goals: SimConfig['m3Goals']): GoalCheck[] {
   const out: GoalCheck[] = [];
   const na = (label: string, why: string) => out.push({ label, pass: null, detail: why });
@@ -488,7 +471,7 @@ export function checkM3Goals(reports: PolicyReport[], goals: SimConfig['m3Goals'
   const idle = reports.find((r) => r.policy === 'idle');
   const idleLabel = `idle: ${goals.idleSinkByDay}일차에 가라앉음`;
   if (idle) {
-    const limit = goals.idleSinkByDay * idle.options.wavesPerDay;
+    const limit = goals.idleSinkByDay * idle.options.wavesPerNight;
     const ok = idle.runs.every((r) => r.firstSinkWave !== null && r.firstSinkWave <= limit);
     out.push({ label: idleLabel, pass: ok, detail: `첫 가라앉음 웨이브 중앙값 ${fmt(idle.summary.firstSinkWave.median)} (웨이브 ${limit} 이내, 전 시드 ${ok ? '충족' : '미충족'})` });
   } else na(idleLabel, 'idle을 실행하지 않음');
@@ -505,14 +488,6 @@ export function checkM3Goals(reports: PolicyReport[], goals: SimConfig['m3Goals'
         ? `하루 끝−시작 기쁨 중앙값 ${fmt(med)} [p10 ${fmt(quantile(deltas, 0.1))} ~ p90 ${fmt(quantile(deltas, 0.9))}], 충족한 날 ${fmt(shareOk * 100, 1)}%`
         : '하루 단위 기록 없음',
     });
-
-    const t1 = bal.tierShare['1'] ?? 0;
-    out.push({
-      label: `balanced: 1단계만으로 버티지 못함 (1단계 소환 비율 ≤ ${fmt(goals.tier1ShareMax * 100, 0)}%)`,
-      pass: t1 <= goals.tier1ShareMax,
-      detail: `소환 단계 분포 ${tierLine(bal)}`,
-    });
-
     const withFull = bal.runs.filter((r) => r.gridFullRatio > goals.gridFullRatioMin).length / Math.max(1, bal.runs.length);
     const g = bal.summary.gridFullRatio;
     out.push({
@@ -521,133 +496,30 @@ export function checkM3Goals(reports: PolicyReport[], goals: SimConfig['m3Goals'
       detail: `가득 참 비율 평균 ${fmt(g.mean, 4)} / 중앙값 ${fmt(g.median, 4)}, 가득 차는 순간이 있는 시드 ${fmt(withFull * 100, 1)}%`,
     });
   } else na('balanced', 'balanced를 실행하지 않음');
-
-  const hoard = reports.find((r) => r.policy === 'hoarder');
-  if (hoard && bal) out.push(hoarderCheck(hoard, bal));
-  else na('hoarder', 'hoarder와 balanced를 함께 실행해야 비교 가능');
   return out;
 }
 
-/** hoarder: balanced보다 나쁨 = 챕터 완성률이 더 낮음 (§5.15-6, 결말 점수 비교 대체) */
-function hoarderCheck(hoard: PolicyReport, bal: PolicyReport): GoalCheck {
-  return {
-    id: 'hoarder<B',
-    label: 'hoarder: balanced보다 나쁨 (챕터 완성률)',
-    pass: hoard.chapter.completedRate < bal.chapter.completedRate,
-    detail:
-      `완성률 hoarder ${pctOf(hoard.chapter.completedRate)} vs balanced ${pctOf(bal.chapter.completedRate)}` +
-      ` (참고: 가라앉은 수 중앙값 ${fmt(hoard.summary.sunk.median)} vs ${fmt(bal.summary.sunk.median)})`,
-  };
-}
-
-function tierLine(r: PolicyReport): string {
-  return (
-    Object.entries(r.tierShare)
-      .sort(([a], [b]) => Number(a) - Number(b))
-      .map(([t, s]) => `${t}단계 ${fmt(s * 100, 1)}%`)
-      .join(' / ') || '—'
-  );
-}
-
-/**
- * §8.2 M4 부분 목표 (14일 일생). 수치 기준은 sim.json m4Goals. M5부터는 실제 하루 구조 기준.
- */
-export function checkM4Goals(reports: PolicyReport[], goals: SimConfig['m4Goals']): GoalCheck[] {
-  const out: GoalCheck[] = [];
-  const get = (name: string) => reports.find((r) => r.policy === name);
-
-  const hap = get('alwaysHappy');
-  if (hap) {
-    const maxLayers = Math.max(...hap.runs.map((r) => r.layersCleared));
-    out.push({
-      id: 'H 역류≥3',
-      label: `alwaysHappy: 역류 반복 (중앙값 ≥ ${goals.alwaysHappyBackflowsMin}회)`,
-      pass: hap.summary.backflows.median >= goals.alwaysHappyBackflowsMin,
-      detail: `역류 중앙값 ${fmt(hap.summary.backflows.median)} [p10 ${fmt(hap.summary.backflows.p10)} ~ p90 ${fmt(hap.summary.backflows.p90)}]`,
-    });
-    out.push({ id: 'H 층0', label: 'alwaysHappy: 층 돌파 0', pass: maxLayers === 0, detail: `층 돌파 최대 ${maxLayers}` });
-  } else out.push({ label: 'alwaysHappy', pass: null, detail: '실행하지 않음' });
-
-  const unh = get('alwaysUnhappy');
-  if (unh) {
-    const share = unh.runs.map((r) => (r.day1Worries ? r.day1Sunk / r.day1Worries : 0)).sort((a, b) => a - b);
-    const med = quantile(share, 0.5);
-    out.push({
-      id: 'U 1일차',
-      label: `alwaysUnhappy: 1일차부터 가라앉음 다수 (1일차 걱정의 ${fmt(goals.alwaysUnhappyDay1SunkShareMin * 100, 0)}% 이상, 중앙값)`,
-      pass: med >= goals.alwaysUnhappyDay1SunkShareMin,
-      detail: `1일차 가라앉은 비율 중앙값 ${fmt(med * 100, 1)}%, 전체 가라앉음 중앙값 ${fmt(unh.summary.sunk.median)}`,
-    });
-    out.push({
-      id: 'U 층',
-      label: 'alwaysUnhappy: 층 돌파는 일어남',
-      pass: unh.summary.layersCleared.median >= 1,
-      detail: `층 돌파 중앙값 ${fmt(unh.summary.layersCleared.median)}`,
-    });
-  } else out.push({ label: 'alwaysUnhappy', pass: null, detail: '실행하지 않음' });
-
-  const bal = get('balanced');
-  if (bal) {
-    const days = bal.options.days;
-    const needLayers = days * goals.balancedLayersPerDayMin;
-    const [lo, hi] = goals.balancedDownRatio;
-    const down = bal.summary.downRatio.median;
-    out.push({
-      id: 'B 역류',
-      label: `balanced: 역류 0~${goals.balancedBackflowsMax}회 (중앙값)`,
-      pass: bal.summary.backflows.median <= goals.balancedBackflowsMax,
-      detail: `역류 중앙값 ${fmt(bal.summary.backflows.median)} [p10 ${fmt(bal.summary.backflows.p10)} ~ p90 ${fmt(bal.summary.backflows.p90)}]`,
-    });
-    out.push({
-      id: 'B 층',
-      label: `balanced: 층 돌파 꾸준함 (${fmt(days, 0)}일에 ${fmt(needLayers, 0)}층 이상, 중앙값)`,
-      pass: bal.summary.layersCleared.median >= needLayers,
-      detail: `층 돌파 중앙값 ${fmt(bal.summary.layersCleared.median)} [p10 ${fmt(bal.summary.layersCleared.p10)} ~ p90 ${fmt(bal.summary.layersCleared.p90)}]`,
-    });
-    out.push({
-      id: 'B 손거울',
-      label: `balanced: Unhappy에게 보낸 비율 ${fmt(lo * 100, 0)}~${fmt(hi * 100, 0)}% (중앙값)`,
-      pass: down >= lo && down <= hi,
-      detail: `손거울 비율 중앙값 ${fmt(down * 100, 1)}%`,
-    });
-    out.push({
-      id: 'B 소실',
-      label: `귀환 대기열 소실: balanced에서 거의 없음 (판당 평균 ≤ ${goals.balancedLostReturnsMeanMax})`,
-      pass: bal.summary.lostReturns.mean <= goals.balancedLostReturnsMeanMax,
-      detail: `소실 평균 ${fmt(bal.summary.lostReturns.mean)} / 최대 ${Math.max(...bal.runs.map((r) => r.lostReturns))}`,
-    });
-  } else out.push({ label: 'balanced', pass: null, detail: '실행하지 않음' });
-
-  const hoard = get('hoarder');
-  if (hoard && bal) out.push(hoarderCheck(hoard, bal));
-  else out.push({ label: 'hoarder', pass: null, detail: 'hoarder와 balanced를 함께 실행해야 비교 가능' });
-  return out;
-}
-
-/**
- * §8.2 M5 부분 목표 (--until life, 실제 하루 구조). 수치 기준은 sim.json m5Goals.
- */
+/** §8.2 M5 부분 목표 중 남는 것: 준비 시간 있는 보스 처치율, balanced 역류·초반, 하루 길이 보고 */
 export function checkM5Goals(reports: PolicyReport[], goals: SimConfig['m5Goals']): GoalCheck[] {
   const out: GoalCheck[] = [];
   const get = (name: string) => reports.find((r) => r.policy === name);
   const pct = (x: number | null) => (x === null ? '—' : `${fmt(x * 100, 1)}%`);
 
-  // 준비 시간이 있는 아침 보스 중 등장 시 방어 유닛 ≥ N기인 경우의 처치율, 전 정책 합산 (v0.6.1 §5.9-5)
+  // 낮에 예약되어 준비 시간이 있는 밤 첫 웨이브 보스, 등장 시 디펜스 영웅이 서 있었던 경우의 처치율 (전 정책 합산)
   {
-    const minDef = goals.prepMorningMinDefense;
-    const prepped = reports.flatMap((r) => r.runs.flatMap((run) => run.bossLog)).filter((b) => b.slot === 'morning' && b.prep);
-    const ready = prepped.filter((b) => b.defenseUnits >= minDef && b.win !== null);
+    const prepped = reports.flatMap((r) => r.runs.flatMap((run) => run.bossLog)).filter((b) => b.prep);
+    const ready = prepped.filter((b) => b.heroUp && b.win !== null);
     const wins = ready.filter((b) => b.win).length;
     const rate = ready.length ? wins / ready.length : null;
     out.push({
       id: '준비보스',
-      label: `준비 시간이 있는 아침 보스, 등장 시 방어 ≥ ${minDef}기: 처치율 ≥ ${fmt(goals.prepMorningWinRateMin * 100, 0)}% (전 정책 합산, D-021)`,
+      label: `준비 시간이 있는 보스, 등장 시 영웅이 서 있음: 처치율 ≥ ${fmt(goals.prepMorningWinRateMin * 100, 0)}% (전 정책 합산, D-021)`,
       pass: rate === null ? null : rate >= goals.prepMorningWinRateMin,
       detail:
-        `해당 ${ready.length}회, 처치 ${wins}회 (${pct(rate)}) · 준비된 아침 보스 전체 ${prepped.length}회 (정책별 해당/처치: ` +
+        `해당 ${ready.length}회, 처치 ${wins}회 (${pct(rate)}) · 준비 시간 있는 보스 전체 ${prepped.length}회 (정책별 해당/처치: ` +
         reports
           .map((r) => {
-            const rs = r.runs.flatMap((run) => run.bossLog).filter((b) => b.slot === 'morning' && b.prep && b.defenseUnits >= minDef && b.win !== null);
+            const rs = r.runs.flatMap((run) => run.bossLog).filter((b) => b.prep && b.heroUp && b.win !== null);
             return `${r.policy} ${rs.length}/${rs.filter((b) => b.win).length}`;
           })
           .join(', ') +
@@ -663,13 +535,6 @@ export function checkM5Goals(reports: PolicyReport[], goals: SimConfig['m5Goals'
       pass: bal.summary.backflows.median <= goals.balancedBackflowsMax,
       detail: `역류 중앙값 ${fmt(bal.summary.backflows.median)} [p10 ${fmt(bal.summary.backflows.p10)} ~ p90 ${fmt(bal.summary.backflows.p90)}], 보스 처치 중앙값 ${fmt(bal.summary.bossWins.median)}`,
     });
-    const early = bal.summary.earlySunk;
-    out.push({
-      id: `B ${goals.earlyDays}일차`,
-      label: `balanced: 1~${goals.earlyDays}일차 가라앉음 0~${goals.balancedEarlySinkMax}마리 (중앙값, 초반은 쉽게)`,
-      pass: early.median <= goals.balancedEarlySinkMax,
-      detail: `1~${goals.earlyDays}일차 가라앉음 중앙값 ${fmt(early.median)} [p90 ${fmt(early.p90)}]`,
-    });
     const len = bal.summary.dayLength;
     const [lo, hi] = goals.dayLengthTargetSeconds;
     out.push({
@@ -677,98 +542,118 @@ export function checkM5Goals(reports: PolicyReport[], goals: SimConfig['m5Goals'
       pass: null,
       detail:
         `balanced 하루 길이 중앙값 ${fmt(len.median, 0)}초 (${fmt(len.median / 60, 1)}분) [p10 ${fmt(len.p10, 0)} ~ p90 ${fmt(len.p90, 0)}]` +
-        ` · 낮 ${fmt(bal.summary.dayLengthDay?.median, 0)}초 + 밤 ${fmt(bal.summary.dayLengthNight?.median, 0)}초`,
+        ` · 오펜스(낮) ${fmt(bal.summary.dayLengthOffense.median, 0)}초 + 디펜스(밤) ${fmt(bal.summary.dayLengthDefense.median, 0)}초`,
     });
   } else out.push({ label: 'balanced', pass: null, detail: '실행하지 않음' });
-
-  const hap = get('alwaysHappy');
-  if (hap) {
-    const maxLayers = Math.max(...hap.runs.map((r) => r.layersCleared));
-    out.push({
-      id: 'H 역류≥3',
-      label: `alwaysHappy: 역류 반복 (중앙값 ≥ ${goals.alwaysHappyBackflowsMin}회)`,
-      pass: hap.summary.backflows.median >= goals.alwaysHappyBackflowsMin,
-      detail: `역류 중앙값 ${fmt(hap.summary.backflows.median)}`,
-    });
-    out.push({ id: 'H 층0', label: 'alwaysHappy: 층 돌파 0', pass: maxLayers === 0, detail: `층 돌파 최대 ${maxLayers}` });
-  } else out.push({ label: 'alwaysHappy', pass: null, detail: '실행하지 않음' });
   return out;
 }
 
-/** --saveRoundTrip 결과 (정책별 일치 시드 수) */
-export interface RoundTripCheck {
-  policy: string;
-  matched: number;
-  total: number;
-  /** 어긋난 시드 (앞 몇 개) */
-  mismatchSeeds: number[];
-}
-
 /**
- * §8.2 M8.8 진행 목표 (§5.15-6, 잠정). 판정 출력만 하고 통과는 M8.7 (b) 튜닝에서.
+ * §8.2 M8.9 진행 목표 (§5.17-7 + [11]-4, 안). 판정 출력만 하고 통과는 (b) 튜닝에서.
  * roundTrip이 주어지면 --saveRoundTrip 일치도 판정한다.
  */
-export function checkM88Goals(reports: PolicyReport[], goals: SimConfig['m88Goals'], roundTrip: RoundTripCheck[] | null): GoalCheck[] {
+export function checkM89Goals(reports: PolicyReport[], goals: SimConfig['m89Goals'], roundTrip: RoundTripCheck[] | null): GoalCheck[] {
   const out: GoalCheck[] = [];
   const get = (name: string) => reports.find((r) => r.policy === name);
   const inRange = (x: number, [lo, hi]: number[]) => x >= lo - 1e-12 && x <= hi + 1e-12;
   const pct0 = (x: number) => fmt(x * 100, 0);
+  const na = (label: string) => out.push({ label, pass: null, detail: '실행하지 않음' });
 
   const bal = get('balanced');
   if (bal) {
     const c = bal.chapter;
+    const lb = policyLabel(bal);
     out.push({
       id: 'B 완성률',
-      label: `balanced: 챕터 완성률 ${pct0(goals.balancedCompleteRate[0])}~${pct0(goals.balancedCompleteRate[1])}%`,
+      label: `${lb}: 챕터 완성률 ${pct0(goals.balancedCompleteRate[0])}~${pct0(goals.balancedCompleteRate[1])}%`,
       pass: inRange(c.completedRate, goals.balancedCompleteRate),
       detail: `완성 ${pctOf(c.completedRate)} · 미완성 ${pctOf(c.unfinishedRate)}`,
     });
     out.push({
       id: 'B 완성일',
-      label: `balanced: 완성 일차 중앙값 ${goals.balancedCompleteDay[0]}~${goals.balancedCompleteDay[1]}일`,
+      label: `${lb}: 완성 일차 중앙값 ${goals.balancedCompleteDay[0]}~${goals.balancedCompleteDay[1]}일`,
       pass: c.completeDay.n > 0 ? inRange(c.completeDay.median, goals.balancedCompleteDay) : false,
       detail: c.completeDay.n ? `중앙값 ${fmt(c.completeDay.median, 1)} [p10 ${fmt(c.completeDay.p10, 1)} ~ p90 ${fmt(c.completeDay.p90, 1)}]` : '완성한 판 없음',
     });
     const mid = bal.summary.midSunk;
     out.push({
       id: 'B 중반',
-      label: `balanced: 중반(${MID_DAYS[0]}~${MID_DAYS[1]}일) 가라앉음 중앙값 ≥ ${goals.balancedMidSunkMin} (긴장)`,
+      label: `${lb}: 중반(${MID_DAYS[0]}~${MID_DAYS[1]}일) 가라앉음 중앙값 ≥ ${goals.balancedMidSunkMin} (긴장)`,
       pass: mid.n > 0 ? mid.median >= goals.balancedMidSunkMin : false,
       detail: mid.n ? `중앙값 ${fmt(mid.median)} [p10 ${fmt(mid.p10)} ~ p90 ${fmt(mid.p90)}] (n=${mid.n}, ${MID_DAYS[0]}일 전에 끝난 판 제외)` : `${MID_DAYS[0]}일까지 간 판 없음`,
     });
     const early = bal.summary.earlySunk;
     out.push({
       id: 'B 초반',
-      label: `balanced: 1~2일차 가라앉음 0~${goals.balancedEarlySinkMax} (중앙값, 초반은 쉽게)`,
+      label: `${lb}: 1~2일차 가라앉음 0~${goals.balancedEarlySinkMax} (중앙값, 초반은 쉽게)`,
       pass: early.median <= goals.balancedEarlySinkMax,
       detail: `중앙값 ${fmt(early.median)} [p90 ${fmt(early.p90)}]`,
     });
-    const bf = bal.summary.backflows;
+    const share = bal.summary.soldierShare;
     out.push({
-      id: 'B 역류',
-      label: `balanced: 역류 중앙값 ${goals.balancedBackflows[0]}~${goals.balancedBackflows[1]}`,
-      pass: inRange(bf.median, goals.balancedBackflows),
-      detail: `중앙값 ${fmt(bf.median)} [p10 ${fmt(bf.p10)} ~ p90 ${fmt(bf.p90)}]`,
+      id: 'B 병사',
+      label: `${lb}: 피해 중 병사 비중 ${pct0(goals.soldierDamageShare[0])}~${pct0(goals.soldierDamageShare[1])}% (중앙값)`,
+      pass: share.n > 0 ? inRange(share.median, goals.soldierDamageShare) : false,
+      detail: `중앙값 ${fmt(share.median * 100, 1)}% [p10 ${fmt(share.p10 * 100, 1)} ~ p90 ${fmt(share.p90 * 100, 1)}]`,
     });
-  } else out.push({ label: 'balanced', pass: null, detail: '실행하지 않음' });
+  } else na('balanced');
 
-  for (const name of ['alwaysHappy', 'alwaysUnhappy', 'random', 'idle']) {
+  for (const name of ['dayOnly', 'nightOnly']) {
     const r = get(name);
     if (!r) {
-      out.push({ label: name, pass: null, detail: '실행하지 않음' });
+      na(name);
       continue;
     }
     out.push({
-      id: `${name} 0%`,
-      label: `${name}: 챕터 완성률 0%`,
-      pass: r.chapter.completedRate === 0,
+      id: `${name}<30`,
+      label: `${name}: 완성률 < ${pct0(goals.oneSidedCompleteMax)}% (한쪽만 키우면 못 깬다)`,
+      pass: r.chapter.completedRate < goals.oneSidedCompleteMax,
       detail: `완성 ${pctOf(r.chapter.completedRate)} · 끝난 스테이지 중앙값 1-${fmt(r.chapter.stage.median, 0)}`,
     });
   }
 
+  const lazy = get('lazy');
+  if (lazy && bal) {
+    const gap = bal.chapter.completedRate - lazy.chapter.completedRate;
+    out.push({
+      id: 'lazy 격차',
+      label: `${policyLabel(lazy)}: 완성률이 ${policyLabel(bal)}보다 ${pct0(goals.lazyGapMin)}%p 이상 낮음 (전투 중 머지가 의미 있다)`,
+      pass: gap >= goals.lazyGapMin - 1e-12,
+      detail: `lazy ${pctOf(lazy.chapter.completedRate)} vs balanced ${pctOf(bal.chapter.completedRate)} (격차 ${fmt(gap * 100, 1)}%p)`,
+    });
+  } else na('lazy');
+
+  const noFeed = get('noFeed');
+  if (noFeed) {
+    out.push({
+      id: 'noFeed<30',
+      label: `noFeed: 완성률 < ${pct0(goals.noFeedCompleteMax)}% (먹이기 없이 머지 효과만으로는 못 깬다)`,
+      pass: noFeed.chapter.completedRate < goals.noFeedCompleteMax,
+      detail: `완성 ${pctOf(noFeed.chapter.completedRate)} · 끝난 스테이지 중앙값 1-${fmt(noFeed.chapter.stage.median, 0)}`,
+    });
+  } else na('noFeed');
+
+  const idle = get('idle');
+  if (idle) out.push({ id: 'idle 0%', label: 'idle: 챕터 완성률 0%', pass: idle.chapter.completedRate === 0, detail: `완성 ${pctOf(idle.chapter.completedRate)}` });
+  else na('idle');
+  const rnd = get('random');
+  if (rnd && bal) {
+    out.push({
+      id: 'random 낮음',
+      label: 'random: 완성률이 balanced보다 낮음',
+      pass: rnd.chapter.completedRate < bal.chapter.completedRate,
+      detail: `random ${pctOf(rnd.chapter.completedRate)} vs balanced ${pctOf(bal.chapter.completedRate)}`,
+    });
+  } else na('random');
   const hoard = get('hoarder');
-  if (hoard && bal) out.push(hoarderCheck(hoard, bal));
-  else out.push({ label: 'hoarder', pass: null, detail: 'hoarder와 balanced를 함께 실행해야 비교 가능' });
+  if (hoard && bal) {
+    out.push({
+      id: 'hoarder<B',
+      label: 'hoarder: 완성률이 balanced보다 낮음',
+      pass: hoard.chapter.completedRate < bal.chapter.completedRate,
+      detail: `hoarder ${pctOf(hoard.chapter.completedRate)} vs balanced ${pctOf(bal.chapter.completedRate)} (참고: 가라앉은 수 중앙값 ${fmt(hoard.summary.sunk.median)} vs ${fmt(bal.summary.sunk.median)})`,
+    });
+  } else na('hoarder');
 
   if (roundTrip) {
     const all = roundTrip.every((r) => r.matched === r.total);
@@ -785,13 +670,9 @@ export function checkM88Goals(reports: PolicyReport[], goals: SimConfig['m88Goal
 }
 
 export function formatGoals(checks: GoalCheck[], title = '§8.2 M3 부분 목표'): string {
-  return [
-    title,
-    ...checks.map((c) => `  [${c.pass === null ? ' - ' : c.pass ? 'OK ' : 'NG '}] ${c.label}\n        ${c.detail}`),
-  ].join('\n');
+  const mark = (p: boolean | null) => (p === null ? '[ - ]' : p ? '[OK ]' : '[NG ]');
+  return [title, ...checks.flatMap((c) => [`  ${mark(c.pass)} ${c.label}`, `        ${c.detail}`])].join('\n');
 }
-
-// ── --sweep: 값별 비교 표 ──
 
 export interface SweepRow {
   value: OverrideValue;
@@ -799,16 +680,10 @@ export interface SweepRow {
   goals: GoalCheck[];
 }
 
-/** 값별로 핵심 지표(중앙값)와 §8.2 목표(M4·M5) 충족 여부를 한 표에 */
+/** 값별로 핵심 지표(중앙값)와 목표 충족 여부를 한 표에 */
 export function formatSweep(key: string, rows: SweepRow[]): string {
-  const med = (rs: PolicyReport[], policy: string, k: string, pct = false) => {
-    const r = rs.find((x) => x.policy === policy);
-    if (!r) return '—';
-    const v = r.summary[k].median;
-    return pct ? `${fmt(v * 100, 0)}%` : fmt(v);
-  };
   const goalIds = [...new Set(rows.flatMap((r) => r.goals.flatMap((g) => (g.id ? [g.id] : []))))];
-  const header = ['값', 'bal 역류', 'bal 보스처치', 'bal 가라앉음', 'bal 층', 'bal 손거울', '하루(초)', '충족', ...goalIds];
+  const header = ['값', '충족', ...goalIds];
   const body = rows.map((row) => {
     const judged = row.goals.filter((g) => g.id && g.pass !== null);
     const ok = judged.filter((g) => g.pass).length;
@@ -816,52 +691,30 @@ export function formatSweep(key: string, rows: SweepRow[]): string {
       const g = row.goals.find((x) => x.id === id);
       return !g || g.pass === null ? '-' : g.pass ? 'OK' : 'NG';
     };
-    return [
-      JSON.stringify(row.value),
-      med(row.reports, 'balanced', 'backflows'),
-      med(row.reports, 'balanced', 'bossWins'),
-      med(row.reports, 'balanced', 'sunk'),
-      med(row.reports, 'balanced', 'layersCleared'),
-      med(row.reports, 'balanced', 'downRatio', true),
-      med(row.reports, 'balanced', 'dayLength'),
-      `${ok}/${judged.length}`,
-      ...goalIds.map(mark),
-    ];
+    return [JSON.stringify(row.value), `${ok}/${judged.length}`, ...goalIds.map(mark)];
   });
-  // 챕터 열 (정책별 완성률 / 완성 일차 중앙값)
-  const policies = [...new Set(rows.flatMap((r) => r.reports.map((p) => p.policy)))];
-  const endHeader = ['값', ...policies.map((p) => `${p} 완성%/일`)];
-  const endBody = rows.map((row) => [
-    JSON.stringify(row.value),
-    ...policies.map((p) => {
-      const r = row.reports.find((x) => x.policy === p);
-      if (!r) return '—';
-      return `${fmt(r.chapter.completedRate * 100, 0)}/${fmt(r.chapter.completeDay.median, 0)}`;
-    }),
-  ]);
-  // 정책별 상세 (§5.15-6): 완성률·가라앉음(전체·1~2일차·중반)·역류·밤 층 돌파·맡긴 비율·낮/밤 길이 (중앙값)
-  const detailHeader = ['값', '정책', '완성%', '완성일', '가라앉음', '1~2일차', '중반', '역류', '밤 층', '맡긴%', '낮(초)', '밤(초)'];
+  // 정책별 상세 (중앙값): 완성률·완성일·가라앉음(전체·1~2일차·중반)·역류·층·점수·병사 비중
+  const detailHeader = ['값', '정책', '완성%', '완성일', '1-5 도달', '가라앉음', '1~2일차', '중반', '역류', '층', '낮덱 점수', '밤덱 점수', '병사 비중', '쓰러짐 낮/밤'];
   const detailBody = rows.flatMap((row) =>
     row.reports.map((r) => {
       const m = (k: string, d = 1) => fmt(r.summary[k]?.median ?? NaN, d);
       return [
         JSON.stringify(row.value),
-        r.policy,
+        policyLabel(r),
         fmt(r.chapter.completedRate * 100, 0),
         fmt(r.chapter.completeDay.median, 1),
+        fmt(r.chapter.turningPointReachedDay.median, 1),
         m('sunk'),
         m('earlySunk'),
         m('midSunk'),
         m('backflows'),
         m('layersCleared'),
-        fmt((r.summary.reservedRatio?.median ?? NaN) * 100, 0),
-        m('dayLengthDay', 0),
-        m('dayLengthNight', 0),
+        m('offensePoints', 0),
+        m('defensePoints', 0),
+        fmt((r.summary.soldierShare?.median ?? NaN) * 100, 0) + '%',
+        `${m('offenseFalls')}/${m('defenseFalls')}`,
       ];
     }),
   );
-  return (
-    `■ --sweep ${key}\n${table(header, body)}\n\n챕터 완성 (완성률 % / 완성 일차 중앙값)\n${table(endHeader, endBody)}` +
-    `\n\n정책별 상세 (중앙값)\n${table(detailHeader, detailBody)}`
-  );
+  return `■ --sweep ${key}\n${table(header, body)}\n\n정책별 상세 (중앙값)\n${table(detailHeader, detailBody)}`;
 }

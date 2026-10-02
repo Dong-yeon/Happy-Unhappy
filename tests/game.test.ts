@@ -7,11 +7,11 @@ import { mulberry32, parseSeed } from '../src/core/rng';
 import { RELEASE_ZONE, dropTarget, gameGeometry } from '../src/scenes/layout';
 
 const data = structuredClone(rawGameData) as unknown as GameData;
-const { spawnCostBase, spawnCostStep, releaseRefund, returnQueueCap } = data.balance.grid;
+const { spawnCostBase, spawnCostStep, releaseRefund } = data.balance.grid;
 const DOG = 'companion_animal';
 
 function game(seed = 1, cols = 4, rows = 4): GameState {
-  const g = new GameState(data, { cols, rows }, mulberry32(seed), gameGeometry(data.balance.lane.laneCap));
+  const g = new GameState(data, { cols, rows }, mulberry32(seed), gameGeometry(data.balance.merge.soldierCap + 1));
   // 1일차를 평범한 하루로 시작 (이벤트 효과가 수치를 흔들지 않게) → waves 단계
   g.debugForceEvent('plain');
   g.confirmDay();
@@ -72,7 +72,7 @@ describe('GameState — 조각 생성', () => {
   });
 });
 
-describe('GameState — 놓아주기·머지 후 귀환 대기열 flush', () => {
+describe('GameState — 놓아주기', () => {
   it('놓아주기: 환급 + 와일드카드 무시', () => {
     const g = game();
     const i2 = g.debugGrant(DOG, 2)!;
@@ -114,42 +114,6 @@ describe('GameState — 놓아주기·머지 후 귀환 대기열 flush', () => 
     const g = game();
     const i = g.debugGrant(WILDCARD, 3)!;
     expect(g.grid.cells[i]!.tier).toBe(0);
-  });
-
-  it('칸이 가득할 때 귀환은 대기 → 머지로 칸이 비면 바로 배치', () => {
-    const g = game(1, 4, 4);
-    for (let i = 0; i < 16; i++) g.debugGrant(DOG, 1);
-    const back = g.newPiece(DOG, 2);
-    expect(g.enqueueReturn(back).queued).toBe(true);
-    const kind = g.drop(0, 1);
-    expect(kind).toBe('merge');
-    expect(g.grid.cells[0]).toBe(back);
-    expect(g.returnQueue).toEqual([]);
-  });
-
-  it('놓아주기로 칸이 비면 바로 배치 (빈 칸이 하나뿐이면 그 칸)', () => {
-    const g = game(1, 4, 4);
-    for (let i = 0; i < 16; i++) g.debugGrant(DOG, 1);
-    const back = g.newPiece(DOG, 2);
-    g.enqueueReturn(back);
-    g.release(5);
-    expect(g.grid.cells[5]).toBe(back);
-  });
-
-  it('같은 시드 → 같은 귀환 배치 칸', () => {
-    const run = () => {
-      const g = game(77, 5, 4);
-      return [1, 2, 3].map(() => g.enqueueReturn(g.newPiece(DOG, 2)).placedAt);
-    };
-    expect(run()).toEqual(run());
-  });
-
-  it(`상한(${returnQueueCap}) 초과분은 소실 수에 누적`, () => {
-    const g = game(1, 4, 4);
-    for (let i = 0; i < 16; i++) g.debugGrant(DOG, 1);
-    for (let i = 0; i < returnQueueCap + 2; i++) g.enqueueReturn(g.newPiece(DOG, 2));
-    expect(g.returnQueue).toHaveLength(returnQueueCap);
-    expect(g.lostReturns).toBe(2);
   });
 });
 

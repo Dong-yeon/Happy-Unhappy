@@ -1,10 +1,10 @@
-// 화면 레이아웃 좌표 (논리 해상도 360×640, 스펙 v0.8 §5.11-2, D-027).
+// 화면 레이아웃 좌표 (논리 해상도 360×640, 스펙 v0.8 §5.11-2, v0.13 §5.17-9).
 // 화면 좌표는 이 파일에만 둔다 (balance.json에 넣지 않음).
 //
 //  0 ┌ HUD ─────────────────────────┐
 // 36 ├ 하늘 띠: 해/달 궤적 ───────────┤
-//136 ├ 땅 띠: 가로 레인 하나 ─────────┤  우리 편 왼쪽, 적 오른쪽. 낮 = 방어 레인, 밤 = 심연 레인
-//376 ├ 포탈 받침  (☀ 창문)(◐ 손거울) ─┤
+//136 ├ 땅 띠: 가로 레인 하나 ─────────┤  우리 편 왼쪽, 적 오른쪽. 낮 = 심연 레인(오펜스), 밤 = 방어 레인(디펜스)
+//376 ├ 영웅 슬롯 [☀ 낮덱] [☾ 밤덱] ──┤  조각을 끌어다 놓으면 먹이기
 //424 ├ 머지 그리드 (4행) ─────────────┤
 //584 ├ 하단 바 ──────────────────────┤
 //640 └──────────────────────────────┘
@@ -12,7 +12,7 @@
 // core 좌표는 바꾸지 않는다 (v0.7까지의 세로 레인 좌표 그대로: 진행 축 y + 표시용 옆 축 x).
 // 화면은 toScreen()으로 변환: 진행 축 → screenX (core y가 큰 쪽 = 거점 = 화면 왼쪽), 옆 축 → screenY.
 
-import type { GameGeometry } from '../core/game';
+import type { GameGeometry, Role } from '../core/game';
 import type { AbyssGeometry, LaneGeometry } from '../core/lane';
 
 export const VIEW_W = 360;
@@ -35,7 +35,7 @@ export const REGION = {
   hud: { x: 0, y: 0, w: VIEW_W, h: HUD_H },
   /** 하늘 띠: 해(낮)·달(밤)이 왼쪽에서 떠서 오른쪽으로 진다 */
   sky: { x: 0, y: HUD_H, w: VIEW_W, h: SKY_BOTTOM - HUD_H },
-  /** 땅 띠: 레인 하나 (낮 = 방어, 밤 = 심연). 드롭하면 그 단계의 포탈 */
+  /** 땅 띠: 레인 하나 (낮 = 심연 오펜스, 밤 = 방어 디펜스) */
   ground: { x: 0, y: SKY_BOTTOM, w: VIEW_W, h: GROUND_BOTTOM - SKY_BOTTOM },
   portalBase: { x: 0, y: GROUND_BOTTOM, w: VIEW_W, h: 48 },
   grid: { x: 0, y: 424, w: VIEW_W, h: 160 },
@@ -44,22 +44,18 @@ export const REGION = {
   debugPanel: { x: 0, y: HUD_H, w: 176, h: GROUND_BOTTOM - HUD_H },
 } as const satisfies Record<string, Rect>;
 
-// ── 포탈 (D-018): 받침 가운데에 나란히. 그리드 밖, 그리드 양 끝이 아님 ──
-export type PortalId = 'happy' | 'unhappy';
-export const PORTAL_RADIUS = 24; // 지름 48
-/** 드롭 판정 반경 (스펙 §4.2 portalHitRadius) */
-export const PORTAL_HIT_RADIUS = 40;
-const PORTAL_OFFSET_X = 44; // 화면 중심에서 좌우 거리 (판정 원이 서로 겹치지 않는 값)
-const PORTAL_Y = REGION.portalBase.y + REGION.portalBase.h / 2;
-export const PORTAL: Record<PortalId, { x: number; y: number }> = {
-  happy: { x: VIEW_W / 2 - PORTAL_OFFSET_X, y: PORTAL_Y }, // ☀ 창문
-  unhappy: { x: VIEW_W / 2 + PORTAL_OFFSET_X, y: PORTAL_Y }, // ◐ 손거울
+// ── 영웅 슬롯 (§5.17-2·9): 구 포탈 받침 자리에 두 칸. 왼쪽 ☀ 낮덱(오펜스) / 오른쪽 ☾ 밤덱(디펜스). 드롭 판정 = 슬롯 사각형 ──
+const SLOT_GAP = 12;
+const SLOT_W = (VIEW_W - 16 - SLOT_GAP) / 2;
+export const HERO_SLOT: Record<Role, Rect> = {
+  offense: { x: 8, y: REGION.portalBase.y + 4, w: SLOT_W, h: REGION.portalBase.h - 8 },
+  defense: { x: 8 + SLOT_W + SLOT_GAP, y: REGION.portalBase.y + 4, w: SLOT_W, h: REGION.portalBase.h - 8 },
 };
-
-/** 맡긴 추억 줄 (손거울 오른쪽, laneCap칸) */
-export const PARTY_ROW = { x: PORTAL.unhappy.x + PORTAL_RADIUS + 8, y: PORTAL_Y, cell: 12, gap: 3 };
+/** 판정은 표시보다 이만큼 넓게 (위·아래만, 두 칸 사이는 겹치지 않게) */
+export const HERO_SLOT_PAD = 6;
 
 // ── core 좌표 (v0.7 세로 레인 그대로. 바꾸면 core·시뮬 결과가 달라진다) ──
+// 레인 슬롯 수는 영웅 1 + soldierCap (gameGeometry 인자)
 const CORE_TOP = 36;
 const CORE_BOTTOM = 376;
 const CORE_LANE_W = 176;
@@ -90,11 +86,11 @@ export const CORE = {
 } as const;
 
 /**
- * 레인 슬롯 x: 레인 폭을 (laneCap + 1)칸으로 균등 분할한 중심 중 캐릭터 자리에 가장 가까운 하나를 뺀다.
+ * 레인 슬롯 x: 레인 폭을 (슬롯 수 + 1)칸으로 균등 분할한 중심 중 거점 자리에 가장 가까운 하나를 뺀다.
  */
-function laneSlotXs(laneX: number, avoidX: number, laneCap: number): number[] {
-  const step = CORE_LANE_W / (laneCap + 1);
-  const xs = Array.from({ length: laneCap + 1 }, (_, i) => laneX + step * (i + 0.5));
+function laneSlotXs(laneX: number, avoidX: number, slots: number): number[] {
+  const step = CORE_LANE_W / (slots + 1);
+  const xs = Array.from({ length: slots + 1 }, (_, i) => laneX + step * (i + 0.5));
   let idx = 0;
   xs.forEach((sx, i) => {
     if (Math.abs(sx - avoidX) < Math.abs(xs[idx] - avoidX)) idx = i;
@@ -104,7 +100,7 @@ function laneSlotXs(laneX: number, avoidX: number, laneCap: number): number[] {
 }
 
 /** core/lane.ts의 LaneGeometry (import type만 쓰므로 core 의존은 타입뿐) */
-export function defenseGeometry(laneCap: number): LaneGeometry {
+export function defenseGeometry(slots: number): LaneGeometry {
   return {
     spawnY: CORE.spawnY,
     lineY: CORE.lineY,
@@ -112,24 +108,24 @@ export function defenseGeometry(laneCap: number): LaneGeometry {
     spawnXMin: CORE.worryXMargin,
     spawnXMax: CORE_LANE_W - CORE.worryXMargin,
     centerX: CORE_LANE_W / 2,
-    slotXs: laneSlotXs(0, CORE.happyX, laneCap),
+    slotXs: laneSlotXs(0, CORE.happyX, slots),
     happyX: CORE.happyX,
   };
 }
 
 /** core/lane.ts의 AbyssGeometry: 출발선 → 그림자 벽 아래 변 */
-export function abyssGeometry(laneCap: number): AbyssGeometry {
+export function abyssGeometry(slots: number): AbyssGeometry {
   return {
     startY: CORE.lineY,
     wallY: CORE.wallY,
     centerX: CORE_ABYSS_X + CORE_LANE_W / 2,
-    slotXs: laneSlotXs(CORE_ABYSS_X, CORE.unhappyX, laneCap),
+    slotXs: laneSlotXs(CORE_ABYSS_X, CORE.unhappyX, slots),
   };
 }
 
 /** GameState에 넘기는 두 레인 좌표 */
-export function gameGeometry(laneCap: number): GameGeometry {
-  return { defense: defenseGeometry(laneCap), abyss: abyssGeometry(laneCap) };
+export function gameGeometry(slots: number): GameGeometry {
+  return { defense: defenseGeometry(slots), abyss: abyssGeometry(slots) };
 }
 
 // ── core 좌표 → 화면 (§5.11-2) ──
@@ -252,31 +248,19 @@ export const RELEASE_HIT: Rect = {
   h: RELEASE_ZONE.h + RELEASE_ZONE_PAD * 2,
 };
 
-export type DropTarget =
-  | { kind: 'cell'; index: number }
-  | { kind: 'release' }
-  | { kind: 'summon'; portal: PortalId }
-  | { kind: 'none' };
+export type DropTarget = { kind: 'cell'; index: number } | { kind: 'release' } | { kind: 'feed'; role: Role } | { kind: 'none' };
 
 /**
- * 드롭 위치 → 대상 (스펙 §4.1.1, §4.2 "판정은 넓게", §5.11-2).
- * 우선순위: 그리드 칸 → 놓아주기 영역 → 포탈 판정 원(가까운 쪽) → 땅 띠 전체 = 그 단계의 포탈(낮 창문 / 밤 손거울) → 무효.
- * groundPortal: 지금 단계에서 땅 띠가 맡는 포탈 (낮·밤이 아니면 null)
+ * 드롭 위치 → 대상 (스펙 §4.1.1, §5.17-9). 우선순위: 그리드 칸 → 놓아주기 영역 → 영웅 슬롯 사각형(위·아래 HERO_SLOT_PAD 여유) → 무효.
+ * (구 포탈 판정 원·땅 띠 소환은 없다)
  */
-export function dropTarget(size: { cols: number; rows: number }, x: number, y: number, groundPortal: PortalId | null = null): DropTarget {
+export function dropTarget(size: { cols: number; rows: number }, x: number, y: number): DropTarget {
   const index = cellAt(size.cols, size.rows, x, y);
   if (index !== null) return { kind: 'cell', index };
   if (inRect(RELEASE_HIT, x, y)) return { kind: 'release' };
-  let best: PortalId | null = null;
-  let bestDist = PORTAL_HIT_RADIUS;
-  for (const id of ['happy', 'unhappy'] as const) {
-    const d = Math.hypot(x - PORTAL[id].x, y - PORTAL[id].y);
-    if (d <= bestDist) {
-      best = id;
-      bestDist = d;
-    }
+  for (const role of ['offense', 'defense'] as const) {
+    const r = HERO_SLOT[role];
+    if (inRect({ x: r.x, y: r.y - HERO_SLOT_PAD, w: r.w, h: r.h + HERO_SLOT_PAD * 2 }, x, y)) return { kind: 'feed', role };
   }
-  if (best) return { kind: 'summon', portal: best };
-  if (groundPortal && inRect(REGION.ground, x, y)) return { kind: 'summon', portal: groundPortal };
   return { kind: 'none' };
 }
