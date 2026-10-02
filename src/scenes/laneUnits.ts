@@ -37,11 +37,6 @@ export function heroChainColor(data: GameData, id: string): number {
   return parseInt((data.chains.find((c) => c.archetypeId === chain)?.color ?? '#cccccc').slice(1), 16);
 }
 
-/** 체인 짧은 이름 (조각·스킬 버튼 글씨): 2단계 이름의 첫 낱말 ("뼈다귀", "방울", "떡", "새끼줄") */
-export function chainShortName(c: { tierNames: string[] }): string {
-  return (c.tierNames[1] ?? c.tierNames[0] ?? '').split(' ')[0];
-}
-
 export function heroName(data: GameData, id: string): string {
   return data.heroes.heroes.find((h) => h.id === id)?.name ?? id;
 }

@@ -344,9 +344,10 @@ function checkChains(c: Checker, v: unknown, maxTier: number | undefined, world:
   const list = c.arr(v, 'chains', 1) ?? [];
   const ids = list.map((e, i) => {
     const p = `chains[${i}]`;
-    const o = c.obj(e, p, ['archetypeId', 'world', 'spawnWeight', 'color', 'tierNames', 'side', 'buff', 'soldier']);
+    const o = c.obj(e, p, ['archetypeId', 'name', 'world', 'spawnWeight', 'color', 'tierNames', 'side', 'buff', 'soldier']);
     if (!o) return undefined;
     const id = c.str(o.archetypeId, `${p}.archetypeId`);
+    c.str(o.name, `${p}.name`);
     checkWorld(c, o.world, `${p}.world`, world);
     c.num(o.spawnWeight, `${p}.spawnWeight`, { min: 0 });
     const color = c.str(o.color, `${p}.color`);

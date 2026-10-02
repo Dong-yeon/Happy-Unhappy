@@ -1,6 +1,7 @@
 [
   {
     "archetypeId": "bone",
+    "name": "뼈다귀",
     "world": "tale_sun_moon",
     "spawnWeight": 1,
     "color": "#E6D3A3",
@@ -46,6 +47,7 @@
   },
   {
     "archetypeId": "bell",
+    "name": "방울",
     "world": "tale_sun_moon",
     "spawnWeight": 1,
     "color": "#B9A6E0",
@@ -99,6 +101,7 @@
   },
   {
     "archetypeId": "companion_animal",
+    "name": "떡",
     "world": "tale_sun_moon",
     "spawnWeight": 1,
     "color": "#E8A15A",
@@ -144,6 +147,7 @@
   },
   {
     "archetypeId": "comfort_object",
+    "name": "동아줄",
     "world": "tale_sun_moon",
     "spawnWeight": 1,
     "color": "#8FB8DE",

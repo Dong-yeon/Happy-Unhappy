@@ -1,11 +1,11 @@
 // 원형 스킬 버튼 (§5.20-13, D-064): 전장과 머지 판 경계에 떠 있는 지금 레인 팀(전투 밖이면 다음에 나갈 공격대 팀) 영웅 초상 3개.
 // 둘레 = 스킬 게이지, 아래 작은 글씨 = 자기 체인. 수동 모드([자동] 끔)에서 게이지가 찬 영웅은 빛나고 탭하면 발동.
-// 판 왼쪽 위에 이 팀에 켜진 인연. 별도 "지금 팀" 줄·박스 없음. 도형 + 텍스트만, 상태는 core에서 읽기만 한다 (발동은 castReady).
+// 우물 왼쪽 위에 이 팀에 켜진 인연. 별도 "지금 팀" 줄·박스 없음. 도형 + 텍스트만, 상태는 core에서 읽기만 한다 (발동은 castReady).
 import Phaser from 'phaser';
 import type { CoreEvent, GameState } from '../core/game';
 import type { GameData } from '../data/types';
-import { chainShortName, heroChainColor, heroName } from './laneUnits';
-import { REGION, SKILL_BTN_R, skillButtonCenter } from './layout';
+import { heroChainColor, heroName } from './laneUnits';
+import { SKILL_BTN_R, WELL, skillButtonCenter } from './layout';
 import { text } from './ui';
 
 const DEPTH = 12;
@@ -36,7 +36,7 @@ export class SkillButtonsView {
     private readonly data: GameData,
     teamSize: number,
   ) {
-    this.bonds = text(scene, REGION.board.x + 8, REGION.board.y + 6, '', { fontSize: '9px', color: '#ffb6c8' }).setDepth(DEPTH);
+    this.bonds = text(scene, WELL.x + 22, WELL.y + 6, '', { fontSize: '9px', color: '#ffd1dc' }).setDepth(DEPTH); // 우물 왼쪽 위 (§5.21)
     for (let i = 0; i < teamSize; i++) {
       const shadow = scene.add.circle(0, 2, SKILL_BTN_R + RING_W, 0x000000, 0.45);
       const glow = scene.add.circle(0, 0, SKILL_BTN_R + RING_W + 3, READY_COLOR, 0.35).setVisible(false);
@@ -90,7 +90,7 @@ export class SkillButtonsView {
         o.disc.setFillStyle(heroChainColor(this.data, id));
         o.initial.setText(heroName(this.data, id).slice(0, 1));
         const c = this.data.chains.find((x) => x.archetypeId === s.heroDef(id).chain);
-        o.chain.setText(c ? chainShortName(c) : '');
+        o.chain.setText(c?.name ?? ''); // 체인 이름 (§5.21-6: 2단계 이름이 아니라 뼈다귀·방울·떡·동아줄)
         o.drawn = '';
       }
       const def = s.heroDef(id);

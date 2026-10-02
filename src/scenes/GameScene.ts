@@ -8,14 +8,14 @@ import { MetricsRecorder } from '../metrics/recorder';
 import { AbyssLaneView } from './AbyssLaneView';
 import { DayUi } from './DayUi';
 import { DefenseLaneView } from './DefenseLaneView';
-import { GridView, type DragHover } from './GridView';
+import { WellView, type DragHover } from './WellView';
 import { FormationView } from './FormationView';
 import { SkillButtonsView } from './SkillButtonsView';
 import { ReleaseZoneView } from './ReleaseZoneView';
 import { SaveSession } from './session';
 import { SkyView } from './SkyView';
 import { stageLabel } from './labels';
-import { REGION, VIEW_W, cellCenter, skyArc, toScreen, type Rect } from './layout';
+import { REGION, VIEW_W, skyArc, toScreen, type Rect } from './layout';
 import { Button, COLOR, setupCamera, text } from './ui';
 import type { Role } from '../core/game';
 
@@ -32,7 +32,7 @@ export class GameScene extends Phaser.Scene {
   private state!: GameState;
   private session!: SaveSession;
   private metrics!: MetricsRecorder;
-  private gridView!: GridView;
+  private wellView!: WellView;
   private autoBtn!: Button;
   private releaseZone!: ReleaseZoneView;
   private laneView!: DefenseLaneView;
@@ -69,7 +69,7 @@ export class GameScene extends Phaser.Scene {
     this.drawBottomBar();
     this.laneView = new DefenseLaneView(this, this.state, data);
     this.abyssView = new AbyssLaneView(this, this.state, data);
-    this.gridView = new GridView(this, this.state, data, {
+    this.wellView = new WellView(this, this.state, data, {
       onChange: () => this.syncUi(),
       onHover: (hover) => this.onDragHover(hover),
       canInteract: () => this.canAct(),
@@ -103,7 +103,7 @@ export class GameScene extends Phaser.Scene {
         metrics: this.metrics,
       });
     }
-    this.gridView.refresh();
+    this.wellView.refresh();
     this.syncUi();
   }
 
@@ -113,13 +113,13 @@ export class GameScene extends Phaser.Scene {
    */
   private openFormation(cancellable: boolean, done?: () => void): void {
     if (this.formationView?.isOpen) return;
-    this.gridView.cancel();
+    this.wellView.cancel();
     const data = this.registry.get('data') as GameData;
     this.formationView = new FormationView(this, this.state, data, () => {
       this.formationView = null;
       const p = this.state.phase;
       if (p === 'dayStart' || p === 'diary' || p === 'chapterComplete') this.session.saveGame(this.state);
-      this.gridView.refresh();
+      this.wellView.refresh();
       done?.();
       this.syncUi();
     }, cancellable);
@@ -160,11 +160,12 @@ export class GameScene extends Phaser.Scene {
     this.abyssView.handle(events);
     this.onMergeEvents(events);
     this.onFxEvents(events);
-    this.gridView.handle(events);
+    this.wellView.handle(events);
+    this.wellView.update(delta);
     this.skills.handle(events);
     // 지급 조각(와일드카드)·편성 재시작(그리드 되돌림)은 core에서 이미 그리드에 반영됐다
     const gridEvents = ['bossReward', 'formationRestart'];
-    if (events.some((e) => gridEvents.includes(e.type))) this.gridView.refresh();
+    if (events.some((e) => gridEvents.includes(e.type))) this.wellView.refresh();
     this.laneView.sync();
     this.abyssView.sync();
     this.skills.sync();
@@ -244,13 +245,13 @@ export class GameScene extends Phaser.Scene {
   private onPhaseEvents(events: CoreEvent[]): void {
     for (const e of events) {
       if (e.type === 'dusk') {
-        this.gridView.cancel();
+        this.wellView.cancel();
         this.sky.dusk(
           () => this.showGround('night'),
           () => this.syncUi(),
         );
       } else if (e.type === 'stageStart' || e.type === 'dayBegin') {
-        this.gridView.cancel();
+        this.wellView.cancel();
         if (this.groundShown !== 'day' || this.sky.mode !== 'day') {
           this.sky.setMode('day');
           this.showGround('day');
@@ -277,7 +278,7 @@ export class GameScene extends Phaser.Scene {
   }
 
   private onDebugChange(): void {
-    this.gridView.refresh();
+    this.wellView.refresh();
     this.syncUi();
   }
 
@@ -323,13 +324,9 @@ export class GameScene extends Phaser.Scene {
     for (const x of [this.autoBtn, f, b]) x.container.setDepth(8);
   }
 
-  /** 머지 판 (§5.20-13): 칸 테두리 없이 배경 톤 + 빈 자리는 작은 점 (그리드는 중립 색, D-018) */
-  private drawGrid(size: GridSize): void {
-    this.fill(REGION.board, COLOR.grid);
-    for (let i = 0; i < size.cols * size.rows; i++) {
-      const c = cellCenter(size.cols, size.rows, i);
-      this.add.circle(c.x, c.y, 4, 0xffffff, 0.08);
-    }
+  /** 머지 판 = 이야기 우물 (§5.21): 둥근 테 우물, 칸·자리 표시 없음 */
+  private drawGrid(_size: GridSize): void {
+    WellView.drawWell(this);
   }
 
   /** 하단: 넓은 놓아주기 칸만 (조각 생성 버튼 삭제, §5.20-13) */

@@ -1,7 +1,7 @@
 // 밤(디펜스) 레인 표시 — 핵 지키기 (§4.3.1, §5.19-3): 가로 레인. 이야기책(핵)은 왼쪽, 적은 오른쪽에서 밀려온다.
 // 우리 편 = 밤덱 영웅 + 전투 중 머지 병사. 영웅이 쓰러지면 거점 위에 일어나기까지 카운트다운. 거점 위에 핵 HP 막대.
 // 상태는 항상 core에서 읽고 layout.toScreen()으로 화면에 옮긴다. 이벤트는 연출(가라앉음, 타격)에만 쓴다.
-// 처치 드롭 조각은 GridView가 처치 지점에서 판으로 날린다 (§5.20-13). 동시 적 상한을 넘은 대기열 수는 오른쪽 위에.
+// 처치 드롭 조각은 WellView가 처치 지점에서 우물로 날린다 (§5.20-13). 동시 적 상한을 넘은 대기열 수는 오른쪽 위에.
 import Phaser from 'phaser';
 import type { CoreEvent, GameState } from '../core/game';
 import type { GameData } from '../data/types';

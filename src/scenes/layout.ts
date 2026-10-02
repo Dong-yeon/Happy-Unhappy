@@ -4,7 +4,7 @@
 //  0 ┌ HUD: 스테이지명·시도 / [자동] [편성] [책] ┐
 // 40 ├ 해·달 띠: 진행도만 ───────────────────────┤
 // 64 ├ 전장: 가로 레인 하나 ──────────────────────┤  우리 편(이야기책) 왼쪽, 적·guardian 오른쪽. 낮 = 핵 찾아 돌아오기, 밤 = 핵 지키기
-//300 ├ 머지 판: 칸 테두리 없음, 원형 조각 5×4 ────┤  위쪽 경계에 떠 있는 원형 스킬 버튼 3개 (지금 팀)
+//300 ├ 머지 판 = 이야기 우물 (§5.21): 둥근 테 우물 안에서 조각이 헤엄친다 ┤  위쪽 테두리에 걸친 원형 스킬 버튼 3개 (지금 팀)
 //578 ├ 놓아주기 칸 (넓게) ───────────────────────┤
 //640 └───────────────────────────────────────────┘
 //
@@ -45,14 +45,38 @@ export const REGION = {
   debugPanel: { x: 0, y: HUD_H, w: 176, h: GROUND_BOTTOM - HUD_H },
 } as const satisfies Record<string, Rect>;
 
-// ── 원형 스킬 버튼 (§5.20-13): 전장과 머지 판 경계에 떠 있는 지금 팀 영웅 초상 3개 (오른쪽 정렬). 둘레 = 스킬 게이지 ──
+// ── 이야기 우물 (§5.21-1): 머지 판 안의 둥근 테 우물. 조각은 이 안(테 안쪽)에서 헤엄친다. 자리(칸)는 core에만 있고 화면엔 없다 ──
+/** 우물 물 영역 (모서리를 크게 둥글린 사각형) + 돌테 두께 */
+export const WELL = { x: 12, y: REGION.board.y + 10, w: VIEW_W - 24, h: REGION.board.h - 16, r: 64, rim: 7 } as const;
+/** 우물 안 조각 반지름 */
+export const WELL_TOKEN_R = 21;
+/** 놓은 곳에서 이 반지름 안의 같은 조각과 합쳐진다 (§5.21-3) */
+export const MERGE_RADIUS = 30;
+
+/** 점이 우물 물 영역 안인지 (inset만큼 안쪽으로 줄인 둥근 사각형) */
+export function inWell(x: number, y: number, inset = 0): boolean {
+  return wellDistance(x, y) <= -inset;
+}
+
+/** 둥근 사각형 우물 테두리까지의 부호 거리 (안쪽 음수). 가장자리 튕김·안쪽 방향 계산용 */
+export function wellDistance(x: number, y: number): number {
+  const hw = WELL.w / 2;
+  const hh = WELL.h / 2;
+  const qx = Math.abs(x - (WELL.x + hw)) - (hw - WELL.r);
+  const qy = Math.abs(y - (WELL.y + hh)) - (hh - WELL.r);
+  const ox = Math.max(qx, 0);
+  const oy = Math.max(qy, 0);
+  return Math.hypot(ox, oy) + Math.min(Math.max(qx, qy), 0) - WELL.r;
+}
+
+// ── 원형 스킬 버튼 (§5.20-13, §5.21-6): 우물 위쪽 테두리에 걸친 지금 팀 영웅 초상 3개 (오른쪽 정렬). 둘레 = 스킬 게이지 ──
 export const SKILL_BTN_R = 23;
 const SKILL_BTN_GAP = 8;
 /** i번째(0 = 앞) 버튼 중심. 팀 인원 n */
 export function skillButtonCenter(i: number, n: number): { x: number; y: number } {
   const right = VIEW_W - 10 - SKILL_BTN_R;
   const step = SKILL_BTN_R * 2 + SKILL_BTN_GAP;
-  return { x: right - (n - 1 - i) * step, y: REGION.board.y - 11 };
+  return { x: right - (n - 1 - i) * step, y: WELL.y };
 }
 
 // ── core 좌표 (v0.7 세로 레인 그대로. 바꾸면 core·시뮬 결과가 달라진다) ──

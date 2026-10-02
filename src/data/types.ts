@@ -168,6 +168,8 @@ export interface SoldierLevel extends CombatStats {
 
 export interface Chain {
   archetypeId: string;
+  /** 체인 이름 (스킬 버튼·조각 글씨, §5.21-6): 뼈다귀 / 방울 / 떡 / 동아줄 */
+  name: string;
   world: string;
   spawnWeight: number;
   color: string;
